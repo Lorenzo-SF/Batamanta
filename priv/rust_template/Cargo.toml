@@ -1,0 +1,25 @@
+[package]
+name = "batamanta_dispenser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+indicatif = "0.17"
+md5 = "0.7.0"
+sha2 = "0.10.8"
+tar = "0.4.40"
+zstd = "0.13"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+ctrlc = "3.4"
+
+[profile.release]
+opt-level = "z"     # Optimizar para tamaño
+lto = true          # Link Time Optimization para reducir aún más el binario
+codegen-units = 1   # Mayor optimización a costa de tiempo de compilación
+strip = true        # Quitar símbolos de debug
