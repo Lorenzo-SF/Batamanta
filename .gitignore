@@ -1,0 +1,80 @@
+# ==============================================================================
+# 💧 ELIXIR & ERLANG (Mix)
+# ==============================================================================
+# Directorio de artefactos compilados
+/_build/
+
+# Dependencias descargadas
+/deps/
+
+# Documentación generada por ExDoc
+/doc/
+
+# Archivos temporales de Mix
+/.fetch
+
+# Volcados de memoria si la VM de Erlang colapsa
+erl_crash.dump
+
+# Artefactos de archivos empaquetados de Mix
+*.ez
+*.beam
+
+# ==============================================================================
+# 🛡️ HERRAMIENTAS DE CALIDAD (Dialyzer & Coveralls)
+# ==============================================================================
+# Tablas de búsqueda persistente de Dialyzer (PLTs)
+/*.plt
+/*.plt.hash
+/priv/plts/
+
+# Reportes de cobertura de tests (excoveralls / mix test --cover)
+/cover/
+
+# ==============================================================================
+# 🦀 RUST (Dispenser Template)
+# ==============================================================================
+# Carpeta de compilación de Cargo (El escudo anti-GLIBC que creamos hoy)
+/priv/rust_template/target/
+
+# Ignoramos el payload inyectado (ahora usamos Zstd en lugar de Gzip)
+/priv/rust_template/src/payload.tar.zst
+
+# ==============================================================================
+# 🦇 BATAMANTA (Artefactos Finales)
+# ==============================================================================
+# Evita subir los ejecutables finales generados por `mix batamanta`
+# El patrón asume el formato limpio: app_name-version-target
+/*-*-*linux-musl*
+/*-*-*linux-gnu*
+/*-*-*windows*
+/*-*-*apple-darwin*
+/*-*-*macos*
+*.exe
+*.tar.zst
+
+# ==============================================================================
+# 💻 SISTEMA OPERATIVO Y EDITORES
+# ==============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.iml
+
+# ==============================================================================
+# Smoke tests
+# ==============================================================================
+/smoke_tests/*/_build/
+/smoke_tests/*/deps/
+/smoke_tests/*/erl_crash.dump
+/smoke_tests/*/test_cli-0.1.0*
+/smoke_tests/*/test_tui-0.1.0*
+/smoke_tests/*/test_daemon-0.1.0*
+ 
