@@ -210,7 +210,7 @@ jobs:
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1 --erts-target ubuntu_22_04_x86_64
+        run: mix batamanta --compression 1
 
       - name: Run Smoke Test
         run: |
@@ -286,7 +286,7 @@ jobs:
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1 --erts-target alpine_3_19_x86_64
+        run: mix batamanta --compression 1
 
       - name: Run Smoke Test
         run: |
@@ -364,7 +364,7 @@ jobs:
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1 --erts-target ubuntu_22_04_arm64
+        run: mix batamanta --compression 1
 
       - name: Run Smoke Test (qemu-aarch64)
         run: |
@@ -455,7 +455,7 @@ jobs:
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1 --erts-target alpine_3_19_arm64
+        run: mix batamanta --compression 1
 
       - name: Run Smoke Test (qemu-aarch64)
         run: |
