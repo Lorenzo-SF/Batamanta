@@ -1,4 +1,4 @@
-defmodule TestDaemon.MixProject do
+defmodule TestCli.MixProject do
   use Mix.Project
 
   def project do
@@ -7,14 +7,22 @@ defmodule TestDaemon.MixProject do
       version: "0.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      releases: [
+        test_daemon: [
+          applications: [
+            runtime_tools: :permanent
+          ],
+          steps: [:assemble, :tar]
+        ]
+      ]
     ]
   end
 
   def application do
     [
-      extra_applications: [:logger],
-      mod: {TestDaemon.Application, []}
+      extra_applications: [:logger, :kernel, :stdlib, :elixir],
+      mod: {TestCli.Application, []}
     ]
   end
 

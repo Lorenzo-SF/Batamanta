@@ -7,13 +7,21 @@ defmodule TestCli.MixProject do
       version: "0.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      releases: [
+        test_cli: [
+          applications: [
+            runtime_tools: :permanent
+          ],
+          steps: [:assemble, :tar]
+        ]
+      ]
     ]
   end
 
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :kernel, :stdlib, :elixir],
       mod: {TestCli.Application, []}
     ]
   end
