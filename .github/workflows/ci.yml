@@ -132,6 +132,10 @@ jobs:
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
 
+      - name: Generate Release (creates .boot files)
+        working-directory: smoke_tests/test_${{ matrix.mode }}
+        run: mix release --overwrite
+
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix batamanta --compression 1
@@ -208,6 +212,10 @@ jobs:
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
 
+      - name: Generate Release (creates .boot files)
+        working-directory: smoke_tests/test_${{ matrix.mode }}
+        run: mix release --overwrite
+
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix batamanta --compression 1
@@ -283,6 +291,10 @@ jobs:
       - name: Install Mix Dependencies
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
+
+      - name: Generate Release (creates .boot files)
+        working-directory: smoke_tests/test_${{ matrix.mode }}
+        run: mix release --overwrite
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
@@ -361,6 +373,10 @@ jobs:
       - name: Install Mix Dependencies
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
+
+      - name: Generate Release (creates .boot files)
+        working-directory: smoke_tests/test_${{ matrix.mode }}
+        run: mix release --overwrite
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
@@ -452,6 +468,10 @@ jobs:
       - name: Install Mix Dependencies
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
+
+      - name: Generate Release (creates .boot files)
+        working-directory: smoke_tests/test_${{ matrix.mode }}
+        run: mix release --overwrite
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
