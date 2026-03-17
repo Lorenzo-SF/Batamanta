@@ -11,10 +11,13 @@ defmodule TestCli.MixProject do
       releases: [
         test_cli: [
           applications: [
-            runtime_tools: :permanent
+            runtime_tools: :permanent,
+            kernel: :permanent,
+            stdlib: :permanent
           ],
           steps: [:assemble],
-          cookie: "test_cookie"
+          cookie: "test_cookie",
+          vm_args: Path.join(__DIR__, "vm.args")
         ]
       ]
     ]
@@ -22,7 +25,7 @@ defmodule TestCli.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :kernel, :stdlib, :elixir],
+      extra_applications: [:logger],
       mod: {TestCli.Application, []},
       registered: []
     ]

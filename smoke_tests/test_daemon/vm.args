@@ -1,0 +1,6 @@
+## Disable distributed Erlang
+-name test_cli@127.0.0.1
+-setcookie test_cookie
+
+## Disable kernel features that require distributed Erlang
+-kernel start_false
