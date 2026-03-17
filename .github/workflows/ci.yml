@@ -40,12 +40,16 @@ jobs:
           install-hex: false
           install-rebar: true
 
-      - name: Install Hex (OTP 28 compatible version)
+      - name: Install Hex
         run: |
+          # Remove any existing Hex installations
           mix archive.uninstall hex.ez --force 2>/dev/null || true
           mix archive.uninstall hex --force 2>/dev/null || true
+          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
+          # Install fresh Hex
           mix local.hex --force
-          mix local.hex --force
+          # Verify Hex works
+          mix hex.info || mix local.hex --force
 
       - name: Install System Dependencies
         run: sudo apt-get update && sudo apt-get install -y zstd
@@ -70,9 +74,28 @@ jobs:
       matrix:
         os: [macos-latest]
         arch: ['arm64']
-        elixir: ['1.15.8', '1.19.5']
-        otp: ['25.0', '28.0']
+        elixir: ['1.15.8']
+        otp: ['25.0', '26.0']
         mode: [cli, tui, daemon]
+        include:
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: daemon
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: daemon
 
     steps:
       - name: Checkout Repository
@@ -86,12 +109,16 @@ jobs:
           install-hex: false
           install-rebar: true
 
-      - name: Install Hex (OTP 28 compatible version)
+      - name: Install Hex
         run: |
+          # Remove any existing Hex installations
           mix archive.uninstall hex.ez --force 2>/dev/null || true
           mix archive.uninstall hex --force 2>/dev/null || true
+          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
+          # Install fresh Hex
           mix local.hex --force
-          mix local.hex --force
+          # Verify Hex works
+          mix hex.info || mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -158,12 +185,16 @@ jobs:
           install-hex: false
           install-rebar: true
 
-      - name: Install Hex (OTP 28 compatible version)
+      - name: Install Hex
         run: |
+          # Remove any existing Hex installations
           mix archive.uninstall hex.ez --force 2>/dev/null || true
           mix archive.uninstall hex --force 2>/dev/null || true
+          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
+          # Install fresh Hex
           mix local.hex --force
-          mix local.hex --force
+          # Verify Hex works
+          mix hex.info || mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -230,12 +261,16 @@ jobs:
           install-hex: false
           install-rebar: true
 
-      - name: Install Hex (OTP 28 compatible version)
+      - name: Install Hex
         run: |
+          # Remove any existing Hex installations
           mix archive.uninstall hex.ez --force 2>/dev/null || true
           mix archive.uninstall hex --force 2>/dev/null || true
+          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
+          # Install fresh Hex
           mix local.hex --force
-          mix local.hex --force
+          # Verify Hex works
+          mix hex.info || mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -302,12 +337,16 @@ jobs:
           install-hex: false
           install-rebar: true
 
-      - name: Install Hex (OTP 28 compatible version)
+      - name: Install Hex
         run: |
+          # Remove any existing Hex installations
           mix archive.uninstall hex.ez --force 2>/dev/null || true
           mix archive.uninstall hex --force 2>/dev/null || true
+          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
+          # Install fresh Hex
           mix local.hex --force
-          mix local.hex --force
+          # Verify Hex works
+          mix hex.info || mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -315,7 +354,9 @@ jobs:
           targets: aarch64-unknown-linux-gnu
 
       - name: Install System Dependencies
-        run: sudo apt-get update && sudo apt-get install -y zstd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd gcc-aarch64-linux-gnu g++-aarch64-linux-gnu qemu-user-static
 
       - name: Install Mix Dependencies
         working-directory: smoke_tests/test_${{ matrix.mode }}
@@ -389,12 +430,16 @@ jobs:
           install-hex: false
           install-rebar: true
 
-      - name: Install Hex (OTP 28 compatible version)
+      - name: Install Hex
         run: |
+          # Remove any existing Hex installations
           mix archive.uninstall hex.ez --force 2>/dev/null || true
           mix archive.uninstall hex --force 2>/dev/null || true
+          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
+          # Install fresh Hex
           mix local.hex --force
-          mix local.hex --force
+          # Verify Hex works
+          mix hex.info || mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -449,12 +494,16 @@ jobs:
           install-hex: false
           install-rebar: true
 
-      - name: Install Hex (OTP 28 compatible version)
+      - name: Install Hex
         run: |
+          # Remove any existing Hex installations
           mix archive.uninstall hex.ez --force 2>/dev/null || true
           mix archive.uninstall hex --force 2>/dev/null || true
+          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
+          # Install fresh Hex
           mix local.hex --force
-          mix local.hex --force
+          # Verify Hex works
+          mix hex.info || mix local.hex --force
 
       - name: Install System Dependencies
         run: sudo apt-get update && sudo apt-get install -y zstd
@@ -491,12 +540,16 @@ jobs:
           install-hex: false
           install-rebar: true
 
-      - name: Install Hex (OTP 28 compatible version)
+      - name: Install Hex
         run: |
+          # Remove any existing Hex installations
           mix archive.uninstall hex.ez --force 2>/dev/null || true
           mix archive.uninstall hex --force 2>/dev/null || true
+          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
+          # Install fresh Hex
           mix local.hex --force
-          mix local.hex --force
+          # Verify Hex works
+          mix hex.info || mix local.hex --force
 
       - run: mix deps.get
       - run: mix compile

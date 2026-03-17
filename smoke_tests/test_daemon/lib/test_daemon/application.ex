@@ -6,10 +6,10 @@ defmodule TestDaemon.Application do
   @impl true
   def start(_type, _args) do
     IO.puts("Test Daemon application started")
-    
+
     children = [
       {Task, fn ->
-        :timer.sleep(:infinity)
+        Process.sleep(:infinity)
       end}
     ]
 
