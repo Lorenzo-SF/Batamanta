@@ -19,13 +19,27 @@ if [ -z "$PROJECT_DIR" ] || [ -z "$MODE" ]; then
     exit 1
 fi
 
-# Determine binary name based on mode
-BINARY_NAME="test_${MODE}"
-BINARY_PATH="${PROJECT_DIR}/_build/batamanta/${BINARY_NAME}"
+# Batamanta creates the binary in the project root with format:
+# <app_name>-<version>-<arch>-<os>
+# For example: test_cli-0.1.0-aarch64-macos
+
+# Find the binary (it may have version/arch suffixes)
+BINARY_PATH=""
+
+# Try to find the binary in the project directory
+for bin in "$PROJECT_DIR"/test_${MODE}-*; do
+    if [ -f "$bin" ] && [ -x "$bin" ]; then
+        BINARY_PATH="$bin"
+        break
+    fi
+done
 
 # Verify binary exists
-if [ ! -f "$BINARY_PATH" ]; then
-    echo "ERROR: Binary not found at $BINARY_PATH"
+if [ -z "$BINARY_PATH" ] || [ ! -f "$BINARY_PATH" ]; then
+    echo "ERROR: Binary not found in $PROJECT_DIR"
+    echo "Looking for: test_${MODE}-*"
+    echo "Contents of $PROJECT_DIR:"
+    ls -la "$PROJECT_DIR" 2>/dev/null | head -20 || echo "  (directory does not exist)"
     exit 1
 fi
 

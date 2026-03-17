@@ -358,6 +358,8 @@ jobs:
         with:
           elixir-version: '1.19.5'
           otp-version: '28.0'
+          install-hex: true
+          install-rebar: true
 
       - run: mix deps.get
       - run: mix compile
