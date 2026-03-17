@@ -452,8 +452,10 @@ defmodule Batamanta.ERTS.Fetcher do
   defp extract_erts(cache_path, extract_dir, otp_version) do
     File.mkdir_p!(extract_dir)
 
+    # Ubuntu 24.04+ blocks symlinks by default for security
+    # We need to allow symlinks for ERTS to work properly
     result =
-      :erl_tar.extract(cache_path, [:compressed, {:cwd, extract_dir}])
+      :erl_tar.extract(cache_path, [:compressed, {:cwd, extract_dir}, :safe_symlinks])
 
     case result do
       :ok ->

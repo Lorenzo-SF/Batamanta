@@ -557,3 +557,6 @@ jobs:
       - run: mix hex.publish --yes
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+
+# Note: ERTS repository has unsafe symlinks that fail on Ubuntu 24.04
+# Fix needed in: lib/batamanta/erts/fetcher.ex or ERTS repository
