@@ -132,9 +132,9 @@ jobs:
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
 
-      - name: Generate Release (creates .boot files)
+      - name: Compile application (creates .boot files)
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix release --overwrite
+        run: MIX_ENV=prod mix compile
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
@@ -212,9 +212,9 @@ jobs:
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
 
-      - name: Generate Release (creates .boot files)
+      - name: Compile application (creates .boot files)
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix release --overwrite
+        run: MIX_ENV=prod mix compile
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
@@ -292,9 +292,9 @@ jobs:
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
 
-      - name: Generate Release (creates .boot files)
+      - name: Compile application (creates .boot files)
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix release --overwrite
+        run: MIX_ENV=prod mix compile
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
@@ -374,9 +374,9 @@ jobs:
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
 
-      - name: Generate Release (creates .boot files)
+      - name: Compile application (creates .boot files)
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix release --overwrite
+        run: MIX_ENV=prod mix compile
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
@@ -469,9 +469,9 @@ jobs:
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
 
-      - name: Generate Release (creates .boot files)
+      - name: Compile application (creates .boot files)
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix release --overwrite
+        run: MIX_ENV=prod mix compile
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
