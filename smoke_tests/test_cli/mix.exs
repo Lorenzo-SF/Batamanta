@@ -13,7 +13,8 @@ defmodule TestCli.MixProject do
           applications: [
             runtime_tools: :permanent
           ],
-          steps: [:assemble, :tar]
+          steps: [:assemble],
+          cookie: "test_cookie"
         ]
       ]
     ]
@@ -22,7 +23,8 @@ defmodule TestCli.MixProject do
   def application do
     [
       extra_applications: [:logger, :kernel, :stdlib, :elixir],
-      mod: {TestCli.Application, []}
+      mod: {TestCli.Application, []},
+      registered: []
     ]
   end
 
