@@ -32,8 +32,14 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
+          install-hex: false
           install-rebar: true
+
+      - name: Install Hex (OTP 28 compatible version)
+        run: |
+          mix local.hex --force --if-missing
+          mix archive.uninstall hex --force || true
+          mix local.hex --force
 
       - name: Install System Dependencies
         run: sudo apt-get update && sudo apt-get install -y zstd
@@ -71,8 +77,14 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
+          install-hex: false
           install-rebar: true
+
+      - name: Install Hex (OTP 28 compatible version)
+        run: |
+          mix local.hex --force --if-missing
+          mix archive.uninstall hex --force || true
+          mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -117,8 +129,14 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
+          install-hex: false
           install-rebar: true
+
+      - name: Install Hex (OTP 28 compatible version)
+        run: |
+          mix local.hex --force --if-missing
+          mix archive.uninstall hex --force || true
+          mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -163,8 +181,14 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
+          install-hex: false
           install-rebar: true
+
+      - name: Install Hex (OTP 28 compatible version)
+        run: |
+          mix local.hex --force --if-missing
+          mix archive.uninstall hex --force || true
+          mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -209,8 +233,14 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
+          install-hex: false
           install-rebar: true
+
+      - name: Install Hex (OTP 28 compatible version)
+        run: |
+          mix local.hex --force --if-missing
+          mix archive.uninstall hex --force || true
+          mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -270,8 +300,14 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
+          install-hex: false
           install-rebar: true
+
+      - name: Install Hex (OTP 28 compatible version)
+        run: |
+          mix local.hex --force --if-missing
+          mix archive.uninstall hex --force || true
+          mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -323,8 +359,14 @@ jobs:
         with:
           elixir-version: '1.19.5'
           otp-version: '28.0'
-          install-hex: true
+          install-hex: false
           install-rebar: true
+
+      - name: Install Hex (OTP 28 compatible version)
+        run: |
+          mix local.hex --force --if-missing
+          mix archive.uninstall hex --force || true
+          mix local.hex --force
 
       - name: Install System Dependencies
         run: sudo apt-get update && sudo apt-get install -y zstd
@@ -358,8 +400,14 @@ jobs:
         with:
           elixir-version: '1.19.5'
           otp-version: '28.0'
-          install-hex: true
+          install-hex: false
           install-rebar: true
+
+      - name: Install Hex (OTP 28 compatible version)
+        run: |
+          mix local.hex --force --if-missing
+          mix archive.uninstall hex --force || true
+          mix local.hex --force
 
       - run: mix deps.get
       - run: mix compile
