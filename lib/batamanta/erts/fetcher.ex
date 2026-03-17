@@ -452,10 +452,21 @@ defmodule Batamanta.ERTS.Fetcher do
   defp extract_erts(cache_path, extract_dir, otp_version) do
     File.mkdir_p!(extract_dir)
 
-    # Ubuntu 24.04+ blocks symlinks by default for security
-    # We need to allow symlinks for ERTS to work properly
+    # Use system tar instead of :erl_tar to avoid Ubuntu 24.04 symlink restrictions
+    # System tar with --no-same-owner works reliably across platforms
+    {output, exit_code} =
+      System.cmd("tar", [
+        "-xzf", cache_path,
+        "-C", extract_dir,
+        "--no-same-owner"
+      ], stderr_to_stdout: true)
+
     result =
-      :erl_tar.extract(cache_path, [:compressed, {:cwd, extract_dir}, :safe_symlinks])
+      if exit_code == 0 do
+        :ok
+      else
+        {:error, "tar command failed: #{output}"}
+      end
 
     case result do
       :ok ->
