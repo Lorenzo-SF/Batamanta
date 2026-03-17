@@ -20,8 +20,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        elixir: ['1.15.8', '1.19.5']
-        otp: ['25.0', '28.0']
+        elixir: ['1.15.8']
+        otp: ['25.0', '26.0']
+        include:
+          - elixir: '1.19.5'
+            otp: '27.0'
+          - elixir: '1.19.5'
+            otp: '28.0'
 
     steps:
       - name: Checkout Repository
@@ -37,8 +42,9 @@ jobs:
 
       - name: Install Hex (OTP 28 compatible version)
         run: |
-          mix local.hex --force --if-missing
-          mix archive.uninstall hex --force || true
+          mix archive.uninstall hex.ez --force 2>/dev/null || true
+          mix archive.uninstall hex --force 2>/dev/null || true
+          mix local.hex --force
           mix local.hex --force
 
       - name: Install System Dependencies
@@ -82,8 +88,9 @@ jobs:
 
       - name: Install Hex (OTP 28 compatible version)
         run: |
-          mix local.hex --force --if-missing
-          mix archive.uninstall hex --force || true
+          mix archive.uninstall hex.ez --force 2>/dev/null || true
+          mix archive.uninstall hex --force 2>/dev/null || true
+          mix local.hex --force
           mix local.hex --force
 
       - name: Setup Rust toolchain
@@ -116,9 +123,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        elixir: ['1.15.8', '1.19.5']
-        otp: ['25.0', '28.0']
+        elixir: ['1.15.8']
+        otp: ['25.0', '26.0']
         mode: [cli, tui, daemon]
+        include:
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: daemon
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: daemon
 
     steps:
       - name: Checkout Repository
@@ -134,8 +160,9 @@ jobs:
 
       - name: Install Hex (OTP 28 compatible version)
         run: |
-          mix local.hex --force --if-missing
-          mix archive.uninstall hex --force || true
+          mix archive.uninstall hex.ez --force 2>/dev/null || true
+          mix archive.uninstall hex --force 2>/dev/null || true
+          mix local.hex --force
           mix local.hex --force
 
       - name: Setup Rust toolchain
@@ -168,9 +195,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        elixir: ['1.15.8', '1.19.5']
-        otp: ['25.0', '28.0']
+        elixir: ['1.15.8']
+        otp: ['25.0', '26.0']
         mode: [cli, tui, daemon]
+        include:
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: daemon
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: daemon
 
     steps:
       - name: Checkout Repository
@@ -186,8 +232,9 @@ jobs:
 
       - name: Install Hex (OTP 28 compatible version)
         run: |
-          mix local.hex --force --if-missing
-          mix archive.uninstall hex --force || true
+          mix archive.uninstall hex.ez --force 2>/dev/null || true
+          mix archive.uninstall hex --force 2>/dev/null || true
+          mix local.hex --force
           mix local.hex --force
 
       - name: Setup Rust toolchain
@@ -220,9 +267,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        elixir: ['1.15.8', '1.19.5']
-        otp: ['25.0', '28.0']
+        elixir: ['1.15.8']
+        otp: ['25.0', '26.0']
         mode: [cli, tui, daemon]
+        include:
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: daemon
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: daemon
 
     steps:
       - name: Checkout Repository
@@ -238,8 +304,9 @@ jobs:
 
       - name: Install Hex (OTP 28 compatible version)
         run: |
-          mix local.hex --force --if-missing
-          mix archive.uninstall hex --force || true
+          mix archive.uninstall hex.ez --force 2>/dev/null || true
+          mix archive.uninstall hex --force 2>/dev/null || true
+          mix local.hex --force
           mix local.hex --force
 
       - name: Setup Rust toolchain
@@ -287,9 +354,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        elixir: ['1.15.8', '1.19.5']
-        otp: ['25.0', '28.0']
+        elixir: ['1.15.8']
+        otp: ['25.0', '26.0']
         mode: [cli, tui, daemon]
+        include:
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '27.0'
+            mode: daemon
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: cli
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: tui
+          - elixir: '1.19.5'
+            otp: '28.0'
+            mode: daemon
 
     steps:
       - name: Checkout Repository
@@ -305,8 +391,9 @@ jobs:
 
       - name: Install Hex (OTP 28 compatible version)
         run: |
-          mix local.hex --force --if-missing
-          mix archive.uninstall hex --force || true
+          mix archive.uninstall hex.ez --force 2>/dev/null || true
+          mix archive.uninstall hex --force 2>/dev/null || true
+          mix local.hex --force
           mix local.hex --force
 
       - name: Setup Rust toolchain
@@ -315,7 +402,7 @@ jobs:
           targets: aarch64-unknown-linux-musl
 
       - name: Install System Dependencies
-        run: sudo apt-get update && sudo apt-get install -y zstd musl-tools qemu-user-static
+        run: sudo apt-get update && sudo apt-get install -y zstd musl-tools musl-dev qemu-user-static gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       - name: Install Mix Dependencies
         working-directory: smoke_tests/test_${{ matrix.mode }}
@@ -364,8 +451,9 @@ jobs:
 
       - name: Install Hex (OTP 28 compatible version)
         run: |
-          mix local.hex --force --if-missing
-          mix archive.uninstall hex --force || true
+          mix archive.uninstall hex.ez --force 2>/dev/null || true
+          mix archive.uninstall hex --force 2>/dev/null || true
+          mix local.hex --force
           mix local.hex --force
 
       - name: Install System Dependencies
@@ -405,8 +493,9 @@ jobs:
 
       - name: Install Hex (OTP 28 compatible version)
         run: |
-          mix local.hex --force --if-missing
-          mix archive.uninstall hex --force || true
+          mix archive.uninstall hex.ez --force 2>/dev/null || true
+          mix archive.uninstall hex --force 2>/dev/null || true
+          mix local.hex --force
           mix local.hex --force
 
       - run: mix deps.get
