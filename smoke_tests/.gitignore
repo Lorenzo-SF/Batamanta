@@ -1,7 +1,0 @@
-# Smoke test build artifacts
-_build/
-_deps/
-*.ez
-*.tar
-*.tar.zst
-*.tar.gz
