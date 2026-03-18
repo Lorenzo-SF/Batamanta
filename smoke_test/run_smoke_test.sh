@@ -30,11 +30,18 @@ echo ""
 echo "[1/3] Building with Batamanta..."
 MIX_ENV=prod mix batamanta $BUILD_ARGS
 
-# Find the binary
-BINARY=$(ls -1 _build/prod/rel/smoke_test/bin/smoke_test-* 2>/dev/null | head -1)
+# Find the binary (batamanta creates it in project root)
+BINARY=$(ls -1 smoke_test-* 2>/dev/null | head -1)
+
+if [ -z "$BINARY" ] || [ ! -f "$BINARY" ]; then
+  # Try alternative location
+  BINARY=$(ls -1 _build/prod/rel/smoke_test/bin/smoke_test-* 2>/dev/null | head -1)
+fi
 
 if [ -z "$BINARY" ] || [ ! -f "$BINARY" ]; then
   echo "❌ ERROR: Binary not found"
+  echo "Looking for: smoke_test-*"
+  ls -la . 2>/dev/null | head -20
   exit 1
 fi
 
