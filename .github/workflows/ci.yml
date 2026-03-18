@@ -218,7 +218,7 @@ jobs:
 
       - name: Generate release (creates .boot files)
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix release
+        run: MIX_ENV=prod mix release
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
