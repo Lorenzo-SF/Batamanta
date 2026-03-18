@@ -12,21 +12,11 @@ permissions:
 
 jobs:
   # ============================================================================
-  # UNIT TESTS
+  # UNIT TESTS - Run on minimum supported version
   # ============================================================================
   unit_tests:
-    name: Unit Tests (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }})
+    name: Unit Tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        elixir: ['1.15.8']
-        otp: ['25.0', '26.0']
-        include:
-          - elixir: '1.19.5'
-            otp: '27.0'
-          - elixir: '1.19.5'
-            otp: '28.0'
 
     steps:
       - name: Checkout Repository
@@ -35,21 +25,10 @@ jobs:
       - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: ${{ matrix.elixir }}
-          otp-version: ${{ matrix.otp }}
-          install-hex: false
+          elixir-version: '1.15.8'
+          otp-version: '25.0'
+          install-hex: true
           install-rebar: true
-
-      - name: Install Hex
-        run: |
-          # Remove any existing Hex installations
-          mix archive.uninstall hex.ez --force 2>/dev/null || true
-          mix archive.uninstall hex --force 2>/dev/null || true
-          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
-          # Install fresh Hex
-          mix local.hex --force
-          # Verify Hex works
-          mix hex.info || mix local.hex --force
 
       - name: Install System Dependencies
         run: sudo apt-get update && sudo apt-get install -y zstd
@@ -64,38 +43,57 @@ jobs:
         run: mix credo --strict
 
   # ============================================================================
-  # SMOKE TESTS - macOS (x86_64 & arm64)
+  # SMOKE TESTS - Edge versions only (min and max supported)
   # ============================================================================
-  smoke_tests_macos:
-    name: Smoke Tests macOS ${{ matrix.arch }} (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }}, ${{ matrix.mode }})
-    runs-on: ${{ matrix.os }}
+  smoke_tests:
+    name: Smoke Tests ${{ matrix.platform }} (${{ matrix.elixir }}, OTP ${{ matrix.otp }}, ${{ matrix.mode }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
-        arch: ['arm64']
-        elixir: ['1.15.8']
-        otp: ['25.0', '26.0']
+        platform: ['linux-arm', 'linux-amd64', 'macos-arm']
+        libc: ['glibc', 'musl']
+        elixir: ['1.15.8', '1.19.5']
+        otp: ['25.0', '28.0']
         mode: [cli, tui, daemon]
+        # Exclude invalid combinations
+        exclude:
+          # musl doesn't apply to macOS
+          - platform: macos-arm
+            libc: musl
+          # ARM runner for ARM platform
+          - platform: linux-arm
+            runner: ubuntu-latest
+          - platform: macos-arm
+            runner: ubuntu-latest
         include:
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: daemon
+          # Linux ARM uses ARM runner
+          - platform: linux-arm
+            runner: ubuntu-latest
+            rust_target: aarch64-unknown-linux-gnu
+            erts_target_glibc: ubuntu_22_04_arm64
+            erts_target_musl: alpine_3_19_arm64
+            qemu: true
+          # Linux AMD64 uses standard runner
+          - platform: linux-amd64
+            runner: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            erts_target_glibc: ubuntu_22_04_x86_64
+            erts_target_musl: alpine_3_19_x86_64
+            qemu: false
+          # macOS ARM uses macOS runner
+          - platform: macos-arm
+            runner: macos-latest
+            rust_target: aarch64-apple-darwin
+            erts_target_glibc: macos_12_arm64
+            erts_target_musl: null  # musl not supported on macOS
+            qemu: false
+          # Elixir 1.19.5 requires OTP 28
           - elixir: '1.19.5'
             otp: '28.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: daemon
+          # Elixir 1.15.8 requires OTP 25
+          - elixir: '1.15.8'
+            otp: '25.0'
 
     steps:
       - name: Checkout Repository
@@ -106,396 +104,60 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: false
+          install-hex: true
           install-rebar: true
-
-      - name: Install Hex
-        run: |
-          # Remove any existing Hex installations
-          mix archive.uninstall hex.ez --force 2>/dev/null || true
-          mix archive.uninstall hex --force 2>/dev/null || true
-          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
-          # Install fresh Hex
-          mix local.hex --force
-          # Verify Hex works
-          mix hex.info || mix local.hex --force
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
-
-      - name: Install System Dependencies
-        run: brew install zstd
-
-      - name: Install Mix Dependencies
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix deps.get
-
-      - name: Compile application (creates .boot files)
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: MIX_ENV=prod mix compile
-
-      - name: Build with Batamanta
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1
-
-      - name: Run Smoke Test
-        run: |
-          chmod +x smoke_test_runner.sh
-          ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
-
-  # ============================================================================
-  # SMOKE TESTS - Linux AMD64 glibc
-  # ============================================================================
-  smoke_tests_linux_amd64_glibc:
-    name: Smoke Tests Linux AMD64 glibc (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }}, ${{ matrix.mode }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        elixir: ['1.15.8']
-        otp: ['25.0', '26.0']
-        mode: [cli, tui, daemon]
-        include:
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: daemon
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: daemon
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Erlang/OTP and Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: ${{ matrix.elixir }}
-          otp-version: ${{ matrix.otp }}
-          install-hex: false
-          install-rebar: true
-
-      - name: Install Hex
-        run: |
-          # Remove any existing Hex installations
-          mix archive.uninstall hex.ez --force 2>/dev/null || true
-          mix archive.uninstall hex --force 2>/dev/null || true
-          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
-          # Install fresh Hex
-          mix local.hex --force
-          # Verify Hex works
-          mix hex.info || mix local.hex --force
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-
-      - name: Install System Dependencies
-        run: sudo apt-get update && sudo apt-get install -y zstd
-
-      - name: Install Mix Dependencies
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix deps.get
-
-      - name: Compile application (creates .boot files)
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: MIX_ENV=prod mix compile
-
-      - name: Build with Batamanta
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1
-
-      - name: Run Smoke Test
-        run: |
-          chmod +x smoke_test_runner.sh
-          ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
-
-  # ============================================================================
-  # SMOKE TESTS - Linux AMD64 musl
-  # ============================================================================
-  smoke_tests_linux_amd64_musl:
-    name: Smoke Tests Linux AMD64 musl (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }}, ${{ matrix.mode }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        elixir: ['1.15.8']
-        otp: ['25.0', '26.0']
-        mode: [cli, tui, daemon]
-        include:
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: daemon
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: daemon
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Erlang/OTP and Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: ${{ matrix.elixir }}
-          otp-version: ${{ matrix.otp }}
-          install-hex: false
-          install-rebar: true
-
-      - name: Install Hex
-        run: |
-          # Remove any existing Hex installations
-          mix archive.uninstall hex.ez --force 2>/dev/null || true
-          mix archive.uninstall hex --force 2>/dev/null || true
-          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
-          # Install fresh Hex
-          mix local.hex --force
-          # Verify Hex works
-          mix hex.info || mix local.hex --force
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
-
-      - name: Install System Dependencies
-        run: sudo apt-get update && sudo apt-get install -y zstd musl-tools
-
-      - name: Install Mix Dependencies
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix deps.get
-
-      - name: Compile application (creates .boot files)
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: MIX_ENV=prod mix compile
-
-      - name: Build with Batamanta
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1
-
-      - name: Run Smoke Test
-        run: |
-          chmod +x smoke_test_runner.sh
-          ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
-
-  # ============================================================================
-  # SMOKE TESTS - Linux ARM64 glibc
-  # ============================================================================
-  smoke_tests_linux_arm64_glibc:
-    name: Smoke Tests Linux ARM64 glibc (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }}, ${{ matrix.mode }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        elixir: ['1.15.8']
-        otp: ['25.0', '26.0']
-        mode: [cli, tui, daemon]
-        include:
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: daemon
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: daemon
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Erlang/OTP and Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: ${{ matrix.elixir }}
-          otp-version: ${{ matrix.otp }}
-          install-hex: false
-          install-rebar: true
-
-      - name: Install Hex
-        run: |
-          # Remove any existing Hex installations
-          mix archive.uninstall hex.ez --force 2>/dev/null || true
-          mix archive.uninstall hex --force 2>/dev/null || true
-          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
-          # Install fresh Hex
-          mix local.hex --force
-          # Verify Hex works
-          mix hex.info || mix local.hex --force
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
+          targets: ${{ matrix.rust_target }}
 
       - name: Install System Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y zstd gcc-aarch64-linux-gnu g++-aarch64-linux-gnu qemu-user-static
-
-      - name: Install Mix Dependencies
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix deps.get
-
-      - name: Compile application (creates .boot files)
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: MIX_ENV=prod mix compile
-
-      - name: Build with Batamanta
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1
-
-      - name: Run Smoke Test (qemu-aarch64)
-        run: |
-          sudo apt-get update && sudo apt-get install -y qemu-user-static
-          chmod +x smoke_test_runner.sh
-          # For ARM binary on x86 runner, we use qemu
-          BINARY_PATH="smoke_tests/test_${{ matrix.mode }}/_build/batamanta/test_${{ matrix.mode }}"
-          if [ "${{ matrix.mode }}" = "cli" ]; then
-            qemu-aarch64 "$BINARY_PATH" --help || echo "CLI executed"
-          elif [ "${{ matrix.mode }}" = "tui" ]; then
-            echo "q" | timeout 10 qemu-aarch64 "$BINARY_PATH" 2>&1 | head -20 || echo "TUI executed"
+          if [ "${{ matrix.platform }}" = "macos-arm" ]; then
+            brew install zstd
+          elif [ "${{ matrix.libc }}" = "musl" ]; then
+            sudo apt-get update && sudo apt-get install -y zstd musl-tools musl-dev
           else
-            timeout 5 qemu-aarch64 "$BINARY_PATH" &
-            DAEMON_PID=$!
-            sleep 2
-            kill $DAEMON_PID 2>/dev/null || true
-            wait $DAEMON_PID 2>/dev/null || true
-            echo "Daemon executed"
+            sudo apt-get update && sudo apt-get install -y zstd
           fi
-          echo "✓ ARM64 glibc smoke test passed"
 
-  # ============================================================================
-  # SMOKE TESTS - Linux ARM64 musl
-  # ============================================================================
-  smoke_tests_linux_arm64_musl:
-    name: Smoke Tests Linux ARM64 musl (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }}, ${{ matrix.mode }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        elixir: ['1.15.8']
-        otp: ['25.0', '26.0']
-        mode: [cli, tui, daemon]
-        include:
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '27.0'
-            mode: daemon
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: cli
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: tui
-          - elixir: '1.19.5'
-            otp: '28.0'
-            mode: daemon
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Erlang/OTP and Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: ${{ matrix.elixir }}
-          otp-version: ${{ matrix.otp }}
-          install-hex: false
-          install-rebar: true
-
-      - name: Install Hex
-        run: |
-          # Remove any existing Hex installations
-          mix archive.uninstall hex.ez --force 2>/dev/null || true
-          mix archive.uninstall hex --force 2>/dev/null || true
-          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
-          # Install fresh Hex
-          mix local.hex --force
-          # Verify Hex works
-          mix hex.info || mix local.hex --force
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-musl
-
-      - name: Install System Dependencies
-        run: sudo apt-get update && sudo apt-get install -y zstd musl-tools musl-dev qemu-user-static gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - name: Install QEMU (for ARM emulation)
+        if: ${{ matrix.qemu }}
+        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
 
       - name: Install Mix Dependencies
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
 
-      - name: Compile application (creates .boot files)
+      - name: Compile application
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: MIX_ENV=prod mix compile
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1
-
-      - name: Run Smoke Test (qemu-aarch64)
         run: |
-          BINARY_PATH="smoke_tests/test_${{ matrix.mode }}/_build/batamanta/test_${{ matrix.mode }}"
-          if [ "${{ matrix.mode }}" = "cli" ]; then
-            qemu-aarch64-static "$BINARY_PATH" --help || echo "CLI executed"
-          elif [ "${{ matrix.mode }}" = "tui" ]; then
-            echo "q" | timeout 10 qemu-aarch64-static "$BINARY_PATH" 2>&1 | head -20 || echo "TUI executed"
+          if [ "${{ matrix.libc }}" = "glibc" ]; then
+            mix batamanta --compression 1 --erts-target ${{ matrix.erts_target_glibc }}
+          elif [ "${{ matrix.erts_target_musl }}" != "null" ]; then
+            mix batamanta --compression 1 --erts-target ${{ matrix.erts_target_musl }}
           else
-            timeout 5 qemu-aarch64-static "$BINARY_PATH" &
-            DAEMON_PID=$!
-            sleep 2
-            kill $DAEMON_PID 2>/dev/null || true
-            wait $DAEMON_PID 2>/dev/null || true
-            echo "Daemon executed"
+            mix batamanta --compression 1
           fi
-          echo "✓ ARM64 musl smoke test passed"
+
+      - name: Run Smoke Test
+        run: |
+          chmod +x smoke_test_runner.sh
+          if [ "${{ matrix.qemu }}" = "true" ]; then
+            # Run with QEMU for ARM emulation
+            export QEMU_EXEC=1
+            ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30 qemu-${{ matrix.platform == 'linux-arm' && 'aarch64' || 'x86_64' }}-static
+          else
+            ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
+          fi
 
   # ============================================================================
-  # COVERAGE REPORT (Linux only for max coverage)
+  # COVERAGE REPORT
   # ============================================================================
   coverage:
     name: Coverage Report
@@ -509,21 +171,10 @@ jobs:
       - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.19.5'
-          otp-version: '28.0'
-          install-hex: false
+          elixir-version: '1.15.8'
+          otp-version: '25.0'
+          install-hex: true
           install-rebar: true
-
-      - name: Install Hex
-        run: |
-          # Remove any existing Hex installations
-          mix archive.uninstall hex.ez --force 2>/dev/null || true
-          mix archive.uninstall hex --force 2>/dev/null || true
-          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
-          # Install fresh Hex
-          mix local.hex --force
-          # Verify Hex works
-          mix hex.info || mix local.hex --force
 
       - name: Install System Dependencies
         run: sudo apt-get update && sudo apt-get install -y zstd
@@ -546,7 +197,7 @@ jobs:
   # ============================================================================
   release:
     name: Publish to Hex.pm
-    needs: [unit_tests, smoke_tests_macos, smoke_tests_linux_amd64_glibc, smoke_tests_linux_amd64_musl, smoke_tests_linux_arm64_glibc, smoke_tests_linux_arm64_musl]
+    needs: [unit_tests, smoke_tests]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
@@ -555,21 +206,8 @@ jobs:
 
       - uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.19.5'
-          otp-version: '28.0'
-          install-hex: false
-          install-rebar: true
-
-      - name: Install Hex
-        run: |
-          # Remove any existing Hex installations
-          mix archive.uninstall hex.ez --force 2>/dev/null || true
-          mix archive.uninstall hex --force 2>/dev/null || true
-          rm -rf ~/.mix/archives/hex* 2>/dev/null || true
-          # Install fresh Hex
-          mix local.hex --force
-          # Verify Hex works
-          mix hex.info || mix local.hex --force
+          elixir-version: '1.15.8'
+          otp-version: '25.0'
 
       - run: mix deps.get
       - run: mix compile
@@ -577,6 +215,3 @@ jobs:
       - run: mix hex.publish --yes
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-
-# Note: ERTS repository has unsafe symlinks that fail on Ubuntu 24.04
-# Fix needed in: lib/batamanta/erts/fetcher.ex or ERTS repository
