@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/batamantaman.png" width="400" alt="Mascota Batamanta" />
+  <img src="https://raw.githubusercontent.com/Lorenzo-SF/Batamanta/main/assets/batamantaman.png" width="400" alt="Mascota Batamanta" />
 </p>
 
 > Empaqueta tus aplicaciones Elixir como ejecutables 100% autocontenidos. No requiere Erlang/Elixir en la máquina destino.

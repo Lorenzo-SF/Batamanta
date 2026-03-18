@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/batamantaman.png" width="400" alt="Batamanta Mascot" />
+  <img src="https://raw.githubusercontent.com/Lorenzo-SF/Batamanta/main/assets/batamantaman.png" width="400" alt="Batamanta Mascot" />
 </p>
 
 > Package your Elixir applications as 100% self-contained executables. No Erlang/Elixir installation required on the target machine.
