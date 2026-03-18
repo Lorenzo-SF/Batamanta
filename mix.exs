@@ -3,7 +3,6 @@ defmodule Batamanta.MixProject do
 
   @version "1.0.0"
   @source_url "https://github.com/Lorenzo-SF/Batamanta"
-  # Establecemos la línea de corte al nivel de ex_doc (Elixir 1.15 / OTP 24)
   @elixir_vsn "~> 1.15"
 
   def project do
