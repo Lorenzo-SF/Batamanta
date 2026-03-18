@@ -216,9 +216,9 @@ jobs:
         working-directory: smoke_tests/test_${{ matrix.mode }}
         run: mix deps.get
 
-      - name: Compile application
+      - name: Generate release (creates .boot files)
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: MIX_ENV=prod mix compile
+        run: mix release
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
