@@ -5,7 +5,19 @@ defmodule Mix.Tasks.Batamanta do
   This task orchestrates the fetching of ERTS, packaging of the release,
   and compilation of the Rust wrapper.
 
-  ## New Unified Configuration
+  ## OTP Version Control
+
+  **User specifies, user owns.** If you specify `otp_version`, that exact version
+  is used. If not specified (auto mode), a conservative fallback is used.
+
+      batamanta: [
+        otp_version: "28.1"  # Uses exact version, fails if not available
+      ]
+
+  In auto mode (no version specified), the system tries:
+  - 28.0 → 28.1 → 28.2 → ... (fallback to first available)
+
+  ## ERTS Target Configuration
 
   Use `:erts_target` for unified platform specification:
 
@@ -53,6 +65,7 @@ defmodule Mix.Tasks.Batamanta do
 
   ## CLI Options
   - `--erts-target` - Override ERTS target atom
+  - `--otp-version` - Specify exact OTP version (e.g., "28.1")
   - `--force-os` - Force OS (linux, macos, windows)
   - `--force-arch` - Force architecture (x86_64, aarch64)
   - `--force-libc` - Force libc (gnu, musl) - Linux only
@@ -88,11 +101,13 @@ defmodule Mix.Tasks.Batamanta do
     target_info = Target.get_target_info(resolved_target)
 
     # Obtener versión de OTP
-    otp_version = resolve_otp_version(opts, bata_config)
+    {otp_version, version_mode} = resolve_otp_version(opts, bata_config)
 
     # Build banner (if enabled) - returns context for streaming logs
     show_banner = Keyword.get(bata_config, :show_banner, true)
-    banner_ctx = build_banner(otp_version, target_info, resolved_target, show_banner)
+
+    banner_ctx =
+      build_banner(otp_version, target_info, resolved_target, show_banner, version_mode)
 
     # Validar configuración
     execution_mode = Keyword.get(bata_config, :execution_mode, :cli)
@@ -130,7 +145,8 @@ defmodule Mix.Tasks.Batamanta do
           force_os: :string,
           force_arch: :string,
           force_libc: :string,
-          compression: :integer
+          compression: :integer,
+          otp_version: :string
         ]
       )
 
@@ -160,20 +176,34 @@ defmodule Mix.Tasks.Batamanta do
 
   @doc """
   Resolves OTP version from options and config.
+
+  Returns a tuple with:
+  - version string
+  - mode: :explicit (user specified) or :auto (detected from system)
+
+  ## User Control
+  - If user specifies `otp_version` in config or CLI, that exact version is used
+  - If no version specified (auto mode), uses conservative fallback (tries 28.0, 28.1, etc.)
   """
   def resolve_otp_version(opts, bata_config) do
-    Keyword.get(bata_config, :otp_version) ||
+    explicit_version =
       Keyword.get(opts, :otp_version) ||
-      :erlang.system_info(:otp_release) |> to_string()
+        Keyword.get(bata_config, :otp_version)
+
+    if explicit_version do
+      {explicit_version, :explicit}
+    else
+      {:erlang.system_info(:otp_release) |> to_string(), :auto}
+    end
   end
 
-  defp fetch_erts(otp_version, resolved_target, _target_info, banner_ctx) do
-    url = ERTS.Fetcher.build_download_url(otp_version, resolved_target)
-    Logger.info(banner_ctx, ">> 🔗 URL: #{url}")
+  # Fetches ERTS based on version and mode.
+  defp fetch_erts({otp_version, mode}, resolved_target, _target_info, banner_ctx) do
+    # Note: The fetcher already handles all logging (URL, fetching, cached, etc.)
+    # to avoid duplicate messages. The caller should not print additional messages.
 
-    case ERTS.Fetcher.fetch(otp_version, resolved_target) do
+    case ERTS.Fetcher.fetch(otp_version, resolved_target, version_mode: mode) do
       {:ok, erts_path} ->
-        Logger.info(banner_ctx, ">> ✅ ERTS cached at: #{erts_path}")
         {:ok, erts_path}
 
       {:error, reason} ->
@@ -224,9 +254,21 @@ defmodule Mix.Tasks.Batamanta do
   end
 
   defp get_release_path(app) do
-    Mix.Project.build_path()
-    |> Path.join("rel")
-    |> Path.join(Atom.to_string(app))
+    # The release is built with MIX_ENV=prod, so we need to construct the prod path
+    # Mix.Project.build_path() returns _build/<current_env>/<app>.beam
+    # We need to go up and change to prod
+    current_build = Mix.Project.build_path()
+
+    # Extract project root by going up from _build/<env>/<app>.beam
+    project_root =
+      current_build
+      # _build/<env>
+      |> Path.dirname()
+      # project root
+      |> Path.dirname()
+
+    # Construct prod release path
+    Path.join([project_root, "_build", "prod", "rel", Atom.to_string(app)])
     |> Path.absname()
   end
 
@@ -276,12 +318,14 @@ defmodule Mix.Tasks.Batamanta do
     :ok
   end
 
-  defp build_banner(otp_version, target_info, _resolved_target, show_banner) do
+  defp build_banner(otp_version, target_info, _resolved_target, show_banner, version_mode) do
+    mode_str = if version_mode == :explicit, do: " (user-specified)", else: " (auto-detected)"
+
     messages = [
       ">> 🖥️  OS: #{target_info.os}",
       ">> ⚙️  Architecture: #{target_info.arch}",
       ">> 📦 Type: #{target_info.libc || "N/A"}",
-      ">> 🔢 ERTS: #{otp_version}"
+      ">> 🔢 ERTS: #{otp_version}#{mode_str}"
     ]
 
     # Show banner with context to allow streaming logs and image update

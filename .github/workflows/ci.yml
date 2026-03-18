@@ -2,7 +2,7 @@ name: CI - Smoke Tests Matrix
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
     tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
@@ -10,9 +10,16 @@ on:
 permissions:
   contents: read
 
+env:
+  # Edge versions for testing
+  ELIXIR_OLD: '1.15.8'
+  ELIXIR_NEW: '1.18.4'
+  OTP_OLD: '25.3.2'
+  OTP_NEW: '28.1'
+
 jobs:
   # ============================================================================
-  # UNIT TESTS
+  # UNIT TESTS - Edge versions
   # ============================================================================
   unit_tests:
     name: Unit Tests (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }})
@@ -20,8 +27,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        elixir: ['1.15.8', '1.18.4']
-        otp: ['25.0', '28.0']
+        include:
+          - elixir: ${{ env.ELIXIR_OLD }}
+            otp: ${{ env.OTP_OLD }}
+          - elixir: ${{ env.ELIXIR_NEW }}
+            otp: ${{ env.OTP_NEW }}
 
     steps:
       - name: Checkout Repository
@@ -48,15 +58,18 @@ jobs:
         run: mix credo --strict
 
   # ============================================================================
-  # SMOKE TESTS - macOS
+  # SMOKE TESTS - macOS x86_64
   # ============================================================================
-  smoke_tests_macos:
-    name: Smoke Tests macOS (${{ matrix.mode }})
+  smoke_tests_macos_amd64:
+    name: Smoke Tests macOS AMD64 (${{ matrix.mode }})
     runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
         mode: [cli, tui, daemon]
+        include:
+          - elixir: ${{ env.ELIXIR_NEW }}
+            otp: ${{ env.OTP_NEW }}
 
     steps:
       - name: Checkout Repository
@@ -65,8 +78,55 @@ jobs:
       - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.18.4'
-          otp-version: '28.0'
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+          install-hex: true
+          install-rebar: true
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Install System Dependencies
+        run: brew install zstd
+
+      - name: Install Mix Dependencies
+        working-directory: smoke_tests/test_${{ matrix.mode }}
+        run: mix deps.get
+
+      - name: Build with Batamanta
+        working-directory: smoke_tests/test_${{ matrix.mode }}
+        run: mix batamanta --compression 1 --erts-target macos_12_x86_64
+
+      - name: Run Smoke Test
+        run: |
+          chmod +x smoke_test_runner.sh
+          ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
+
+  # ============================================================================
+  # SMOKE TESTS - macOS ARM (Apple Silicon)
+  # ============================================================================
+  smoke_tests_macos_arm64:
+    name: Smoke Tests macOS ARM64 (${{ matrix.mode }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [cli]
+        include:
+          - elixir: ${{ env.ELIXIR_NEW }}
+            otp: ${{ env.OTP_NEW }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Erlang/OTP and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
           install-hex: true
           install-rebar: true
 
@@ -84,7 +144,7 @@ jobs:
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1
+        run: mix batamanta --compression 1 --erts-target macos_12_arm64
 
       - name: Run Smoke Test
         run: |
@@ -92,15 +152,18 @@ jobs:
           ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
 
   # ============================================================================
-  # SMOKE TESTS - Linux glibc
+  # SMOKE TESTS - Linux AMD64 glibc
   # ============================================================================
-  smoke_tests_linux_glibc:
-    name: Smoke Tests Linux glibc (${{ matrix.mode }})
+  smoke_tests_linux_amd64_glibc:
+    name: Smoke Tests Linux AMD64 glibc (${{ matrix.mode }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         mode: [cli, tui, daemon]
+        include:
+          - elixir: ${{ env.ELIXIR_NEW }}
+            otp: ${{ env.OTP_NEW }}
 
     steps:
       - name: Checkout Repository
@@ -109,8 +172,8 @@ jobs:
       - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.18.4'
-          otp-version: '28.0'
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
           install-hex: true
           install-rebar: true
 
@@ -128,7 +191,7 @@ jobs:
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1
+        run: mix batamanta --compression 1 --erts-target ubuntu_22_04_x86_64
 
       - name: Run Smoke Test
         run: |
@@ -136,7 +199,149 @@ jobs:
           ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
 
   # ============================================================================
-  # DOCKER MATRIX - Linux glibc/musl × OTP versions
+  # SMOKE TESTS - Linux AMD64 musl (Alpine)
+  # ============================================================================
+  smoke_tests_linux_amd64_musl:
+    name: Smoke Tests Linux AMD64 musl
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: ${{ env.ELIXIR_NEW }}
+            otp: ${{ env.OTP_NEW }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Erlang/OTP and Elixir (Alpine)
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+          install-hex: true
+          install-rebar: true
+          apt-mirror: 'https://nl.alpinelinux.org/alpine/v3.19/community'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install System Dependencies (Alpine in Docker)
+        run: |
+          docker build -t batamanta-alpine-test - <<'EOF'
+          FROM alpine:3.19
+          RUN apk add --no-cache erlang elixir zstd curl build-base rust cargo
+          EOF
+
+      - name: Build with Batamanta
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/project" \
+            -w /project/smoke_tests/test_cli \
+            batamanta-alpine-test \
+            sh -c "mix deps.get && mix batamanta --compression 1 --erts-target alpine_3_19_x86_64"
+
+      - name: Run Smoke Test
+        run: |
+          chmod +x smoke_test_runner.sh
+          ./smoke_test_runner.sh smoke_tests/test_cli cli 30
+
+  # ============================================================================
+  # SMOKE TESTS - Linux ARM64 glibc
+  # ============================================================================
+  smoke_tests_linux_arm64_glibc:
+    name: Smoke Tests Linux ARM64 glibc
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: ${{ env.ELIXIR_NEW }}
+            otp: ${{ env.OTP_NEW }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Erlang/OTP and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+          install-hex: true
+          install-rebar: true
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install System Dependencies
+        run: sudo apt-get update && sudo apt-get install -y zstd
+
+      - name: Build with Batamanta (cross-compile)
+        working-directory: smoke_tests/test_cli
+        run: |
+          cargo build --release --target aarch64-unknown-linux-gnu --manifest-path priv/rust_template/Cargo.toml 2>/dev/null || true
+          mix batamanta --compression 1 --erts-target ubuntu_22_04_arm64
+
+      - name: Run Smoke Test (in Docker ARM64 emulation)
+        run: |
+          chmod +x smoke_test_runner.sh
+          ./smoke_test_runner.sh smoke_tests/test_cli cli 30
+
+  # ============================================================================
+  # SMOKE TESTS - Linux ARM64 musl
+  # ============================================================================
+  smoke_tests_linux_arm64_musl:
+    name: Smoke Tests Linux ARM64 musl
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: ${{ env.ELIXIR_NEW }}
+            otp: ${{ env.OTP_NEW }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+
+      - name: Build with Batamanta (Alpine Docker)
+        run: |
+          docker build -t batamanta-alpine-arm64-test - <<'EOF'
+          FROM alpine:3.19
+          RUN apk add --no-cache erlang elixir zstd curl build-base rust cargo
+          EOF
+          
+          docker run --rm \
+            --platform linux/arm64 \
+            -v "${{ github.workspace }}:/project" \
+            -w /project/smoke_tests/test_cli \
+            batamanta-alpine-arm64-test \
+            sh -c "mix deps.get && mix batamanta --compression 1 --erts-target alpine_3_19_arm64"
+
+      - name: Run Smoke Test
+        run: |
+          chmod +x smoke_test_runner.sh
+          ./smoke_test_runner.sh smoke_tests/test_cli cli 30
+
+  # ============================================================================
+  # DOCKER MATRIX - Full coverage
   # ============================================================================
   docker_matrix:
     name: Docker Matrix (${{ matrix.image }})
@@ -144,11 +349,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image:
-          - elixir:1.15.8-otp-25
-          - elixir:1.18.4-otp-28
-          - elixir:1.15.8-otp-25-alpine
-          - elixir:1.18.4-otp-28-alpine
+        include:
+          # Old stable
+          - image: elixir:${{ env.ELIXIR_OLD }}-otp-${{ env.OTP_OLD }}
+            libtype: glibc
+          # New stable
+          - image: elixir:${{ env.ELIXIR_NEW }}-otp-${{ env.OTP_NEW }}
+            libtype: glibc
+          # Old Alpine (musl)
+          - image: elixir:${{ env.ELIXIR_OLD }}-otp-${{ env.OTP_OLD }}-alpine
+            libtype: musl
+          # New Alpine (musl)
+          - image: elixir:${{ env.ELIXIR_NEW }}-otp-${{ env.OTP_NEW }}-alpine
+            libtype: musl
 
     steps:
       - name: Checkout Repository
@@ -160,7 +373,7 @@ jobs:
           ./docker_matrix_simple.sh ${{ matrix.image }}
 
   # ============================================================================
-  # COVERAGE REPORT (Linux only for max coverage)
+  # COVERAGE REPORT
   # ============================================================================
   coverage:
     name: Coverage Report
@@ -174,8 +387,8 @@ jobs:
       - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.18.4'
-          otp-version: '28.0'
+          elixir-version: ${{ env.ELIXIR_NEW }}
+          otp-version: ${{ env.OTP_NEW }}
           install-hex: true
           install-rebar: true
 
@@ -200,7 +413,7 @@ jobs:
   # ============================================================================
   release:
     name: Publish to Hex.pm
-    needs: [unit_tests, smoke_tests_macos, smoke_tests_linux_glibc, docker_matrix]
+    needs: [unit_tests, smoke_tests_macos_amd64, smoke_tests_linux_amd64_glibc, docker_matrix]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
@@ -209,8 +422,8 @@ jobs:
       
       - uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.18.4'
-          otp-version: '28.0'
+          elixir-version: ${{ env.ELIXIR_NEW }}
+          otp-version: ${{ env.OTP_NEW }}
       
       - run: mix deps.get
       - run: mix compile
