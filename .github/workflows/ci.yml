@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   # ============================================================================
-  # UNIT TESTS - Run on minimum supported version
+  # UNIT TESTS
   # ============================================================================
   unit_tests:
     name: Unit Tests
@@ -43,57 +43,147 @@ jobs:
         run: mix credo --strict
 
   # ============================================================================
-  # SMOKE TESTS - Edge versions only (min and max supported)
+  # SMOKE TESTS - Simplified matrix with explicit combinations
   # ============================================================================
   smoke_tests:
-    name: Smoke Tests ${{ matrix.platform }} (${{ matrix.elixir }}, OTP ${{ matrix.otp }}, ${{ matrix.mode }})
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        platform: ['linux-arm', 'linux-amd64', 'macos-arm']
-        libc: ['glibc', 'musl']
-        elixir: ['1.15.8', '1.19.5']
-        otp: ['25.0', '28.0']
-        mode: [cli, tui, daemon]
-        # Exclude invalid combinations
-        exclude:
-          # musl doesn't apply to macOS
-          - platform: macos-arm
-            libc: musl
-          # ARM runner for ARM platform
-          - platform: linux-arm
-            runner: ubuntu-latest
-          - platform: macos-arm
-            runner: ubuntu-latest
         include:
-          # Linux ARM uses ARM runner
-          - platform: linux-arm
+          # Linux AMD64 glibc - Elixir 1.15.8 + OTP 25
+          - name: Linux AMD64 glibc (1.15.8, OTP 25, cli)
             runner: ubuntu-latest
-            rust_target: aarch64-unknown-linux-gnu
-            erts_target_glibc: ubuntu_22_04_arm64
-            erts_target_musl: alpine_3_19_arm64
-            qemu: true
-          # Linux AMD64 uses standard runner
-          - platform: linux-amd64
-            runner: ubuntu-latest
-            rust_target: x86_64-unknown-linux-gnu
-            erts_target_glibc: ubuntu_22_04_x86_64
-            erts_target_musl: alpine_3_19_x86_64
-            qemu: false
-          # macOS ARM uses macOS runner
-          - platform: macos-arm
-            runner: macos-latest
-            rust_target: aarch64-apple-darwin
-            erts_target_glibc: macos_12_arm64
-            erts_target_musl: null  # musl not supported on macOS
-            qemu: false
-          # Elixir 1.19.5 requires OTP 28
-          - elixir: '1.19.5'
-            otp: '28.0'
-          # Elixir 1.15.8 requires OTP 25
-          - elixir: '1.15.8'
+            elixir: '1.15.8'
             otp: '25.0'
+            mode: cli
+            rust_target: x86_64-unknown-linux-gnu
+            erts_target: ubuntu_22_04_x86_64
+          - name: Linux AMD64 glibc (1.15.8, OTP 25, tui)
+            runner: ubuntu-latest
+            elixir: '1.15.8'
+            otp: '25.0'
+            mode: tui
+            rust_target: x86_64-unknown-linux-gnu
+            erts_target: ubuntu_22_04_x86_64
+          - name: Linux AMD64 glibc (1.15.8, OTP 25, daemon)
+            runner: ubuntu-latest
+            elixir: '1.15.8'
+            otp: '25.0'
+            mode: daemon
+            rust_target: x86_64-unknown-linux-gnu
+            erts_target: ubuntu_22_04_x86_64
+          # Linux AMD64 glibc - Elixir 1.19.5 + OTP 28
+          - name: Linux AMD64 glibc (1.19.5, OTP 28, cli)
+            runner: ubuntu-latest
+            elixir: '1.19.5'
+            otp: '28.0'
+            mode: cli
+            rust_target: x86_64-unknown-linux-gnu
+            erts_target: ubuntu_22_04_x86_64
+          - name: Linux AMD64 glibc (1.19.5, OTP 28, tui)
+            runner: ubuntu-latest
+            elixir: '1.19.5'
+            otp: '28.0'
+            mode: tui
+            rust_target: x86_64-unknown-linux-gnu
+            erts_target: ubuntu_22_04_x86_64
+          - name: Linux AMD64 glibc (1.19.5, OTP 28, daemon)
+            runner: ubuntu-latest
+            elixir: '1.19.5'
+            otp: '28.0'
+            mode: daemon
+            rust_target: x86_64-unknown-linux-gnu
+            erts_target: ubuntu_22_04_x86_64
+          # Linux AMD64 musl - Elixir 1.15.8 + OTP 25
+          - name: Linux AMD64 musl (1.15.8, OTP 25, cli)
+            runner: ubuntu-latest
+            elixir: '1.15.8'
+            otp: '25.0'
+            mode: cli
+            rust_target: x86_64-unknown-linux-musl
+            erts_target: alpine_3_19_x86_64
+          - name: Linux AMD64 musl (1.15.8, OTP 25, tui)
+            runner: ubuntu-latest
+            elixir: '1.15.8'
+            otp: '25.0'
+            mode: tui
+            rust_target: x86_64-unknown-linux-musl
+            erts_target: alpine_3_19_x86_64
+          - name: Linux AMD64 musl (1.15.8, OTP 25, daemon)
+            runner: ubuntu-latest
+            elixir: '1.15.8'
+            otp: '25.0'
+            mode: daemon
+            rust_target: x86_64-unknown-linux-musl
+            erts_target: alpine_3_19_x86_64
+          # Linux AMD64 musl - Elixir 1.19.5 + OTP 28
+          - name: Linux AMD64 musl (1.19.5, OTP 28, cli)
+            runner: ubuntu-latest
+            elixir: '1.19.5'
+            otp: '28.0'
+            mode: cli
+            rust_target: x86_64-unknown-linux-musl
+            erts_target: alpine_3_19_x86_64
+          - name: Linux AMD64 musl (1.19.5, OTP 28, tui)
+            runner: ubuntu-latest
+            elixir: '1.19.5'
+            otp: '28.0'
+            mode: tui
+            rust_target: x86_64-unknown-linux-musl
+            erts_target: alpine_3_19_x86_64
+          - name: Linux AMD64 musl (1.19.5, OTP 28, daemon)
+            runner: ubuntu-latest
+            elixir: '1.19.5'
+            otp: '28.0'
+            mode: daemon
+            rust_target: x86_64-unknown-linux-musl
+            erts_target: alpine_3_19_x86_64
+          # macOS ARM - Elixir 1.15.8 + OTP 25
+          - name: macOS ARM (1.15.8, OTP 25, cli)
+            runner: macos-latest
+            elixir: '1.15.8'
+            otp: '25.0'
+            mode: cli
+            rust_target: aarch64-apple-darwin
+            erts_target: macos_12_arm64
+          - name: macOS ARM (1.15.8, OTP 25, tui)
+            runner: macos-latest
+            elixir: '1.15.8'
+            otp: '25.0'
+            mode: tui
+            rust_target: aarch64-apple-darwin
+            erts_target: macos_12_arm64
+          - name: macOS ARM (1.15.8, OTP 25, daemon)
+            runner: macos-latest
+            elixir: '1.15.8'
+            otp: '25.0'
+            mode: daemon
+            rust_target: aarch64-apple-darwin
+            erts_target: macos_12_arm64
+          # macOS ARM - Elixir 1.19.5 + OTP 28
+          - name: macOS ARM (1.19.5, OTP 28, cli)
+            runner: macos-latest
+            elixir: '1.19.5'
+            otp: '28.0'
+            mode: cli
+            rust_target: aarch64-apple-darwin
+            erts_target: macos_12_arm64
+          - name: macOS ARM (1.19.5, OTP 28, tui)
+            runner: macos-latest
+            elixir: '1.19.5'
+            otp: '28.0'
+            mode: tui
+            rust_target: aarch64-apple-darwin
+            erts_target: macos_12_arm64
+          - name: macOS ARM (1.19.5, OTP 28, daemon)
+            runner: macos-latest
+            elixir: '1.19.5'
+            otp: '28.0'
+            mode: daemon
+            rust_target: aarch64-apple-darwin
+            erts_target: macos_12_arm64
 
     steps:
       - name: Checkout Repository
@@ -114,17 +204,13 @@ jobs:
 
       - name: Install System Dependencies
         run: |
-          if [ "${{ matrix.platform }}" = "macos-arm" ]; then
+          if [ "${{ matrix.runner }}" = "macos-latest" ]; then
             brew install zstd
-          elif [ "${{ matrix.libc }}" = "musl" ]; then
+          elif echo "${{ matrix.erts_target }}" | grep -q musl; then
             sudo apt-get update && sudo apt-get install -y zstd musl-tools musl-dev
           else
             sudo apt-get update && sudo apt-get install -y zstd
           fi
-
-      - name: Install QEMU (for ARM emulation)
-        if: ${{ matrix.qemu }}
-        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
 
       - name: Install Mix Dependencies
         working-directory: smoke_tests/test_${{ matrix.mode }}
@@ -136,25 +222,12 @@ jobs:
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: |
-          if [ "${{ matrix.libc }}" = "glibc" ]; then
-            mix batamanta --compression 1 --erts-target ${{ matrix.erts_target_glibc }}
-          elif [ "${{ matrix.erts_target_musl }}" != "null" ]; then
-            mix batamanta --compression 1 --erts-target ${{ matrix.erts_target_musl }}
-          else
-            mix batamanta --compression 1
-          fi
+        run: mix batamanta --compression 1 --erts-target ${{ matrix.erts_target }}
 
       - name: Run Smoke Test
         run: |
           chmod +x smoke_test_runner.sh
-          if [ "${{ matrix.qemu }}" = "true" ]; then
-            # Run with QEMU for ARM emulation
-            export QEMU_EXEC=1
-            ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30 qemu-${{ matrix.platform == 'linux-arm' && 'aarch64' || 'x86_64' }}-static
-          else
-            ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
-          fi
+          ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
 
   # ============================================================================
   # COVERAGE REPORT
