@@ -38,7 +38,7 @@ defmodule Mix.Tasks.Batamanta do
   | `:alpine_3_19_arm64` | Linux aarch64 musl |
   | `:macos_12_x86_64` | macOS Intel |
   | `:macos_12_arm64` | macOS Apple Silicon |
-  | `:windows_x86_64` | Windows (coming soon) |
+   | `:windows_x86_64` | Windows x86_64 |
 
   ## Manual Overrides
 
