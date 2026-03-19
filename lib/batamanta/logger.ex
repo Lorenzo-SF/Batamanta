@@ -8,7 +8,8 @@ defmodule Batamanta.Logger do
 
   alias Batamanta.Banner
 
-  @type banner_ctx :: Batamanta.Banner.Context.t() | nil
+  # Banner context type - either a Banner.Context struct or nil
+  @type banner_ctx :: map() | nil
 
   @doc """
   Logs a message through the banner or standard shell.

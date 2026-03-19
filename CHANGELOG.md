@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-03-19
+
+### Added
+- **OTP Version Control**: Users can specify exact OTP versions in config (`otp_version: "28.1"`) or via CLI (`--otp-version`)
+- **Explicit vs Auto Mode**: Explicit mode uses exact version (fails if unavailable), auto mode uses conservative fallback
+- **Smoke Tests**: Added `test_cli`, `test_tui`, and `test_daemon` smoke test projects
+- **CI Matrix**: Comprehensive CI with tests on Elixir 1.15/1.18 and OTP 25/28
+
+### Fixed
+- **MANIFEST JSON Parser**: Rewrote broken parser that incorrectly handled nested JSON structures
+- **Release Path**: Fixed `get_release_path/1` to correctly use `_build/prod/rel/<app>`
+- **Duplicate Logging**: Removed duplicate ERTS cached messages during build
+- **Version Resolution**: Improved `generate_version_variants/1` with proper fallbacks
+- **TUI Key Handling**: Fixed crash when pressing keys (handles `<<key, "\n">>` pattern)
+- **Application Start**: Fixed Application behaviour to return proper `{:ok, pid}` tuple
+
+### Changed
+- `generate_version_variants/1` refactored to reduce nesting depth (Credo compliance)
+- CI simplified to focus on reliable tests (removed problematic macOS ARM64 cross-compile)
+
 ## [1.0.1] - 2026-03-09
 
 ### Fixed
