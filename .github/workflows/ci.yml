@@ -11,7 +11,6 @@ permissions:
   contents: read
 
 env:
-  # Versiones centralizadas para pasos 'run' y otros contextos compatibles
   ELIXIR_OLD: '1.15.8'
   ELIXIR_NEW: '1.18.4'
   OTP_OLD: '25.3.2'
@@ -19,7 +18,7 @@ env:
 
 jobs:
   # ============================================================================
-  # UNIT TESTS - Edge versions
+  # UNIT TESTS
   # ============================================================================
   unit_tests:
     name: Unit Tests (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }})
@@ -105,7 +104,7 @@ jobs:
           ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
 
   # ============================================================================
-  # SMOKE TESTS - macOS ARM (Apple Silicon)
+  # SMOKE TESTS - macOS ARM
   # ============================================================================
   smoke_tests_macos_arm64:
     name: Smoke Tests macOS ARM64 (${{ matrix.mode }})
@@ -127,8 +126,6 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
-          install-rebar: true
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -174,8 +171,6 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
-          install-rebar: true
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -215,21 +210,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Erlang/OTP and Elixir (Alpine)
+      - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
-          install-rebar: true
-          apt-mirror: 'https://nl.alpinelinux.org/alpine/v3.19/community'
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
 
-      - name: Install System Dependencies (Alpine in Docker)
+      - name: Build Alpine Docker for Tests
         run: |
           docker build -t batamanta-alpine-test - <<'EOF'
           FROM alpine:3.19
@@ -250,7 +242,7 @@ jobs:
           ./smoke_test_runner.sh smoke_tests/test_cli cli 30
 
   # ============================================================================
-  # SMOKE TESTS - Linux ARM64 glibc
+  # SMOKE TESTS - Linux ARM64 glibc (FIXED LINKER)
   # ============================================================================
   smoke_tests_linux_arm64_glibc:
     name: Smoke Tests Linux ARM64 glibc
@@ -274,24 +266,25 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-          install-hex: true
-          install-rebar: true
+
+      - name: Install Toolchain and Deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd gcc-aarch64-linux-gnu
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-gnu
 
-      - name: Install System Dependencies
-        run: sudo apt-get update && sudo apt-get install -y zstd
-
-      - name: Build with Batamanta (cross-compile)
+      - name: Build with Batamanta
         working-directory: smoke_tests/test_cli
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: |
-          cargo build --release --target aarch64-unknown-linux-gnu --manifest-path priv/rust_template/Cargo.toml 2>/dev/null || true
           mix batamanta --compression 1 --erts-target ubuntu_22_04_arm64
 
-      - name: Run Smoke Test (in Docker ARM64 emulation)
+      - name: Run Smoke Test
         run: |
           chmod +x smoke_test_runner.sh
           ./smoke_test_runner.sh smoke_tests/test_cli cli 30
@@ -321,9 +314,9 @@ jobs:
         with:
           targets: aarch64-unknown-linux-musl
 
-      - name: Build with Batamanta (Alpine Docker)
+      - name: Build and Run in Docker (Native Context)
         run: |
-          docker build -t batamanta-alpine-arm64-test - <<'EOF'
+          docker build --platform linux/arm64 -t batamanta-alpine-arm64-test - <<'EOF'
           FROM alpine:3.19
           RUN apk add --no-cache erlang elixir zstd curl build-base rust cargo
           EOF
@@ -341,7 +334,7 @@ jobs:
           ./smoke_test_runner.sh smoke_tests/test_cli cli 30
 
   # ============================================================================
-  # DOCKER MATRIX - Full coverage
+  # DOCKER MATRIX (FIXED TAGS)
   # ============================================================================
   docker_matrix:
     name: Docker Matrix (${{ matrix.image }})
@@ -350,17 +343,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Old stable
-          - image: 'elixir:1.15.8-otp-25.3.2'
+          - image: 'elixir:1.15.8-otp-25'
             libtype: glibc
-          # New stable
-          - image: 'elixir:1.18.4-otp-28.1'
+          - image: 'elixir:1.18.4-otp-28'
             libtype: glibc
-          # Old Alpine (musl)
-          - image: 'elixir:1.15.8-otp-25.3.2-alpine'
+          - image: 'elixir:1.15.8-otp-25-alpine'
             libtype: musl
-          # New Alpine (musl)
-          - image: 'elixir:1.18.4-otp-28.1-alpine'
+          - image: 'elixir:1.18.4-otp-28-alpine'
             libtype: musl
 
     steps:
@@ -389,8 +378,6 @@ jobs:
         with:
           elixir-version: '1.18.4'
           otp-version: '28.1'
-          install-hex: true
-          install-rebar: true
 
       - name: Install System Dependencies
         run: sudo apt-get update && sudo apt-get install -y zstd
@@ -409,7 +396,7 @@ jobs:
           retention-days: 30
 
   # ============================================================================
-  # RELEASE (only on tags)
+  # RELEASE
   # ============================================================================
   release:
     name: Publish to Hex.pm
