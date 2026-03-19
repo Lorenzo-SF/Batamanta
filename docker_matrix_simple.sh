@@ -9,7 +9,6 @@
 # Examples:
 #   ./docker_matrix_simple.sh elixir:1.18.4-otp-28
 #   ./docker_matrix_simple.sh elixir:1.18.4-otp-28-alpine
-#   ./docker_matrix_simple.sh hexpm/elixir:1.15.8-otp-25
 #===============================================================================
 
 set -euo pipefail
@@ -26,32 +25,31 @@ echo "📦 Image: $IMAGE"
 if [[ "$IMAGE" == *"alpine"* ]]; then
     LIBTYPE="musl"
     RUST_TARGET="x86_64-unknown-linux-musl"
+    INSTALL_DEPS="apk add --no-cache build-base zstd"
+    RUST_TARGET_CMD="rustup target add x86_64-unknown-linux-musl"
 else
     LIBTYPE="glibc"
     RUST_TARGET="x86_64-unknown-linux-gnu"
+    INSTALL_DEPS="apt-get update && apt-get install -y --no-install-recommends curl git build-essential zstd"
+    RUST_TARGET_CMD="rustup target add x86_64-unknown-linux-gnu"
 fi
 
 echo "🔧 Lib type: $LIBTYPE"
 echo "🎯 Rust target: $RUST_TARGET"
 
 # Build the Docker image with inline Dockerfile
-DOCKERFILE=$(cat <<'DOCKERFILE_EOF'
-ARG BASE_IMAGE
-FROM ${BASE_IMAGE}
+DOCKERFILE=$(cat <<DOCKERFILE_EOF
+FROM ${IMAGE}
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    git \
-    build-essential \
-    zstd
+RUN ${INSTALL_DEPS}
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
+ENV PATH="/root/.cargo/bin:\${PATH}"
 
 # Add Rust target
-RUN . /root/.cargo/env && rustup target add ${RUST_TARGET}
+RUN ${RUST_TARGET_CMD}
 
 # Copy project
 WORKDIR /project
@@ -67,13 +65,11 @@ RUN mix batamanta --compression 1
 WORKDIR /project/smoke_tests/test_cli
 CMD ["sh", "-c", "echo '' | ./test_cli-*-x86_64-linux calc 42"]
 DOCKERFILE_EOF
-)
 
 # Build the Docker image
 docker build \
     -t "batamanta-test:${LIBTYPE}" \
     --build-arg "BASE_IMAGE=${IMAGE}" \
-    --build-arg "RUST_TARGET=${RUST_TARGET}" \
     -f - "$PROJECT_ROOT" <<<"$DOCKERFILE"
 
 echo "🚀 Running container test..."
