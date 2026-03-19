@@ -208,6 +208,26 @@ En modo auto, si la versión exacta no está disponible:
 
 ---
 
+## Compatibilidad de Plataformas
+
+### Sistemas Operativos
+
+| SO | Arquitecturas | Modos | Estado |
+|----|---------------|-------|--------|
+| **macOS 11+** | x86_64, aarch64 | CLI, TUI, Daemon | ✅ Soporte Completo |
+| **Linux (glibc)** | x86_64, aarch64 | CLI, TUI, Daemon | ✅ Soporte Completo |
+| **Linux (musl)** | x86_64, aarch64 | CLI, Daemon | ✅ Soportado |
+| **Windows 10+** | x86_64 | CLI | ✅ Soportado |
+
+### Restricciones
+
+- ❌ Windows + modo TUI (requiere terminal Unix)
+- ❌ Windows + modo Daemon (requiere gestión de procesos Unix)
+- ❌ OTP < 25 (funciones BEAM requeridas no disponibles)
+- ❌ Elixir < 1.15 (funciones del lenguaje requeridas no disponibles)
+
+---
+
 ## Para Aplicaciones CLI
 
 Al no haber wrapper de shell, usa `:init` de Erlang para leer argumentos:
@@ -251,7 +271,7 @@ Batamanta usa un sistema unificado de **objetivo ERTS** para especificar la plat
 | `:alpine_3_19_arm64` | Linux | aarch64 | musl | Alpine en ARM |
 | `:macos_12_x86_64` | macOS | x86_64 | - | Mac Intel |
 | `:macos_12_arm64` | macOS | aarch64 | - | Apple Silicon (M1/M2/M3) |
-| `:windows_x86_64` | Windows | x86_64 | msvc | Próximamente |
+| `:windows_x86_64` | Windows | x86_64 | msvc | ✅ Soportado |
 
 ### Override Manual
 
@@ -285,6 +305,110 @@ rustup target add aarch64-unknown-linux-musl
 
 ---
 
+## Solución de Problemas: Linux musl/glibc
+
+### Problema: Advertencia "libc mismatch detected"
+
+Si ves una advertencia como:
+```
+⚠️  libc mismatch detected!
+  Expected: glibc (Debian/Ubuntu/Arch/Fedora)
+  Detected: musl libc (Alpine)
+```
+
+Esto significa que el tipo libc de tu sistema no coincide con el objetivo ERTS esperado.
+
+**Solución 1: Dejar que Batamanta auto-detecte (recomendado)**
+```elixir
+batamanta: [
+  erts_target: :auto  # Auto-detecta musl vs glibc
+]
+```
+
+**Solución 2: Forzar objetivo específico**
+```elixir
+batamanta: [
+  erts_target: :alpine_3_19_x86_64  # Forzar musl
+]
+```
+
+**Solución 3: Usar override CLI**
+```bash
+mix batamanta --erts-target alpine_3_19_x86_64
+```
+
+### Problema: La descarga de ERTS falla en Alpine/musl
+
+Si la descarga de ERTS falla con error 404 en sistemas musl:
+
+**Solución 1: Usar auto-detección (recomendado)**
+```elixir
+batamanta: [
+  erts_target: :auto  # Auto-detecta musl vs glibc
+]
+```
+
+**Solución 2: Usar una versión OTP específica**
+```elixir
+batamanta: [
+  otp_version: "28.0"  # Probar una versión anterior con builds musl
+]
+```
+
+### Problema: El binario no funciona en el sistema destino
+
+**Verifica compatibilidad libc:**
+```bash
+# En máquina de construcción
+ldd --version
+
+# En máquina destino  
+ldd --version
+
+# Ambos deben coincidir (glibc o musl)
+```
+
+**Solución: Construir para glibc más antiguo**
+```elixir
+# Usar objetivo Ubuntu 22.04 (glibc más compatible)
+batamanta: [
+  erts_target: :ubuntu_22_04_x86_64
+]
+```
+
+### Cómo funciona la Detección de libc
+
+Batamanta usa múltiples métodos en orden:
+
+1. **`ldd --version`** - Más confiable, busca "musl" o "glibc" en la salida
+2. **Archivos de dynamic loader** - Busca `/lib/ld-musl-*.so` vs `/lib64/ld-linux-*.so`
+3. **`/etc/os-release`** - Busca `ID=alpine`, `ID=void`, etc.
+4. **`/proc/self/maps`** - Avanzado, verifica librerías cargadas
+
+La detección siempre hace fallback a glibc si hay incertidumbre (90%+ de sistemas usan glibc).
+
+### Fallback de Descarga de ERTS
+
+Batamanta intenta descargar ERTS pre-compilados de Hex.pm builds. Si la descarga falla:
+
+```
+⚠️  Could not download ERTS, using system ERTS instead.
+```
+
+El build continúa usando el ERTS del sistema. Esto significa:
+
+- ✅ **Build exitoso** - Tu aplicación compila
+- ⚠️ **Binario requiere ERTS** - La máquina destino necesita Erlang/Elixir compatible
+- ✅ **Portable dentro del mismo SO** - Funciona en máquinas con el mismo tipo libc
+
+**Para binarios autocontenidos de producción:**
+
+1. Asegura acceso a red durante el build
+2. Usa versión ERTS específica: `batamanta: [otp_version: "26.2.5"]`
+3. Asegura que la plataforma objetivo tenga ERTS pre-compilados disponibles
+
+---
+
 ## Arquitectura
 
 1. **Release**: `mix release` compila tu código
@@ -307,6 +431,22 @@ Este repositorio aloja binarios ERTS precompilados para:
 - **Linux (musl)**: x86_64 & aarch64
 
 Los binarios están compilados desde las fuentes oficiales de Erlang/OTP y están sujetos a la Licencia Apache 2.0 (consulta el repositorio para más detalles).
+
+---
+
+## Testing
+
+Ejecuta la matriz de tests localmente:
+
+```bash
+# Probar en diferentes distribuciones Linux (requiere Docker)
+./docker_matrix.sh
+
+# Ejecutar smoke tests manualmente
+cd smoke_tests/test_cli && mix batamanta && ./test_cli-* arg1 arg2
+cd smoke_tests/test_tui && mix batamanta && ./test_tui-*
+cd smoke_tests/test_daemon && mix batamanta && ./test_daemon-* &
+```
 
 ---
 
