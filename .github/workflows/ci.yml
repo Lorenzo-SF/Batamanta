@@ -112,6 +112,9 @@ jobs:
       - name: Install System Dependencies (Alpine)
         run: apk add --no-cache build-base rust cargo zstd
 
+      - name: Add Rust target for musl
+        run: rustup target add x86_64-unknown-linux-musl
+
       - name: Install Mix Dependencies
         working-directory: smoke_tests/test_cli
         run: mix local.hex --force && mix local.rebar --force && mix deps.get
