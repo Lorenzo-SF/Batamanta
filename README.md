@@ -136,7 +136,7 @@ Batamanta uses a unified **ERTS target** system for platform specification.
 | `:alpine_3_19_arm64` | Linux | aarch64 | musl | Alpine on ARM |
 | `:macos_12_x86_64` | macOS | x86_64 | - | Intel Mac |
 | `:macos_12_arm64` | macOS | aarch64 | - | Apple Silicon (M1/M2/M3) |
-| `:windows_x86_64` | Windows | x86_64 | msvc | Coming soon |
+| `:windows_x86_64` | Windows | x86_64 | msvc | ✅ Supported |
 
 ### Manual Override
 
@@ -233,7 +233,7 @@ In auto mode, if the exact version is not available:
 | **macOS 11+** | x86_64, aarch64 | CLI, TUI, Daemon | ✅ Full Support |
 | **Linux (glibc)** | x86_64, aarch64 | CLI, TUI, Daemon | ✅ Full Support |
 | **Linux (musl)** | x86_64, aarch64 | CLI, Daemon | ✅ Supported |
-| **Windows 10+** | x86_64 | CLI | 🔲 Coming Soon |
+| **Windows 10+** | x86_64 | CLI | ✅ Supported |
 
 ### OTP / Elixir Versions
 
@@ -287,16 +287,23 @@ mix batamanta --erts-target alpine_3_19_x86_64
 
 ### Problem: ERTS download fails on Alpine/musl
 
-If ERTS download fails with 404 error on musl systems:
+If ERTS download fails with 404 error on musl systems, try one of these solutions:
 
-**Solution: Use custom ERTS**
+**Solution 1: Use auto-detection (recommended)**
 ```elixir
 batamanta: [
-  custom_erts: "/path/to/musl-erts.tar.gz"
+  erts_target: :auto  # Auto-detects musl vs glibc
 ]
 ```
 
-You can build custom ERTS for musl:
+**Solution 2: Use a specific OTP version**
+```elixir
+batamanta: [
+  otp_version: "28.0"  # Try an older version that may have musl builds
+]
+```
+
+**Solution 3: Build custom ERTS for musl** (advanced)
 ```bash
 # On Alpine Linux
 apk add erlang-dev
@@ -375,7 +382,7 @@ The build continues using the system ERTS (similar to Bakeware). This means:
 
 1. Ensure network access during build
 2. Use specific ERTS version: `batamanta: [otp_version: "26.2.5"]`
-3. Or provide custom ERTS: `batamanta: [custom_erts: "/path/to/erts.tar.gz"]`
+3. Ensure the target platform has pre-built ERTS available
 
 ---
 
@@ -405,6 +412,7 @@ mix batamanta --erts-target ubuntu_22_04_arm64 --compression 5
 | Flag | Description |
 |------|-------------|
 | `--erts-target` | Override ERTS target atom |
+| `--otp-version` | Specify exact OTP version (e.g., "28.1") |
 | `--force-os` | Force OS: `linux`, `macos`, `windows` |
 | `--force-arch` | Force architecture: `x86_64`, `aarch64` |
 | `--force-libc` | Force libc: `gnu`, `musl` (Linux only) |
