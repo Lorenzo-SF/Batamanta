@@ -37,6 +37,11 @@ defmodule Mix.Tasks.BatamantaTest do
       assert opts[:erts_target] == "alpine_3_19_x86_64"
     end
 
+    test "parses otp-version option" do
+      opts = Batamanta.parse_options(["--otp-version", "28.1"])
+      assert opts[:otp_version] == "28.1"
+    end
+
     test "parses force-os option" do
       opts = Batamanta.parse_options(["--force-os", "linux"])
       assert opts[:force_os] == "linux"
@@ -62,11 +67,14 @@ defmodule Mix.Tasks.BatamantaTest do
         Batamanta.parse_options([
           "--erts-target",
           "alpine_3_19_x86_64",
+          "--otp-version",
+          "28.1",
           "--compression",
           "5"
         ])
 
       assert opts[:erts_target] == "alpine_3_19_x86_64"
+      assert opts[:otp_version] == "28.1"
       assert opts[:compression] == 5
     end
   end
@@ -135,14 +143,14 @@ defmodule Mix.Tasks.BatamantaTest do
   end
 
   describe "resolve_otp_version/2" do
-    test "returns otp_version from bata_config" do
+    test "returns otp_version from bata_config with :explicit mode" do
       result = Batamanta.resolve_otp_version([], otp_version: "26.0")
-      assert result == "26.0"
+      assert result == {"26.0", :explicit}
     end
 
-    test "returns otp_version from opts" do
+    test "returns otp_version from opts with :explicit mode" do
       result = Batamanta.resolve_otp_version([otp_version: "27.0"], [])
-      assert result == "27.0"
+      assert result == {"27.0", :explicit}
     end
 
     test "opts take precedence over bata_config" do
@@ -152,15 +160,14 @@ defmodule Mix.Tasks.BatamantaTest do
           otp_version: "26.0"
         )
 
-      # La prioridad real es: opts > bata_config > system
-      # Pero el test puede fallar si el sistema tiene OTP 26
-      assert result in ["26.0", "27.0"]
+      # Priority: opts > bata_config > system
+      assert result == {"27.0", :explicit}
     end
 
-    test "returns system OTP when not specified" do
+    test "returns system OTP with :auto mode when not specified" do
       result = Batamanta.resolve_otp_version([], [])
       expected = :erlang.system_info(:otp_release) |> to_string()
-      assert result == expected
+      assert result == {expected, :auto}
     end
   end
 end

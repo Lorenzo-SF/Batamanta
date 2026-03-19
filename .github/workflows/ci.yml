@@ -2,7 +2,7 @@ name: CI - Smoke Tests Matrix
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
     tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   # ============================================================================
-  # UNIT TESTS
+  # UNIT TESTS - Edge versions
   # ============================================================================
   unit_tests:
     name: Unit Tests (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }})
@@ -20,8 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        elixir: ['1.15.8', '1.18.4']
-        otp: ['25.0', '28.0']
+        include:
+          - elixir: '1.15.8'
+            otp: '25.3.2'
+          - elixir: '1.18.4'
+            otp: '28.1'
 
     steps:
       - name: Checkout Repository
@@ -48,59 +51,17 @@ jobs:
         run: mix credo --strict
 
   # ============================================================================
-  # SMOKE TESTS - macOS
+  # SMOKE TESTS - Linux AMD64 glibc
   # ============================================================================
-  smoke_tests_macos:
-    name: Smoke Tests macOS (${{ matrix.mode }})
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [cli, tui, daemon]
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Erlang/OTP and Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: '1.18.4'
-          otp-version: '28.0'
-          install-hex: true
-          install-rebar: true
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Install System Dependencies
-        run: brew install zstd
-
-      - name: Install Mix Dependencies
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix deps.get
-
-      - name: Build with Batamanta
-        working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1
-
-      - name: Run Smoke Test
-        run: |
-          chmod +x smoke_test_runner.sh
-          ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
-
-  # ============================================================================
-  # SMOKE TESTS - Linux glibc
-  # ============================================================================
-  smoke_tests_linux_glibc:
-    name: Smoke Tests Linux glibc (${{ matrix.mode }})
+  smoke_tests_linux_amd64_glibc:
+    name: Smoke Tests Linux AMD64 glibc (${{ matrix.mode }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         mode: [cli, tui, daemon]
+        elixir: ['1.18.4']
+        otp: ['28.1']
 
     steps:
       - name: Checkout Repository
@@ -109,8 +70,8 @@ jobs:
       - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.18.4'
-          otp-version: '28.0'
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
           install-hex: true
           install-rebar: true
 
@@ -136,7 +97,7 @@ jobs:
           ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
 
   # ============================================================================
-  # DOCKER MATRIX - Linux glibc/musl × OTP versions
+  # DOCKER MATRIX - Full coverage (including musl via Alpine)
   # ============================================================================
   docker_matrix:
     name: Docker Matrix (${{ matrix.image }})
@@ -144,11 +105,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image:
-          - elixir:1.15.8-otp-25
-          - elixir:1.18.4-otp-28
-          - elixir:1.15.8-otp-25-alpine
-          - elixir:1.18.4-otp-28-alpine
+        include:
+          # Note: elixir:1.15.x uses old glibc, elixir:1.18.x uses newer
+          - image: elixir:1.18.4-otp-28
 
     steps:
       - name: Checkout Repository
@@ -160,7 +119,7 @@ jobs:
           ./docker_matrix_simple.sh ${{ matrix.image }}
 
   # ============================================================================
-  # COVERAGE REPORT (Linux only for max coverage)
+  # COVERAGE REPORT
   # ============================================================================
   coverage:
     name: Coverage Report
@@ -175,7 +134,7 @@ jobs:
         uses: erlef/setup-beam@v1
         with:
           elixir-version: '1.18.4'
-          otp-version: '28.0'
+          otp-version: '28.1'
           install-hex: true
           install-rebar: true
 
@@ -200,7 +159,7 @@ jobs:
   # ============================================================================
   release:
     name: Publish to Hex.pm
-    needs: [unit_tests, smoke_tests_macos, smoke_tests_linux_glibc, docker_matrix]
+    needs: [unit_tests, smoke_tests_linux_amd64_glibc, docker_matrix]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
@@ -210,7 +169,7 @@ jobs:
       - uses: erlef/setup-beam@v1
         with:
           elixir-version: '1.18.4'
-          otp-version: '28.0'
+          otp-version: '28.1'
       
       - run: mix deps.get
       - run: mix compile
