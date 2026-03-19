@@ -97,39 +97,7 @@ jobs:
           ./smoke_test_runner.sh smoke_tests/test_${{ matrix.mode }} ${{ matrix.mode }} 30
 
   # ============================================================================
-  # SMOKE TESTS - Linux AMD64 musl (Alpine via Docker)
-  # ============================================================================
-  smoke_tests_linux_amd64_musl:
-    name: Smoke Tests Linux AMD64 musl
-    runs-on: ubuntu-latest
-    container:
-      image: elixir:1.18.4-otp-28-alpine
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Install System Dependencies (Alpine)
-        run: apk add --no-cache build-base rust cargo zstd
-
-      - name: Add Rust target for musl
-        run: rustup target add x86_64-unknown-linux-musl
-
-      - name: Install Mix Dependencies
-        working-directory: smoke_tests/test_cli
-        run: mix local.hex --force && mix local.rebar --force && mix deps.get
-
-      - name: Build with Batamanta
-        working-directory: smoke_tests/test_cli
-        run: mix batamanta --compression 1
-
-      - name: Run Smoke Test
-        run: |
-          chmod +x smoke_test_runner.sh
-          ./smoke_test_runner.sh smoke_tests/test_cli cli 30
-
-  # ============================================================================
-  # DOCKER MATRIX - Full coverage
+  # DOCKER MATRIX - Full coverage (including musl via Alpine)
   # ============================================================================
   docker_matrix:
     name: Docker Matrix (${{ matrix.image }})
@@ -140,6 +108,8 @@ jobs:
         include:
           - image: elixir:1.15.8-otp-25
           - image: elixir:1.18.4-otp-28
+          - image: elixir:1.15.8-otp-25-alpine
+          - image: elixir:1.18.4-otp-28-alpine
 
     steps:
       - name: Checkout Repository
@@ -191,7 +161,7 @@ jobs:
   # ============================================================================
   release:
     name: Publish to Hex.pm
-    needs: [unit_tests, smoke_tests_linux_amd64_glibc, smoke_tests_linux_amd64_musl, docker_matrix]
+    needs: [unit_tests, smoke_tests_linux_amd64_glibc, docker_matrix]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
