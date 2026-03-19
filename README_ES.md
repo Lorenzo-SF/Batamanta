@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/batamantaman.png" width="400" alt="Mascota Batamanta" />
+  <img src="https://raw.githubusercontent.com/Lorenzo-SF/Batamanta/main/assets/batamantaman.png" width="400" alt="Mascota Batamanta" />
 </p>
 
 > Empaqueta tus aplicaciones Elixir como ejecutables 100% autocontenidos. No requiere Erlang/Elixir en la máquina destino.
@@ -101,6 +101,7 @@ end
 | Opción | Tipo | Default | Descripción |
 |--------|------|---------|-------------|
 | `erts_target` | atom | `:auto` | Plataforma objetivo (ver abajo) |
+| `otp_version` | string | `:auto` | Versión OTP (ej: "28.1") |
 | `execution_mode` | atom | `:cli` | `:cli`, `:tui`, o `:daemon` |
 | `compression` | integer | `3` | Nivel de compresión zstd (1-19) |
 | `binary_name` | string | nombre de app | Nombre personalizado del binario |
@@ -149,10 +150,51 @@ mix batamanta --erts-target ubuntu_22_04_arm64 --compression 5
 | Flag | Descripción |
 |------|-------------|
 | `--erts-target` | Sobrescribir objetivo ERTS |
+| `--otp-version` | Versión OTP exacta (ej: "28.1") |
 | `--force-os` | Forzar SO: `linux`, `macos`, `windows` |
 | `--force-arch` | Forzar arquitectura: `x86_64`, `aarch64` |
 | `--force-libc` | Forzar libc: `gnu`, `musl` (solo Linux) |
 | `--compression` | Nivel de compresión zstd (1-19) |
+
+---
+
+## Control de Versión OTP
+
+**Tú especificas, tú respondes.** Si especificas `otp_version`, se usa esa versión exacta. Si no se especifica, se usa un fallback conservador.
+
+### Configuración
+
+```elixir
+# Usar versión OTP exacta (recomendado para producción)
+batamanta: [
+  otp_version: "28.1"
+]
+```
+
+### Comportamiento
+
+| Modo | Descripción | Cuándo Usarlo |
+|------|-------------|---------------|
+| **Explícito** | Usa la versión exacta. Falla si no está disponible en el repositorio. | Producción, reproducibilidad |
+| **Auto** | Usa fallback conservador (28.0 → 28.1 → ...). Usa ERTS del sistema si no encuentra nada. | Desarrollo, builds rápidos |
+
+### CLI
+
+```bash
+# Especificar versión OTP exacta
+mix batamanta --otp-version 28.1
+
+# Modo auto (por defecto)
+mix batamanta
+```
+
+### Resolución de Versión
+
+En modo auto, si la versión exacta no está disponible:
+
+1. Prueba `OTP-28.0` primero (más común)
+2. Luego `OTP-28.1`, `OTP-28.2`, etc.
+3. Hace fallback al ERTS del sistema si no encuentra nada
 
 ---
 
