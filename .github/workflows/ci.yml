@@ -10,13 +10,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # Edge versions for testing
-  ELIXIR_OLD: '1.15.8'
-  ELIXIR_NEW: '1.18.4'
-  OTP_OLD: '25.3.2'
-  OTP_NEW: '28.1'
-
 jobs:
   # ============================================================================
   # UNIT TESTS - Edge versions
@@ -28,10 +21,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - elixir: ${{ env.ELIXIR_OLD }}
-            otp: ${{ env.OTP_OLD }}
-          - elixir: ${{ env.ELIXIR_NEW }}
-            otp: ${{ env.OTP_NEW }}
+          - elixir: '1.15.8'
+            otp: '25.3.2'
+          - elixir: '1.18.4'
+            otp: '28.1'
 
     steps:
       - name: Checkout Repository
@@ -67,9 +60,8 @@ jobs:
       fail-fast: false
       matrix:
         mode: [cli, tui, daemon]
-        include:
-          - elixir: ${{ env.ELIXIR_NEW }}
-            otp: ${{ env.OTP_NEW }}
+        elixir: ['1.18.4']
+        otp: ['28.1']
 
     steps:
       - name: Checkout Repository
@@ -143,8 +135,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: elixir:${{ env.ELIXIR_OLD }}-otp-${{ env.OTP_OLD }}
-          - image: elixir:${{ env.ELIXIR_NEW }}-otp-${{ env.OTP_NEW }}
+          - image: elixir:1.15.8-otp-25
+          - image: elixir:1.18.4-otp-28
 
     steps:
       - name: Checkout Repository
@@ -170,8 +162,8 @@ jobs:
       - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: ${{ env.ELIXIR_NEW }}
-          otp-version: ${{ env.OTP_NEW }}
+          elixir-version: '1.18.4'
+          otp-version: '28.1'
           install-hex: true
           install-rebar: true
 
@@ -205,8 +197,8 @@ jobs:
       
       - uses: erlef/setup-beam@v1
         with:
-          elixir-version: ${{ env.ELIXIR_NEW }}
-          otp-version: ${{ env.OTP_NEW }}
+          elixir-version: '1.18.4'
+          otp-version: '28.1'
       
       - run: mix deps.get
       - run: mix compile
