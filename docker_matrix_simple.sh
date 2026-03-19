@@ -5,10 +5,6 @@
 # Runs smoke tests inside Docker containers with various Elixir/OTP combinations.
 # 
 # Usage: ./docker_matrix_simple.sh <image>
-# 
-# Examples:
-#   ./docker_matrix_simple.sh elixir:1.18.4-otp-28
-#   ./docker_matrix_simple.sh elixir:1.18.4-otp-28-alpine
 #===============================================================================
 
 set -euo pipefail
@@ -34,7 +30,7 @@ echo "🔧 Lib type: $LIBTYPE"
 
 # Build the Docker image based on image type
 if $IS_ALPINE; then
-    # Alpine: Install rust natively (already musl)
+    # Alpine: Use rustup to get proper musl target support
     docker build \
         -t "batamanta-test:${LIBTYPE}" \
         --build-arg "BASE_IMAGE=${IMAGE}" \
@@ -42,14 +38,21 @@ if $IS_ALPINE; then
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-# Install system dependencies (Alpine)
-RUN apk add --no-cache build-base zstd cargo rust
+# Install system dependencies
+RUN apk add --no-cache curl build-base zstd
+
+# Install Rust with musl target
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Add musl target for Alpine
+RUN rustup target add x86_64-unknown-linux-musl
 
 # Copy project
 WORKDIR /project
 COPY . .
 
-# Build the test project (native musl)
+# Build the test project
 WORKDIR /project/smoke_tests/test_cli
 RUN mix local.hex --force && mix local.rebar --force
 RUN mix deps.get
@@ -59,7 +62,7 @@ RUN mix batamanta --compression 1
 CMD ["sh", "-c", "echo '' | ./test_cli-*-x86_64-linux calc 42"]
 EOF
 else
-    # Debian: Need cross-compile for musl target
+    # Debian: Install rustup with glibc target
     docker build \
         -t "batamanta-test:${LIBTYPE}" \
         --build-arg "BASE_IMAGE=${IMAGE}" \
@@ -72,10 +75,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git build-essential zstd
 
 # Install Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Add Rust target for glibc
+# Add glibc target
 RUN rustup target add x86_64-unknown-linux-gnu
 
 # Copy project
