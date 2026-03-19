@@ -1,0 +1,3 @@
+DAEMON_CUSTOM
+config: %{signal_file: "daemon_custom.txt"}
+timestamp: 1773849067

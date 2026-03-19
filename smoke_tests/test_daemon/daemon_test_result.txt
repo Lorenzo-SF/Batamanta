@@ -1,0 +1,2 @@
+TEST_PASSED
+args: ["test", "arg1", "arg2"]

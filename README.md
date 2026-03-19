@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/batamantaman.png" width="400" alt="Batamanta Mascot" />
+  <img src="https://raw.githubusercontent.com/Lorenzo-SF/Batamanta/main/assets/batamantaman.png" width="400" alt="Batamanta Mascot" />
 </p>
 
 > Package your Elixir applications as 100% self-contained executables. No Erlang/Elixir installation required on the target machine.
@@ -102,6 +102,7 @@ end
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `erts_target` | atom | `:auto` | Target platform (see below) |
+| `otp_version` | string | `:auto` | OTP version (e.g., "28.1") |
 | `execution_mode` | atom | `:cli` | `:cli`, `:tui`, or `:daemon` |
 | `compression` | integer | `3` | Zstd compression level (1-19) |
 | `binary_name` | string | app name | Custom binary name |
@@ -170,6 +171,46 @@ mix batamanta --erts-target alpine_3_19_x86_64
 # Force individual components
 mix batamanta --force-os linux --force-arch aarch64 --force-libc musl
 ```
+
+---
+
+## OTP Version Control
+
+**You specify, you own.** If you specify `otp_version`, that exact version is used. If not specified, a conservative fallback is used.
+
+### Configuration
+
+```elixir
+# Use exact OTP version (recommended for production)
+batamanta: [
+  otp_version: "28.1"
+]
+```
+
+### Behavior
+
+| Mode | Description | When to Use |
+|------|-------------|-------------|
+| **Explicit** | Uses exact version specified. Fails if not available in repository. | Production builds, reproducibility |
+| **Auto** | Uses conservative fallback (28.0 → 28.1 → ...). Uses system ERTS if not found. | Development, quick builds |
+
+### CLI Override
+
+```bash
+# Specify exact OTP version
+mix batamanta --otp-version 28.1
+
+# Auto mode (default)
+mix batamanta
+```
+
+### Version Resolution
+
+In auto mode, if the exact version is not available:
+
+1. Tries `OTP-28.0` first (most common)
+2. Then `OTP-28.1`, `OTP-28.2`, etc.
+3. Falls back to system ERTS if nothing found
 
 ---
 
