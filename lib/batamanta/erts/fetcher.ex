@@ -415,51 +415,55 @@ defmodule Batamanta.ERTS.Fetcher do
     parts = String.split(version, ".")
 
     variants =
-      case parts do
-        # Version mayor only: "28" -> try 28.0, 28.1, 28.2, etc.
-        [major] ->
-          Enum.flat_map(0..5, fn minor ->
-            ["OTP-#{major}.#{minor}.0", "OTP-#{major}.#{minor}"]
-          end)
-
-        # Version mayor.minor: "28.1" -> try exact, then 28.0
-        [major, minor] ->
-          minor_int = try_parse_integer(minor)
-          base = ["OTP-#{major}.#{minor}", "OTP-#{major}.#{minor}.0"]
-          # Add fallbacks for earlier minor versions
-          fallbacks =
-            for m <- Enum.max([minor_int - 1, 0])..0//-1 do
-              ["OTP-#{major}.#{m}.0", "OTP-#{major}.#{m}"]
-            end
-
-          Enum.concat([base, fallbacks])
-
-        # Version mayor.minor.patch: "28.1.1" -> try exact, then 28.1, then 28.0
-        [major, minor, patch] ->
-          minor_int = try_parse_integer(minor)
-          patch_int = try_parse_integer(patch)
-
-          exact = ["OTP-#{version}"]
-
-          # Same minor, different patch (only if patch > 0)
-          same_minor =
-            if patch_int > 0,
-              do: for(p <- (patch_int - 1)..0//-1, do: "OTP-#{major}.#{minor}.#{p}"),
-              else: []
-
-          # Different minor, patch 0
-          different_minor =
-            for m <- Enum.max([minor_int - 1, 0])..0//-1 do
-              ["OTP-#{major}.#{m}.0", "OTP-#{major}.#{m}"]
-            end
-
-          Enum.concat([exact, same_minor, different_minor])
+      case length(parts) do
+        1 -> generate_major_only_variants(parts)
+        2 -> generate_major_minor_variants(parts)
+        _ -> generate_full_variants(parts)
       end
 
     ["OTP-#{version}" | variants]
     |> List.flatten()
     |> Enum.uniq()
     |> Enum.reject(&(&1 == ""))
+  end
+
+  # "28" -> try 28.0, 28.1, 28.2, etc.
+  defp generate_major_only_variants([major]) do
+    Enum.flat_map(0..5, fn minor ->
+      ["OTP-#{major}.#{minor}.0", "OTP-#{major}.#{minor}"]
+    end)
+  end
+
+  # "28.1" -> try exact, then 28.0
+  defp generate_major_minor_variants([major, minor]) do
+    minor_int = try_parse_integer(minor)
+    base = ["OTP-#{major}.#{minor}", "OTP-#{major}.#{minor}.0"]
+    fallbacks = generate_minor_fallbacks(major, minor_int)
+    Enum.concat([base, fallbacks])
+  end
+
+  # "28.1.1" -> try exact, then 28.1.0, then 28.0.0
+  defp generate_full_variants([major, minor, patch]) do
+    minor_int = try_parse_integer(minor)
+    patch_int = try_parse_integer(patch)
+
+    exact = ["OTP-#{major}.#{minor}.#{patch}"]
+    same_minor = generate_patch_fallbacks(major, minor, patch_int)
+    different_minor = generate_minor_fallbacks(major, minor_int)
+
+    Enum.concat([exact, same_minor, different_minor])
+  end
+
+  defp generate_patch_fallbacks(major, minor, patch_int) when patch_int > 0 do
+    for p <- (patch_int - 1)..0//-1, do: "OTP-#{major}.#{minor}.#{p}"
+  end
+
+  defp generate_patch_fallbacks(_major, _minor, _patch_int), do: []
+
+  defp generate_minor_fallbacks(major, minor_int) do
+    for m <- Enum.max([minor_int - 1, 0])..0//-1 do
+      ["OTP-#{major}.#{m}.0", "OTP-#{major}.#{m}"]
+    end
   end
 
   defp try_parse_integer(str) do
