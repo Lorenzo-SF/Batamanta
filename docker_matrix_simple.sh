@@ -24,32 +24,59 @@ echo "📦 Image: $IMAGE"
 # Determine if Alpine (musl) or Debian (glibc)
 if [[ "$IMAGE" == *"alpine"* ]]; then
     LIBTYPE="musl"
-    RUST_TARGET="x86_64-unknown-linux-musl"
-    INSTALL_DEPS="apk add --no-cache build-base zstd"
-    RUST_TARGET_CMD="rustup target add x86_64-unknown-linux-musl"
+    IS_ALPINE=true
 else
     LIBTYPE="glibc"
-    RUST_TARGET="x86_64-unknown-linux-gnu"
-    INSTALL_DEPS="apt-get update && apt-get install -y --no-install-recommends curl git build-essential zstd"
-    RUST_TARGET_CMD="rustup target add x86_64-unknown-linux-gnu"
+    IS_ALPINE=false
 fi
 
 echo "🔧 Lib type: $LIBTYPE"
-echo "🎯 Rust target: $RUST_TARGET"
 
-# Build the Docker image with inline Dockerfile
-DOCKERFILE=$(cat <<DOCKERFILE_EOF
-FROM ${IMAGE}
+# Build the Docker image based on image type
+if $IS_ALPINE; then
+    # Alpine: Install rust natively (already musl)
+    docker build \
+        -t "batamanta-test:${LIBTYPE}" \
+        --build-arg "BASE_IMAGE=${IMAGE}" \
+        -f - "$PROJECT_ROOT" <<'EOF'
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# Install system dependencies (Alpine)
+RUN apk add --no-cache build-base zstd cargo rust
+
+# Copy project
+WORKDIR /project
+COPY . .
+
+# Build the test project (native musl)
+WORKDIR /project/smoke_tests/test_cli
+RUN mix local.hex --force && mix local.rebar --force
+RUN mix deps.get
+RUN mix batamanta --compression 1
+
+# Test the binary
+CMD ["sh", "-c", "echo '' | ./test_cli-*-x86_64-linux calc 42"]
+EOF
+else
+    # Debian: Need cross-compile for musl target
+    docker build \
+        -t "batamanta-test:${LIBTYPE}" \
+        --build-arg "BASE_IMAGE=${IMAGE}" \
+        -f - "$PROJECT_ROOT" <<'EOF'
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
 
 # Install system dependencies
-RUN ${INSTALL_DEPS}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git build-essential zstd
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:\${PATH}"
+ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Add Rust target
-RUN ${RUST_TARGET_CMD}
+# Add Rust target for glibc
+RUN rustup target add x86_64-unknown-linux-gnu
 
 # Copy project
 WORKDIR /project
@@ -62,15 +89,9 @@ RUN mix deps.get
 RUN mix batamanta --compression 1
 
 # Test the binary
-WORKDIR /project/smoke_tests/test_cli
 CMD ["sh", "-c", "echo '' | ./test_cli-*-x86_64-linux calc 42"]
-DOCKERFILE_EOF
-
-# Build the Docker image
-docker build \
-    -t "batamanta-test:${LIBTYPE}" \
-    --build-arg "BASE_IMAGE=${IMAGE}" \
-    -f - "$PROJECT_ROOT" <<<"$DOCKERFILE"
+EOF
+fi
 
 echo "🚀 Running container test..."
 docker run --rm --name "$CONTAINER_NAME" "batamanta-test:${LIBTYPE}" || {
