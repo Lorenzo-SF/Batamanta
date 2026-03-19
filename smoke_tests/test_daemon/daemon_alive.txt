@@ -1,4 +1,0 @@
-DAEMON_OK
-timestamp: 1773854776
-pid: 2310729
-node: nonode@nohost
