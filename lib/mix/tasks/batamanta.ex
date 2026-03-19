@@ -121,7 +121,8 @@ defmodule Mix.Tasks.Batamanta do
     compression = opts[:compression] || bata_config[:compression] || 3
 
     # Fetch ERTS y ejecutar pipeline
-    with {:ok, erts_path} <- fetch_erts(otp_version, resolved_target, target_info, banner_ctx) do
+    with {:ok, erts_path} <-
+           fetch_erts({otp_version, version_mode}, resolved_target, target_info, banner_ctx) do
       execute_pipeline(
         config,
         resolved_target,
