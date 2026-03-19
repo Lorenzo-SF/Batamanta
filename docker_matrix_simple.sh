@@ -34,14 +34,9 @@ fi
 echo "🔧 Lib type: $LIBTYPE"
 echo "🎯 Rust target: $RUST_TARGET"
 
-# Build the Docker image
-docker build \
-    -t "batamanta-test:${LIBTYPE}" \
-    --build-arg BASE_IMAGE="$IMAGE" \
-    --build-arg RUST_TARGET="$RUST_TARGET" \
-    -f - "$PROJECT_ROOT" <<'DOCKERFILE'
+# Build the Docker image with inline Dockerfile
+DOCKERFILE=$(cat <<'DOCKERFILE_EOF'
 ARG BASE_IMAGE
-ARG RUST_TARGET
 FROM ${BASE_IMAGE}
 
 # Install system dependencies
@@ -49,8 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     build-essential \
-    zstd \
-    || apk add --no-cache zstd
+    zstd
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -72,7 +66,15 @@ RUN mix batamanta --compression 1
 # Test the binary
 WORKDIR /project/smoke_tests/test_cli
 CMD ["sh", "-c", "echo '' | ./test_cli-*-x86_64-linux calc 42"]
-DOCKERFILE
+DOCKERFILE_EOF
+)
+
+# Build the Docker image
+docker build \
+    -t "batamanta-test:${LIBTYPE}" \
+    --build-arg "BASE_IMAGE=${IMAGE}" \
+    --build-arg "RUST_TARGET=${RUST_TARGET}" \
+    -f - "$PROJECT_ROOT" <<<"$DOCKERFILE"
 
 echo "🚀 Running container test..."
 docker run --rm --name "$CONTAINER_NAME" "batamanta-test:${LIBTYPE}" || {
