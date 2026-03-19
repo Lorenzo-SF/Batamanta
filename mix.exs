@@ -37,7 +37,7 @@ defmodule Batamanta.MixProject do
   defp docs do
     [
       main: "readme",
-      logo: "assets/Batamantaman.png",
+      logo: "assets/batamantaman.png",
       extras: ["README.md", "README_ES.md", "CHANGELOG.md"],
       source_url: @source_url,
       source_ref: "v#{@version}"
