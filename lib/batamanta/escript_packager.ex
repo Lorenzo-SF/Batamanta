@@ -113,13 +113,13 @@ defmodule Batamanta.EscriptPackager do
     case File.ls(erts_root) do
       {:ok, entries} ->
         # Look for directory starting with "erts-"
-        erts_dir =
+          erts_dir =
           Enum.find(entries, fn entry ->
             String.starts_with?(entry, "erts-") && File.dir?(Path.join(erts_root, entry))
           end)
 
         if erts_dir do
-          Path.join(erts_root, erts_dir, "bin")
+          Path.join([erts_root, erts_dir, "bin"])
         else
           # Fallback to bin/
           Path.join(erts_root, "bin")
