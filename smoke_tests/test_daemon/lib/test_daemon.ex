@@ -86,7 +86,7 @@ defmodule TestDaemon do
     # Test 2: Process info
     info = %{
       pid: :os.getpid(),
-      uptime: :erlang.system_info(:wall_clock),
+      uptime_ms: :erlang.system_time(:millisecond),
       memory: length(:erlang.memory())
     }
 

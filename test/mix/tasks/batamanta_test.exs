@@ -170,4 +170,49 @@ defmodule Mix.Tasks.BatamantaTest do
       assert result == {expected, :auto}
     end
   end
+
+  describe "resolve_format/3" do
+    test "returns format from CLI option" do
+      opts = [format: "escript"]
+      result = Batamanta.resolve_format(opts, [], app: :test, escript: [main_module: Test.CLI])
+      assert result == :escript
+    end
+
+    test "returns format from bata_config" do
+      opts = []
+      bata_config = [format: :escript]
+      result = Batamanta.resolve_format(opts, bata_config, app: :test)
+      assert result == :escript
+    end
+
+    test "returns :escript when project has escript config" do
+      opts = []
+      result = Batamanta.resolve_format(opts, [], app: :test, escript: [main_module: Test.CLI])
+      assert result == :escript
+    end
+
+    test "returns :release when project has no escript config" do
+      opts = []
+      result = Batamanta.resolve_format(opts, [], app: :test)
+      assert result == :release
+    end
+
+    test "CLI option takes precedence over config" do
+      opts = [format: "escript"]
+      bata_config = [format: :release]
+
+      result =
+        Batamanta.resolve_format(opts, bata_config, app: :test, escript: [main_module: Test.CLI])
+
+      assert result == :escript
+    end
+
+    test "raises on invalid format" do
+      opts = [format: "invalid"]
+
+      assert_raise Mix.Error, ~r/Invalid format/, fn ->
+        Batamanta.resolve_format(opts, [], app: :test)
+      end
+    end
+  end
 end

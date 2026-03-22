@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     env, fs,
@@ -30,12 +30,53 @@ fn restore_terminal() {
     }
 }
 
+// Include generated config from build.rs
+include!(concat!(env!("OUT_DIR"), "/generated_config.rs"));
+
 fn get_exec_mode() -> String {
-    env::var("BATAMANTA_EXEC_MODE").unwrap_or_else(|_| "cli".to_string())
+    GENERATED_EXEC_MODE.to_string()
 }
 
 fn get_app_name() -> String {
-    env::var("BATAMANTA_APP_NAME").unwrap_or_else(|_| "app".to_string())
+    GENERATED_APP_NAME.to_string()
+}
+
+fn get_format() -> String {
+    GENERATED_FORMAT.to_string()
+}
+
+/// Obtiene la versión del release leyendo start_erl.data
+/// Este archivo contiene la versión de ERTS y la versión del release
+fn get_release_version(release_dir: &Path) -> String {
+    let start_erl_path = release_dir.join("releases").join("start_erl.data");
+
+    if let Ok(content) = fs::read_to_string(&start_erl_path) {
+        // El archivo tiene formato: "ERTS_VERSION RELEASE_VERSION"
+        // ej: "16.0 1.0.0"
+        let parts: Vec<&str> = content.trim().split_whitespace().collect();
+        if parts.len() >= 2 {
+            return parts[1].to_string();
+        }
+    }
+
+    // Fallback: buscar el directorio de release más reciente
+    let releases_dir = release_dir.join("releases");
+    if let Ok(entries) = fs::read_dir(&releases_dir) {
+        let mut versions: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+            .filter(|s| !s.starts_with('.') && s != "COOKIE")
+            .collect();
+
+        versions.sort();
+        if let Some(latest) = versions.into_iter().last() {
+            return latest;
+        }
+    }
+
+    // Último fallback
+    "0.1.0".to_string()
 }
 
 struct TempDirGuard {
@@ -69,6 +110,7 @@ fn main() -> Result<ExitCode> {
     };
 
     let exec_mode = get_exec_mode();
+    let format = get_format();
 
     // 🔴 FIX: Si es daemon, JAMÁS borramos la carpeta porque Erlang vive en background
     if exec_mode == "daemon" {
@@ -96,81 +138,243 @@ fn main() -> Result<ExitCode> {
     let release_lib = release_dir.join("lib");
     let app_name = get_app_name();
 
-    // 🔴 CRÍTICO: Detectar si existe el script de la aplicación
-    // En Linux/macOS, Mix genera un script shell en bin/<app_name> que configura
-    // TODAS las variables de entorno correctamente.
-    // Pero para evitar problemas con el script, usamos erlexec directamente
-    let app_script = bin_dir.join(&app_name);
-    let use_app_script = false; // Forzar uso de erlexec
-
-    let exit_code = if use_app_script {
-        // ✅ USAR SCRIPT DE MIX (RECOMENDADO para Linux/macOS)
-        run_with_script(&app_script, &release_dir, &release_lib, &exec_mode)?
+    // Ejecutar según el formato
+    let exit_code = if format == "escript" {
+        // ✅ Modo escript: ejecutar el escript directamente
+        run_escript(&release_dir, &app_name, &exec_mode)?
     } else {
-        // 🔴 FALLBACK: Ejecutar erlexec directamente
+        // 🔴 Modo release: usar erlexec con boot scripts
         run_with_erlexec(&release_dir, &bin_dir, &release_lib, &app_name, &exec_mode)?
     };
 
     Ok(ExitCode::from(exit_code))
 }
 
-/// Ejecuta la aplicación usando el script de Mix (bin/<app_name>)
-fn run_with_script(
-    app_script: &Path,
-    release_dir: &Path,
-    release_lib: &Path,
-    exec_mode: &str,
-) -> Result<u8> {
-    let mut cmd = Command::new(app_script);
+/// Ejecuta un escript (formato escript)
+///
+/// Los escripts de Elixir/Mix son binarios autocontenidos que:
+///
+/// 1. Tienen un shebang que apunta a erlexec
+/// 2. Contienen el código de la aplicación embebido
+/// 3. Necesitan un ERTS mínimo para ejecutarse
+///
+/// Estructura esperada del payload escript:
+/// ```
+/// temp_dir/
+/// ├── bin/
+/// │   └── <app_name>     # El escript compilado (ejecutable)
+/// └── erts/
+///     ├── bin/
+///     │   ├── erlexec    # Intérprete de escripts
+///     │   ├── erl
+///     │   └── beam.smp
+///     └── lib/
+///         └── (librerías mínimas)
+/// ```
+fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8> {
+    // Para escripts, la estructura es diferente a releases:
+    // - El escript está en bin/<app_name>
+    // - El erts está en erts/ (no bin/erts/)
+    let bin_dir = release_dir.join("bin");
+    let erts_dir = release_dir.join("erts");
 
-    // 🔴 FIX: Variables de entorno críticas para Linux
-    let releases_version_dir = release_dir.join("releases").join("0.1.0");
-
-    cmd.env("RELEASE_ROOT", release_dir)
-        .env(
-            "RELEASE_SYS_CONFIG",
-            releases_version_dir.join("sys.config"),
-        )
-        .env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"))
-        .env("RELEASE_PROG", get_app_name())
-        .env("ERL_LIBS", release_lib)
-        // 🔴 CRÍTICO: Forzar modo interactivo para evitar buffering en Linux
-        // Esto hace que stdout se bufee por líneas en lugar de por bloques
-        .env("ERL_AFLAGS", "-noshell");
-
-    // Para daemon, no queremos que el script espere
-    if exec_mode == "daemon" {
-        cmd.env("RELEASE_BOOT_WAIT", "false");
+    // Buscar el escript (debe existir en bin/)
+    let escript_path = bin_dir.join(app_name);
+    if !escript_path.exists() {
+        return Err(anyhow!("Escript not found: {:?}", escript_path));
     }
 
-    // Añadir argumentos después de --
-    cmd.arg("--").args(env::args().skip(1));
-
-    // Configurar stdio según el modo
-    if exec_mode != "daemon" {
-        // ✅ CLI/TUI: Heredar stdin/stdout/stderr
-        // Esto es CRÍTICO para que el output se muestre inmediatamente
-        cmd.stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-    } else {
-        // 🔴 DAEMON: Redirigir todo a null
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+    // Hacer el escript ejecutable en Unix
+    #[cfg(unix)]
+    {
+        if let Ok(metadata) = fs::metadata(&escript_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&escript_path, perms);
+        }
     }
 
-    let mut child = cmd.spawn().context("Failed to spawn application script")?;
+    // Buscar erlexec para configurar variables de entorno
+    // erlexec está en erts-X.Y/bin/ dentro del ERTS cache
+    let erlexec = find_file(&erts_dir, "erlexec")
+        .or_else(|| find_file(&erts_dir.join("bin"), "erlexec"))
+        .context("erlexec not found in erts")?;
 
-    if exec_mode == "daemon" {
-        return Ok(0);
+    // Note: erl_bin is kept for potential future use but not needed currently
+    let _erl_bin = find_file(&erts_dir.join("bin"), "erl").or_else(|| find_file(&erts_dir, "erl"));
+
+    let erts_bin_dir = erlexec
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| erts_dir.join("bin"));
+
+    // Crear un script de wrapper que configure el entorno y ejecute el escript
+    #[cfg(unix)]
+    {
+        let wrapper_script =
+            create_escript_wrapper(&escript_path, &erts_dir, &erts_bin_dir, app_name, exec_mode)?;
+
+        let mut cmd = if exec_mode == "daemon" {
+            // Usar setsid para crear una nueva sesión (detaches del terminal)
+            let mut c = Command::new("setsid");
+            c.arg(&wrapper_script)
+                .arg("-daemon") // Flag para indicar modo daemon al wrapper
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            c
+        } else {
+            let mut c = Command::new(&wrapper_script);
+            c.stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+            c
+        };
+
+        // Pasar argumentos de usuario
+        cmd.args(env::args().skip(1));
+
+        let mut child = cmd.spawn().context("Failed to spawn escript process")?;
+
+        if exec_mode == "daemon" {
+            // En modo daemon, esperamos un poco para asegurar que arranc
+            std::thread::sleep(std::time::Duration::from_millis(500));
+
+            // Verificar que el proceso sigue vivo
+            match child.try_wait() {
+                Ok(Some(_status)) => {
+                    return Err(anyhow!("Daemon process exited prematurely"));
+                }
+                Ok(None) => Ok(0),
+                Err(e) => {
+                    return Err(anyhow!("Error checking daemon status: {}", e));
+                }
+            }
+        } else {
+            let status = child.wait().context("Failed to wait for escript process")?;
+            restore_terminal();
+            Ok(status.code().unwrap_or(0) as u8)
+        }
     }
 
-    let status = child.wait().context("Failed to wait for application")?;
-    Ok(status.code().unwrap_or(0) as u8)
+    #[cfg(not(unix))]
+    {
+        // En Windows, ejecutar directamente con erlexec
+        let mut cmd = Command::new(&erlexec);
+        cmd.arg(&escript_path)
+            .args(env::args().skip(1))
+            .env("BINDIR", &erts_bin_dir)
+            .env("EMULATOR", "beam");
+
+        if exec_mode == "daemon" {
+            cmd.arg("-detached")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        } else {
+            cmd.stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+        }
+
+        let mut child = cmd.spawn().context("Failed to spawn escript process")?;
+
+        if exec_mode == "daemon" {
+            return Ok(0);
+        }
+
+        let status = child.wait().context("Failed to wait for escript process")?;
+        Ok(status.code().unwrap_or(0) as u8)
+    }
 }
 
-/// Ejecuta la aplicación usando erlexec directamente (fallback)
+/// Crea un wrapper script para ejecutar el escript con el entorno correcto
+#[cfg(unix)]
+#[allow(dead_code)]
+fn create_escript_wrapper(
+    escript_path: &Path,
+    erts_dir: &Path,
+    erts_bin_dir: &Path,
+    app_name: &str,
+    exec_mode: &str,
+) -> Result<PathBuf> {
+    use std::io::Write;
+
+    let wrapper_path =
+        env::temp_dir().join(format!("batamanta_escript_wrapper_{}", std::process::id()));
+
+    // El escript ya tiene el shebang, solo necesitamos configurar el PATH y vars
+    let erts_lib_dir = erts_dir.join("lib");
+
+    // Determinar si es modo daemon basado en si setsid nos pasó el flag
+    let daemon_flag = if exec_mode == "daemon" { "-daemon" } else { "" };
+
+    let wrapper_content = format!(
+        r#"#!/bin/sh
+# Batamanta escript wrapper
+# Generated automatically
+
+BINDIR="{bindir}"
+ERL_ROOTDIR="{erts_dir}"
+ERL_LIBS="{erts_lib_dir}"
+PROGNAME="{app_name}"
+
+# Configurar PATH para que erl/beam sean encontrables
+export PATH="$BINDIR:$PATH"
+
+# Variables de entorno para el escript
+export ROOTDIR="$ERL_ROOTDIR"
+export BINDIR="$BINDIR"
+export ERL_LIBS="$ERL_LIBS"
+export EMULATOR="beam"
+export PROGNAME="$PROGNAME"
+export RELEASE_ROOT="$ERL_ROOTDIR"
+
+# Filtrar el flag -daemon de los argumentos si está presente
+# (lo añade setsid, no el usuario)
+args=""
+for arg in "$@"; do
+    if [ "$arg" != "-daemon" ]; then
+        args="$args $arg"
+    fi
+done
+
+# Ejecutar el escript con -noshell si es modo daemon
+if [ -n "{daemon_flag}" ]; then
+    # Ejecutar con -noshell para que erl no intente abrir una terminal
+    exec "{escript}" -noshell $args
+else
+    exec "{escript}" $args
+fi
+"#,
+        bindir = erts_bin_dir.display(),
+        erts_dir = erts_dir.display(),
+        erts_lib_dir = erts_lib_dir.display(),
+        app_name = app_name,
+        escript = escript_path.display(),
+        daemon_flag = daemon_flag
+    );
+
+    let mut file = fs::File::create(&wrapper_path)?;
+    file.write_all(wrapper_content.as_bytes())?;
+
+    // Hacer ejecutable
+    let mut perms = fs::metadata(&wrapper_path)?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&wrapper_path, perms)?;
+
+    Ok(wrapper_path)
+}
+
+/// Ejecuta un release de OTP usando erlexec con boot scripts
+///
+/// Esta función es para el modo "release" tradicional de Elixir/OTP.
+/// Requiere:
+/// - bin/<app_name> - script de inicio (wrapper de erlexec)
+/// - releases/<version>/start.boot - script de boot
+/// - releases/<version>/sys.config - configuración del sistema
+/// - lib/ - librerías de la aplicación
+/// - erts-<version>/ - Erlang Runtime System
 fn run_with_erlexec(
     release_dir: &Path,
     bin_dir: &Path,
@@ -178,11 +382,12 @@ fn run_with_erlexec(
     app_name: &str,
     exec_mode: &str,
 ) -> Result<u8> {
-    // Buscar erlexec en el ERTS
-    let erlexec = find_file(&release_dir.join("erts"), "erlexec")
+    // Buscar erlexec
+    let erlexec = find_file(bin_dir, "erlexec")
         .or_else(|| find_file(release_dir, "erlexec"))
         .context("erlexec not found")?;
 
+    // Asegurar que erlexec es ejecutable
     #[cfg(unix)]
     {
         if let Ok(metadata) = fs::metadata(&erlexec) {
@@ -194,9 +399,12 @@ fn run_with_erlexec(
 
     let bin_path = erlexec.parent().unwrap();
 
-    // Buscar el archivo .boot - primero intentar start.boot, luego cualquier otro
-    let releases_dir = release_dir.join("releases").join("0.1.0");
-    let boot_path = releases_dir.join("start.boot");
+    // Detectar dinámicamente la versión del release
+    let release_version = get_release_version(release_dir);
+    let releases_version_dir = release_dir.join("releases").join(&release_version);
+
+    // Buscar el archivo .boot
+    let boot_path = releases_version_dir.join("start.boot");
     let boot_path = if boot_path.exists() {
         boot_path
     } else {
@@ -206,66 +414,124 @@ fn run_with_erlexec(
     };
 
     let boot_arg = boot_path.with_extension("").to_string_lossy().into_owned();
-    let releases_version_dir = release_dir.join("releases").join("0.1.0");
 
-    let mut cmd = Command::new(&erlexec);
+    // Construir argumentos
+    let mut args: Vec<String> = vec![
+        "-boot".to_string(),
+        boot_arg.clone(),
+        "-boot_var".to_string(),
+        "RELEASE_LIB".to_string(),
+        release_lib.to_string_lossy().into_owned(),
+        "-boot_var".to_string(),
+        "RELEASE_ROOT".to_string(),
+        release_dir.to_string_lossy().into_owned(),
+        "-start_epmd".to_string(),
+        "false".to_string(),
+        "-noshell".to_string(),
+    ];
 
-    // 🔴 FIX: Variables de entorno CORRECTAS para Linux y macOS
-    cmd.env("ROOTDIR", release_dir)
-        .env("BINDIR", bin_path)
-        .env("ERL_LIBS", release_lib)
-        .env("RELEASE_ROOT", release_dir)
-        .env("RELEASE_PROG", app_name)
-        .env(
+    // Agregar argumentos del usuario
+    for arg in env::args().skip(1) {
+        args.push(arg);
+    }
+
+    // Spawn el proceso hijo
+    let mut child: std::process::Child = if exec_mode == "daemon" {
+        // En modo daemon, usamos setsid sin -f y esperamos
+        // setsid creará una nueva sesión y el proceso hijo se detachará cuando setsid termine
+        let mut cmd_str = erlexec.to_string_lossy().into_owned();
+        for arg in &args {
+            cmd_str.push(' ');
+            // Simple escaping
+            let escaped = arg.replace('\'', "'\\''");
+            cmd_str.push('\'');
+            cmd_str.push_str(&escaped);
+            cmd_str.push('\'');
+        }
+
+        let mut setsid_cmd = Command::new("setsid");
+        setsid_cmd
+            .arg("sh")
+            .arg("-c")
+            .arg(format!("exec {} &", cmd_str));
+
+        // Agregar todas las variables de entorno
+        setsid_cmd.env("ROOTDIR", release_dir);
+        setsid_cmd.env("BINDIR", bin_path);
+        setsid_cmd.env("ERL_LIBS", release_lib);
+        setsid_cmd.env("RELEASE_ROOT", release_dir);
+        setsid_cmd.env("RELEASE_PROG", app_name);
+        setsid_cmd.env(
             "RELEASE_SYS_CONFIG",
             releases_version_dir.join("sys.config"),
-        )
-        .env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"))
-        .env("EMU", "beam")
-        .env("PROGNAME", "erl")
-        // Boot variables
-        .arg("-boot")
-        .arg(&boot_arg)
-        .arg("-boot_var")
-        .arg("RELEASE_LIB")
-        .arg(release_lib)
-        .arg("-boot_var")
-        .arg("RELEASE_ROOT")
-        .arg(release_dir)
-        // 🔴 FIX: Desactivar EPMD para evitar cuelgues en Linux
-        .arg("-start_epmd")
-        .arg("false")
-        .arg("-noshell");
+        );
+        setsid_cmd.env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"));
+        setsid_cmd.env("EMU", "beam");
+        setsid_cmd.env("PROGNAME", "erl");
 
-    // 🔴 CRÍTICO: Forzar flushing de stdout en Linux
-    // Añadir flag -extra para pasar argumentos a la aplicación
-    cmd.arg("-extra").arg("--").args(env::args().skip(1));
+        // Redirigir stdio a /dev/null
+        setsid_cmd.stdin(Stdio::null());
+        setsid_cmd.stdout(Stdio::null());
+        setsid_cmd.stderr(Stdio::null());
 
-    // Configurar stdio según el modo
-    if exec_mode == "daemon" {
-        // 🔴 DAEMON: Usar -detached y redirigir output
-        cmd.arg("-detached")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        // setsid retorna inmediatamente, pero el proceso hijo continúa
+        setsid_cmd
+            .spawn()
+            .context("Failed to spawn daemon process (setsid)")?;
+
+        // Dar tiempo al proceso para arrancar
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // En daemon mode, retornar éxito sin esperar
+        // El daemon está corriendo independientemente
+        return Ok(0);
     } else {
-        // ✅ CLI/TUI: Heredar stdin/stdout/stderr
-        cmd.stdin(Stdio::inherit())
+        // Modo normal: ejecutar directamente
+        let mut cmd = Command::new(&erlexec);
+        cmd.env("ROOTDIR", release_dir)
+            .env("BINDIR", bin_path)
+            .env("ERL_LIBS", release_lib)
+            .env("RELEASE_ROOT", release_dir)
+            .env("RELEASE_PROG", app_name)
+            .env(
+                "RELEASE_SYS_CONFIG",
+                releases_version_dir.join("sys.config"),
+            )
+            .env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"))
+            .env("EMU", "beam")
+            .env("PROGNAME", "erl")
+            // Boot variables
+            .arg("-boot")
+            .arg(&boot_arg)
+            .arg("-boot_var")
+            .arg("RELEASE_LIB")
+            .arg(release_lib)
+            .arg("-boot_var")
+            .arg("RELEASE_ROOT")
+            .arg(release_dir)
+            // Desactivar EPMD para evitar cuelgues
+            .arg("-start_epmd")
+            .arg("false")
+            .arg("-noshell")
+            // Pasar argumentos a la aplicación
+            .arg("-extra")
+            .arg("--")
+            .args(env::args().skip(1))
+            .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
+
+        cmd.spawn().context("Failed to spawn Erlang VM process")?
+    };
+
+    // Esperar según el modo
+    if exec_mode != "daemon" {
+        let status = child.wait().context("Failed to wait for Erlang process")?;
+        restore_terminal();
+        Ok(status.code().unwrap_or(0) as u8)
+    } else {
+        Ok(0)
     }
-
-    let mut child = cmd.spawn().context("Failed to spawn Erlang VM process")?;
-
-    if exec_mode == "daemon" {
-        return Ok(0);
-    }
-
-    let status = child.wait().context("Failed to wait for Erlang process")?;
-
-    restore_terminal();
-
-    Ok(status.code().unwrap_or(0) as u8)
 }
 
 fn extract_payload(bytes: &[u8], path: &Path) -> Result<()> {
@@ -335,20 +601,74 @@ mod tests {
 
     #[test]
     fn test_get_app_name_defaults_to_app() {
-        // Asegurar que la variable no está setada
+        // Ensure variable is not set
         env::remove_var("BATAMANTA_APP_NAME");
         let result = get_app_name();
-        // Limpiar después del test
+        let expected = "app";
+        // Cleanup even if assertion fails
         env::remove_var("BATAMANTA_APP_NAME");
-        assert_eq!(result, "app");
+        assert_eq!(result, expected);
     }
 
     #[test]
     fn test_get_app_name_reads_env_variable() {
         env::set_var("BATAMANTA_APP_NAME", "test_app_name");
         let result = get_app_name();
+        let expected = "test_app_name";
+        // Cleanup even if assertion fails
         env::remove_var("BATAMANTA_APP_NAME");
-        assert_eq!(result, "test_app_name");
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_get_format_defaults_to_release() {
+        env::remove_var("BATAMANTA_FORMAT");
+        assert_eq!(get_format(), "release");
+    }
+
+    #[test]
+    fn test_get_format_reads_env_variable() {
+        // Set value and ensure cleanup even if assertion fails
+        env::set_var("BATAMANTA_FORMAT", "escript");
+        let result = get_format();
+        env::remove_var("BATAMANTA_FORMAT");
+        assert_eq!(result, "escript");
+    }
+
+    #[test]
+    fn test_get_release_version_reads_start_erl_data() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let releases_dir = temp_dir.path().join("releases");
+        fs::create_dir(&releases_dir).unwrap();
+
+        // Create start_erl.data with known version
+        let start_erl = releases_dir.join("start_erl.data");
+        fs::write(&start_erl, "16.0 2.5.1\n").unwrap();
+
+        let version = get_release_version(temp_dir.path());
+        assert_eq!(version, "2.5.1");
+    }
+
+    #[test]
+    fn test_get_release_version_fallback_to_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let releases_dir = temp_dir.path().join("releases");
+        fs::create_dir(&releases_dir).unwrap();
+
+        // Create version directory
+        fs::create_dir(releases_dir.join("1.0.0")).unwrap();
+
+        let version = get_release_version(temp_dir.path());
+        assert_eq!(version, "1.0.0");
+    }
+
+    #[test]
+    fn test_get_release_version_fallback_to_default() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        // No releases directory at all
+
+        let version = get_release_version(temp_dir.path());
+        assert_eq!(version, "0.1.0");
     }
 
     #[test]
