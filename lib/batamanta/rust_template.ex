@@ -36,13 +36,15 @@ defmodule Batamanta.RustTemplate do
     - `binary_name` - Name for the final executable
     - `target_triple` - Rust target triple (e.g., "x86_64-unknown-linux-musl")
     - `config` - Mix project configuration
+    - `format` - Output format (`:release` or `:escript`)
 
   ## Returns
     - `:ok` - Success
     - `{:error, reason}` - Failure
   """
-  @spec build(Path.t(), String.t(), String.t(), keyword()) :: :ok | {:error, String.t()}
-  def build(payload_path, binary_name, target_triple, config) do
+  @spec build(Path.t(), String.t(), String.t(), keyword(), :release | :escript) ::
+          :ok | {:error, String.t()}
+  def build(payload_path, binary_name, target_triple, config, format \\ :release) do
     template_dir = Path.join(:code.priv_dir(:batamanta), "rust_template")
     build_dir = Path.join(System.tmp_dir!(), "bat_build_#{:os.system_time(:millisecond)}")
 
@@ -56,7 +58,7 @@ defmodule Batamanta.RustTemplate do
 
     result =
       with :ok <- copy_payload(payload_path, dest_payload),
-           :ok <- compile_rust(build_dir, target_triple, config, cargo_target_dir) do
+           :ok <- compile_rust(build_dir, target_triple, config, cargo_target_dir, format) do
         copy_binary(cargo_target_dir, binary_name, target_triple)
       end
 
@@ -71,16 +73,18 @@ defmodule Batamanta.RustTemplate do
     end
   end
 
-  defp compile_rust(build_dir, target_triple, config, cargo_target_dir) do
+  defp compile_rust(build_dir, target_triple, config, cargo_target_dir, format) do
     cmd = resolve_compiler(target_triple)
 
     bata_config = Keyword.get(config, :batamanta, [])
     mode_str = Atom.to_string(Keyword.get(bata_config, :execution_mode, :cli))
     app_name_str = to_string(Keyword.get(config, :app, "app"))
+    format_str = Atom.to_string(format)
 
     env = [
       {"BATAMANTA_EXEC_MODE", mode_str},
       {"BATAMANTA_APP_NAME", app_name_str},
+      {"BATAMANTA_FORMAT", format_str},
       {"CARGO_TARGET_DIR", cargo_target_dir}
     ]
 

@@ -59,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [cli, tui, daemon]
+        mode: [cli, tui, daemon, escript]
         elixir: ['1.18.4']
         otp: ['28.1']
 

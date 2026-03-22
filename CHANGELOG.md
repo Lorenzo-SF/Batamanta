@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-03-21
+
+### Added
+- **Escript Support**: New `format: :escript` option to build lightweight escripts instead of full OTP releases
+- **Auto-detection**: Automatically detects escript format when project has `:escript` config in `mix.exs`
+- **CLI Override**: `--format` option to override format detection from command line
+- **Dynamic Version Detection**: Fixed hardcoded version `0.1.0` in Rust wrapper, now reads version from `start_erl.data`
+
+### Changed
+- **Smaller Binaries**: Escript format produces ~60-70% smaller binaries than release format
+- **EscriptPackager**: New module for packaging escripts with minimal ERTS
+- **EscriptBuilder**: New module for building escripts via `mix escript.build`
+- **Rust Template**: Updated to support both `:release` and `:escript` execution modes via `BATAMANTA_FORMAT` env var
+
+### Fixed
+- **Version Detection**: Release version is now dynamically detected from `releases/start_erl.data` instead of being hardcoded
+
 ## [1.1.0] - 2026-03-19
 
 ### Added
