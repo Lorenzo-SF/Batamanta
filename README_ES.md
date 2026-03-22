@@ -120,6 +120,62 @@ end
 mix batamanta
 ```
 
+---
+
+## Formatos de Salida
+
+Batamanta soporta dos formatos de salida:
+
+### `:release` (Default)
+
+Genera un release completo de OTP con supervisor tree. Ideal para:
+- Servicios y aplicaciones de larga duración
+- Aplicaciones que necesitan supervisión OTP completa
+- Distribuciones Erlang
+
+```elixir
+batamanta: [
+  format: :release
+]
+```
+
+### `:escript`
+
+Genera un escript ligero con runtime de Elixir embebido. Ideal para:
+- Herramientas CLI
+- Proyectos que ya usan `mix escript.build`
+- Binarios pequeños (~60-70% más pequeños)
+
+```elixir
+batamanta: [
+  format: :escript
+]
+```
+
+**Detección automática**: Si tu proyecto tiene configuración `:escript` en `mix.exs`, batamanta usará automáticamente el formato `:escript`.
+
+### Comparación
+
+| Aspecto | `:release` | `:escript` |
+|---------|------------|------------|
+| Tamaño | ~80-150 MB | ~15-30 MB |
+| Startup | Lento | Rápido |
+| Supervisor Tree | ✅ Completo | ❌ No disponible |
+| Daemon Mode | ✅ | ❌ |
+| Hot Upgrades | ✅ | ❌ |
+| Elixir embebido | No | ✅ |
+
+### CLI Override
+
+```bash
+# Forzar formato escript
+mix batamanta --format escript
+
+# Forzar formato release
+mix batamanta --format release
+```
+```
+
 Esto genera: `mi_app-0.1.0-x86_64-linux`
 
 ---

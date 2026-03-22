@@ -2,8 +2,20 @@ defmodule Mix.Tasks.Batamanta do
   @moduledoc """
   Main Mix task to generate the monolithic binary.
 
-  This task orchestrates the fetching of ERTS, packaging of the release,
+  This task orchestrates the fetching of ERTS, packaging of the release/escript,
   and compilation of the Rust wrapper.
+
+  ## Output Formats
+
+  Batamanta supports two output formats:
+  - `:release` (default) - Full OTP release with supervisor tree
+  - `:escript` - Lightweight escript with embedded Elixir runtime
+
+  For projects using `mix escript.build`, use:
+
+      batamanta: [
+        format: :escript
+      ]
 
   ## OTP Version Control
 
@@ -24,7 +36,8 @@ defmodule Mix.Tasks.Batamanta do
       batamanta: [
         erts_target: :auto,              # Auto-detect or specific atom
         execution_mode: :cli,
-        compression: 3
+        compression: 3,
+        format: :escript                 # or :release
       ]
 
   ## Supported ERTS Targets
@@ -70,11 +83,14 @@ defmodule Mix.Tasks.Batamanta do
   - `--force-arch` - Force architecture (x86_64, aarch64)
   - `--force-libc` - Force libc (gnu, musl) - Linux only
   - `--compression` - Zstd compression level (1-19)
+  - `--format` - Output format: escript or release (default: release)
   """
   use Mix.Task
 
   alias Batamanta.Banner
   alias Batamanta.ERTS
+  alias Batamanta.EscriptBuilder
+  alias Batamanta.EscriptPackager
   alias Batamanta.Logger
   alias Batamanta.Packager
   alias Batamanta.RustTemplate
@@ -91,25 +107,28 @@ defmodule Mix.Tasks.Batamanta do
     config = Mix.Project.config()
     bata_config = Keyword.get(config, :batamanta, [])
 
-    # Resolver configuración
+    # Resolve format: CLI option > config > auto-detect
+    format = resolve_format(opts, bata_config, config)
+
+    # Resolve ERTS configuration
     erts_target = resolve_erts_target(opts, bata_config)
     override_config = build_override_config(opts, bata_config)
     binary_name = override_config.binary_name
 
-    # Resolver target y obtener información
+    # Resolve target and get info
     {:ok, resolved_target} = Target.resolve_auto(erts_target, override_config)
     target_info = Target.get_target_info(resolved_target)
 
-    # Obtener versión de OTP
+    # Get OTP version
     {otp_version, version_mode} = resolve_otp_version(opts, bata_config)
 
     # Build banner (if enabled) - returns context for streaming logs
     show_banner = Keyword.get(bata_config, :show_banner, true)
 
     banner_ctx =
-      build_banner(otp_version, target_info, resolved_target, show_banner, version_mode)
+      build_banner(otp_version, target_info, resolved_target, show_banner, version_mode, format)
 
-    # Validar configuración
+    # Validate configuration
     execution_mode = Keyword.get(bata_config, :execution_mode, :cli)
     Validator.validate!(os: target_info.os, arch: target_info.arch, mode: execution_mode)
 
@@ -120,7 +139,7 @@ defmodule Mix.Tasks.Batamanta do
 
     compression = opts[:compression] || bata_config[:compression] || 3
 
-    # Fetch ERTS y ejecutar pipeline
+    # Fetch ERTS and execute appropriate pipeline
     with {:ok, erts_path} <-
            fetch_erts({otp_version, version_mode}, resolved_target, target_info, banner_ctx) do
       execute_pipeline(
@@ -130,9 +149,56 @@ defmodule Mix.Tasks.Batamanta do
         erts_path,
         compression,
         binary_name,
-        banner_ctx
+        banner_ctx,
+        format
       )
     end
+  end
+
+  @doc """
+  Resolves the output format from options, config, or auto-detection.
+
+  Priority:
+  1. CLI option `--format`
+  2. Config `format:` key
+  3. Auto-detect: if project has `:escript` config, use `:escript`, else `:release`
+  """
+  def resolve_format(opts, bata_config, project_config) do
+    # 1. Check CLI option
+    if format = Keyword.get(opts, :format) do
+      normalized = normalize_format(format)
+      validate_format!(normalized)
+      normalized
+    else
+      # 2. Check config
+      if format = Keyword.get(bata_config, :format) do
+        validate_format!(format)
+        format
+      else
+        # 3. Auto-detect from project config
+        auto_detected_format(project_config)
+      end
+    end
+  end
+
+  # Normalize format to atom (CLI passes strings)
+  defp normalize_format(format) when is_binary(format), do: String.to_atom(format)
+  defp normalize_format(format) when is_atom(format), do: format
+
+  defp auto_detected_format(config) do
+    # If project has :escript config, it's designed for escript
+    if Keyword.has_key?(config, :escript) do
+      :escript
+    else
+      :release
+    end
+  end
+
+  defp validate_format!(:escript), do: :ok
+  defp validate_format!(:release), do: :ok
+
+  defp validate_format!(other) do
+    Mix.raise("Invalid format '#{inspect(other)}'. Valid formats are: :escript, :release")
   end
 
   @doc """
@@ -147,7 +213,8 @@ defmodule Mix.Tasks.Batamanta do
           force_arch: :string,
           force_libc: :string,
           compression: :integer,
-          otp_version: :string
+          otp_version: :string,
+          format: :string
         ]
       )
 
@@ -220,6 +287,42 @@ defmodule Mix.Tasks.Batamanta do
          erts_path,
          compression,
          binary_name,
+         banner_ctx,
+         format
+       ) do
+    case format do
+      :release ->
+        execute_release_pipeline(
+          config,
+          erts_target,
+          target_info,
+          erts_path,
+          compression,
+          binary_name,
+          banner_ctx
+        )
+
+      :escript ->
+        execute_escript_pipeline(
+          config,
+          erts_target,
+          target_info,
+          erts_path,
+          compression,
+          binary_name,
+          banner_ctx
+        )
+    end
+  end
+
+  # Release pipeline (original behavior)
+  defp execute_release_pipeline(
+         config,
+         erts_target,
+         target_info,
+         erts_path,
+         compression,
+         binary_name,
          banner_ctx
        ) do
     Logger.info(banner_ctx, ">> 📦 Creating Release...")
@@ -245,12 +348,61 @@ defmodule Mix.Tasks.Batamanta do
 
     case Packager.package(release_path, erts_path, payload_path, compression) do
       {:ok, _} ->
-        compile_wrapper(config, payload_path, erts_target, target_info, binary_name, banner_ctx)
+        compile_wrapper(
+          :release,
+          config,
+          payload_path,
+          erts_target,
+          target_info,
+          binary_name,
+          banner_ctx
+        )
+
         File.rm(payload_path)
 
       {:error, reason} ->
         Banner.set_image(banner_ctx, :error)
         Mix.raise("Packaging Error: #{reason}")
+    end
+  end
+
+  # Escript pipeline (new behavior)
+  defp execute_escript_pipeline(
+         config,
+         erts_target,
+         target_info,
+         erts_path,
+         compression,
+         binary_name,
+         banner_ctx
+       ) do
+    Logger.info(banner_ctx, ">> 📦 Creating Escript...")
+
+    # Build the escript
+    escript_path = EscriptBuilder.build(config, banner_ctx)
+
+    payload_path =
+      Path.join(System.tmp_dir!(), "payload_#{:erlang.unique_integer([:positive])}.tar.zst")
+
+    Logger.info(banner_ctx, ">> 📦 Packaging Escript (Zstd level #{compression})...")
+
+    case EscriptPackager.package(escript_path, erts_path, payload_path, compression) do
+      {:ok, _} ->
+        compile_wrapper(
+          :escript,
+          config,
+          payload_path,
+          erts_target,
+          target_info,
+          binary_name,
+          banner_ctx
+        )
+
+        File.rm(payload_path)
+
+      {:error, reason} ->
+        Banner.set_image(banner_ctx, :error)
+        Mix.raise("Escript packaging error: #{reason}")
     end
   end
 
@@ -273,7 +425,15 @@ defmodule Mix.Tasks.Batamanta do
     |> Path.absname()
   end
 
-  defp compile_wrapper(config, payload_path, erts_target, target_info, binary_name, banner_ctx) do
+  defp compile_wrapper(
+         format,
+         config,
+         payload_path,
+         erts_target,
+         target_info,
+         binary_name,
+         banner_ctx
+       ) do
     rust_target = target_info.rust_target
     binary_suffix = Target.erts_target_to_binary_suffix(erts_target)
 
@@ -289,7 +449,7 @@ defmodule Mix.Tasks.Batamanta do
       ">> 🔨 Compiling Rust Wrapper for #{target_info.os} #{target_info.arch} (#{target_info.libc || "N/A"})..."
     )
 
-    case RustTemplate.build(payload_path, final_name, rust_target, config) do
+    case RustTemplate.build(payload_path, final_name, rust_target, config, format) do
       :ok ->
         apply_minify(final_name, banner_ctx)
         Logger.info(banner_ctx, "✅ Process completed: #{final_name}")
@@ -319,14 +479,15 @@ defmodule Mix.Tasks.Batamanta do
     :ok
   end
 
-  defp build_banner(otp_version, target_info, _resolved_target, show_banner, version_mode) do
+  defp build_banner(otp_version, target_info, _resolved_target, show_banner, version_mode, format) do
     mode_str = if version_mode == :explicit, do: " (user-specified)", else: " (auto-detected)"
+    format_str = if format == :escript, do: " [escript]", else: ""
 
     messages = [
       ">> 🖥️  OS: #{target_info.os}",
       ">> ⚙️  Architecture: #{target_info.arch}",
       ">> 📦 Type: #{target_info.libc || "N/A"}",
-      ">> 🔢 ERTS: #{otp_version}#{mode_str}"
+      ">> 🔢 ERTS: #{otp_version}#{mode_str}#{format_str}"
     ]
 
     # Show banner with context to allow streaming logs and image update

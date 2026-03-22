@@ -12,7 +12,7 @@
 - **Smart ERTS provisioning**: Auto-detects platform or force specific target
 - **Cross-compilation**: Build for Linux (glibc/musl), macOS from any platform
 - **Zstandard compression**: Optimal balance between size and speed
-- **Multiple execution modes**: CLI, TUI, and Daemon support
+- **Multiple execution modes**: CLI, TUI, Daemon, and Escript support
 - **Relativized releases**: Portable binaries with no absolute paths
 
 ---
@@ -103,7 +103,7 @@ end
 |--------|------|---------|-------------|
 | `erts_target` | atom | `:auto` | Target platform (see below) |
 | `otp_version` | string | `:auto` | OTP version (e.g., "28.1") |
-| `execution_mode` | atom | `:cli` | `:cli`, `:tui`, or `:daemon` |
+| `execution_mode` | atom | `:cli` | `:cli`, `:tui`, `:daemon`, or `:escript` |
 | `compression` | integer | `3` | Zstd compression level (1-19) |
 | `binary_name` | string | app name | Custom binary name |
 | `show_banner` | boolean | `true` | Show build banner |
@@ -221,6 +221,7 @@ In auto mode, if the exact version is not available:
 | `:cli` | Standard CLI with inherited stdin/stdout/stderr | All |
 | `:tui` | Text UI with raw terminal mode, arrow key navigation | Unix only |
 | `:daemon` | Runs in background, no terminal I/O | Unix only |
+| `:escript` | Standalone escript built with `mix escript.build` | All |
 
 ---
 
@@ -545,6 +546,40 @@ docker run --rm -v $(pwd):/app -w /app elixir:1.18-alpine ...
 
 ---
 
+## Escript Support
+
+Batamanta can package projects that use `mix escript.build` as self-contained binaries:
+
+```elixir
+def project do
+  [
+    app: :my_escript_app,
+    version: "0.1.0",
+    batamanta: [
+      execution_mode: :escript,
+      escript_module: MyEscriptApp.CLI  # Module with main/1 function
+    ],
+    escript: [
+      main_module: MyEscriptApp.CLI
+    ]
+  ]
+end
+```
+
+The project should have a module with a `main/1` function:
+
+```elixir
+defmodule MyEscriptApp.CLI do
+  def main(args) do
+    IO.puts("Escript running with args: #{inspect(args)}")
+  end
+end
+```
+
+**Note:** For escript mode, `mix.exs` should NOT include `format: :escript` - Batamanta auto-detects escript format automatically.
+
+---
+
 ## Testing
 
 Run the test matrix locally:
@@ -557,6 +592,7 @@ Run the test matrix locally:
 cd smoke_tests/test_cli && mix batamanta && ./test_cli-* arg1 arg2
 cd smoke_tests/test_tui && mix batamanta && ./test_tui-*
 cd smoke_tests/test_daemon && mix batamanta && ./test_daemon-* &
+cd smoke_tests/test_escript && mix batamanta && ./test_escript --help
 ```
 
 ---
