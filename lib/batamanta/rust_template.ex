@@ -81,12 +81,17 @@ defmodule Batamanta.RustTemplate do
     app_name_str = to_string(Keyword.get(config, :app, "app"))
     format_str = Atom.to_string(format)
 
-    env = [
+    # Merge with current environment
+    current_env = System.get_env() |> Enum.map(fn {k, v} -> {k, v} end)
+    
+    additional_env = [
       {"BATAMANTA_EXEC_MODE", mode_str},
       {"BATAMANTA_APP_NAME", app_name_str},
       {"BATAMANTA_FORMAT", format_str},
       {"CARGO_TARGET_DIR", cargo_target_dir}
     ]
+
+    env = current_env ++ additional_env
 
     case System.cmd(cmd, ["build", "--release", "--target", target_triple],
            cd: build_dir,

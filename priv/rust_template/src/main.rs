@@ -30,19 +30,19 @@ fn restore_terminal() {
     }
 }
 
+// Include generated config from build.rs
+include!(concat!(env!("OUT_DIR"), "/generated_config.rs"));
+
 fn get_exec_mode() -> String {
-    // Read from environment variable set at compile time via build.rs
-    env::var("BATAMANTA_EXEC_MODE").unwrap_or_else(|_| "cli".to_string())
+    GENERATED_EXEC_MODE.to_string()
 }
 
 fn get_app_name() -> String {
-    // Read from environment variable set at compile time via build.rs
-    env::var("BATAMANTA_APP_NAME").unwrap_or_else(|_| "app".to_string())
+    GENERATED_APP_NAME.to_string()
 }
 
 fn get_format() -> String {
-    // Read from environment variable set at compile time via build.rs
-    env::var("BATAMANTA_FORMAT").unwrap_or_else(|_| "release".to_string())
+    GENERATED_FORMAT.to_string()
 }
 
 /// Obtiene la versión del release leyendo start_erl.data

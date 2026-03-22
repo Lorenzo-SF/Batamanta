@@ -7,11 +7,10 @@ defmodule TestEscript.MixProject do
       version: "0.1.0",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      # Configuración de escript
+      # Configuración de escript (auto-detecta format: :escript)
       escript: escript(),
-      # Configuración de Batamanta para escript
+      # Configuración de Batamanta
       batamanta: [
-        format: :escript,
         execution_mode: :cli,
         compression: 1
       ]

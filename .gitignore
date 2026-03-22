@@ -80,3 +80,4 @@ Thumbs.db
  daemon_test_result.txt
 daemon_alive.txt
 test_escript-*
+daemon_custom.txt

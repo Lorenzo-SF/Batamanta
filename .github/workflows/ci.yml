@@ -89,7 +89,12 @@ jobs:
 
       - name: Build with Batamanta
         working-directory: smoke_tests/test_${{ matrix.mode }}
-        run: mix batamanta --compression 1
+        run: |
+          if [ "${{ matrix.mode }}" = "escript" ]; then
+            mix batamanta --format escript --compression 1
+          else
+            mix batamanta --compression 1
+          fi
 
       - name: Run Smoke Test
         run: |
