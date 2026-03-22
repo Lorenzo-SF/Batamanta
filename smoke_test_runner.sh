@@ -4,10 +4,17 @@
 # 
 # Usage: ./smoke_test_runner.sh <project_dir> <mode> <timeout_seconds>
 # 
+# Modes:
+#   cli     - Command-line interface application
+#   tui     - Terminal user interface application
+#   daemon  - Background service application
+#   escript - Standalone escript (no release, just escript.build)
+# 
 # Examples:
 #   ./smoke_test_runner.sh smoke_tests/test_cli cli 30
 #   ./smoke_test_runner.sh smoke_tests/test_tui tui 30
 #   ./smoke_test_runner.sh smoke_tests/test_daemon daemon 30
+#   ./smoke_test_runner.sh smoke_tests/test_escript escript 30
 #===============================================================================
 
 set -euo pipefail
@@ -36,19 +43,29 @@ case "$HOST_ARCH" in
     *) ARCH_SUFFIX="$HOST_ARCH" ;;
 esac
 
-# Look for binary matching current platform
-if [[ "$HOST_OS" == "linux" ]]; then
-    BINARY=$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*-linux" 2>/dev/null | head -1 || true)
-elif [[ "$HOST_OS" == "darwin" ]]; then
-    if [[ "$HOST_ARCH" == "aarch64" ]]; then
-        BINARY=$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*-macos" 2>/dev/null | grep "arm64\|aarch64" | head -1 || true)
+# For escript mode, handle specially since it doesn't follow naming convention
+if [[ "$MODE" == "escript" ]]; then
+    if [[ -x "./test_escript" ]]; then
+        BINARY="./test_escript"
     else
-        BINARY=$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*-macos" 2>/dev/null | grep -v "arm64\|aarch64" | head -1 || true)
+        echo "❌ No escript binary found in $PROJECT_DIR"
+        exit 1
     fi
-fi
+else
+    # Look for binary matching current platform
+    if [[ "$HOST_OS" == "linux" ]]; then
+        BINARY=$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*-linux" 2>/dev/null | head -1 || true)
+    elif [[ "$HOST_OS" == "darwin" ]]; then
+        if [[ "$HOST_ARCH" == "aarch64" ]]; then
+            BINARY=$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*-macos" 2>/dev/null | grep "arm64\|aarch64" | head -1 || true)
+        else
+            BINARY=$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*-macos" 2>/dev/null | grep -v "arm64\|aarch64" | head -1 || true)
+        fi
+    fi
 
-# Fallback to any matching binary
-BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*" 2>/dev/null | head -1 || true)}"
+    # Fallback to any matching binary
+    BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*" 2>/dev/null | head -1 || true)}"
+fi
 
 if [[ -z "$BINARY" ]]; then
     echo "❌ No binary found in $PROJECT_DIR"
@@ -90,29 +107,100 @@ case "$MODE" in
     daemon)
         echo "🧪 Running Daemon smoke test..."
         # Daemon starts, creates file, and waits for signal
+        # The wrapper process exits, but the BEAM daemon continues
+        rm -f daemon_alive.txt daemon_heartbeat.txt 2>/dev/null || true
         timeout "$TIMEOUT" "$BINARY" &
-        DAEMON_PID=$!
         
         # Wait for daemon to initialize
         sleep 2
         
-        # Check if daemon is still running
-        if kill -0 "$DAEMON_PID" 2>/dev/null; then
-            echo "✅ Daemon is running (PID: $DAEMON_PID)"
+        # Check for daemon file (indicates daemon is running)
+        if [[ -f "daemon_alive.txt" ]]; then
+            echo "✅ Daemon is running (created daemon_alive.txt)"
+            cat daemon_alive.txt
             
-            # Check for daemon file
-            if [[ -f "daemon_alive.txt" ]]; then
-                echo "✅ Daemon created alive file"
+            # Find and kill the daemon process
+            DAEMON_PIDS=$(pgrep -f "beam.smp.*$(basename "$BINARY")" 2>/dev/null || true)
+            if [[ -n "$DAEMON_PIDS" ]]; then
+                echo "✅ Found daemon process(es): $DAEMON_PIDS"
+                for pid in $DAEMON_PIDS; do
+                    kill -TERM "$pid" 2>/dev/null || true
+                done
+                sleep 1
             fi
             
-            # Clean up
-            kill -TERM "$DAEMON_PID" 2>/dev/null || true
-            wait "$DAEMON_PID" 2>/dev/null || true
             echo "✅ Daemon test passed"
         else
-            echo "❌ Daemon failed to start"
+            echo "❌ Daemon failed to start (no daemon_alive.txt)"
             exit 1
         fi
+        ;;
+        
+    escript)
+        echo "🧪 Running Escript smoke test..."
+        
+        # BINARY already set in the detection phase above
+        # Test 1: Basic execution with no args
+        echo "📋 Test 1: Basic execution..."
+        timeout "$TIMEOUT" "$BINARY" > /dev/null 2>&1
+        RESULT=$?
+        if [[ $RESULT -ne 0 ]]; then
+            echo "❌ Escript basic test failed with code $RESULT"
+            exit $RESULT
+        fi
+        echo "✅ Basic execution passed"
+        
+        # Test 2: Help output
+        echo "📋 Test 2: Help output..."
+        timeout "$TIMEOUT" "$BINARY" --help > /dev/null 2>&1
+        RESULT=$?
+        if [[ $RESULT -ne 0 ]]; then
+            echo "❌ Escript help test failed with code $RESULT"
+            exit $RESULT
+        fi
+        echo "✅ Help output passed"
+        
+        # Test 3: Version output
+        echo "📋 Test 3: Version output..."
+        timeout "$TIMEOUT" "$BINARY" --version > /dev/null 2>&1
+        RESULT=$?
+        if [[ $RESULT -ne 0 ]]; then
+            echo "❌ Escript version test failed with code $RESULT"
+            exit $RESULT
+        fi
+        echo "✅ Version output passed"
+        
+        # Test 4: Command with arguments
+        echo "📋 Test 4: Command execution..."
+        timeout "$TIMEOUT" "$BINARY" info > /dev/null 2>&1
+        RESULT=$?
+        if [[ $RESULT -ne 0 ]]; then
+            echo "❌ Escript command test failed with code $RESULT"
+            exit $RESULT
+        fi
+        echo "✅ Command execution passed"
+        
+        # Test 5: Calculator functionality
+        echo "📋 Test 5: Calculator test..."
+        timeout "$TIMEOUT" "$BINARY" calc "5 + 3" > /dev/null 2>&1
+        RESULT=$?
+        if [[ $RESULT -ne 0 ]]; then
+            echo "❌ Escript calculator test failed with code $RESULT"
+            exit $RESULT
+        fi
+        echo "✅ Calculator test passed"
+        
+        # Test 6: Verify output contains expected strings
+        echo "📋 Test 6: Output verification..."
+        OUTPUT=$(timeout "$TIMEOUT" "$BINARY" info 2>&1)
+        if echo "$OUTPUT" | grep -q "BATAMANTA ESCRIPT SMOKE TEST"; then
+            echo "✅ Output verification passed"
+        else
+            echo "❌ Output verification failed - expected banner not found"
+            exit 1
+        fi
+        
+        echo "✅ Escript test passed"
         ;;
         
     *)
