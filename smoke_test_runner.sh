@@ -107,27 +107,31 @@ case "$MODE" in
     daemon)
         echo "🧪 Running Daemon smoke test..."
         # Daemon starts, creates file, and waits for signal
+        # The wrapper process exits, but the BEAM daemon continues
+        rm -f daemon_alive.txt daemon_heartbeat.txt 2>/dev/null || true
         timeout "$TIMEOUT" "$BINARY" &
-        DAEMON_PID=$!
         
         # Wait for daemon to initialize
         sleep 2
         
-        # Check if daemon is still running
-        if kill -0 "$DAEMON_PID" 2>/dev/null; then
-            echo "✅ Daemon is running (PID: $DAEMON_PID)"
+        # Check for daemon file (indicates daemon is running)
+        if [[ -f "daemon_alive.txt" ]]; then
+            echo "✅ Daemon is running (created daemon_alive.txt)"
+            cat daemon_alive.txt
             
-            # Check for daemon file
-            if [[ -f "daemon_alive.txt" ]]; then
-                echo "✅ Daemon created alive file"
+            # Find and kill the daemon process
+            DAEMON_PIDS=$(pgrep -f "beam.smp.*$(basename "$BINARY")" 2>/dev/null || true)
+            if [[ -n "$DAEMON_PIDS" ]]; then
+                echo "✅ Found daemon process(es): $DAEMON_PIDS"
+                for pid in $DAEMON_PIDS; do
+                    kill -TERM "$pid" 2>/dev/null || true
+                done
+                sleep 1
             fi
             
-            # Clean up
-            kill -TERM "$DAEMON_PID" 2>/dev/null || true
-            wait "$DAEMON_PID" 2>/dev/null || true
             echo "✅ Daemon test passed"
         else
-            echo "❌ Daemon failed to start"
+            echo "❌ Daemon failed to start (no daemon_alive.txt)"
             exit 1
         fi
         ;;

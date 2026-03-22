@@ -213,30 +213,48 @@ fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8
     {
         let wrapper_script =
             create_escript_wrapper(&escript_path, &erts_dir, &erts_bin_dir, app_name, exec_mode)?;
-        let mut cmd = Command::new(&wrapper_script);
-        cmd.args(env::args().skip(1));
 
-        // Configurar stdio
-        if exec_mode == "daemon" {
-            cmd.arg("-detached")
+        let mut cmd = if exec_mode == "daemon" {
+            // Usar setsid para crear una nueva sesión (detaches del terminal)
+            let mut c = Command::new("setsid");
+            c.arg(&wrapper_script)
+                .arg("-daemon") // Flag para indicar modo daemon al wrapper
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
+            c
         } else {
-            cmd.stdin(Stdio::inherit())
+            let mut c = Command::new(&wrapper_script);
+            c.stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit());
-        }
+            c
+        };
+
+        // Pasar argumentos de usuario
+        cmd.args(env::args().skip(1));
 
         let mut child = cmd.spawn().context("Failed to spawn escript process")?;
 
         if exec_mode == "daemon" {
-            return Ok(0);
-        }
+            // En modo daemon, esperamos un poco para asegurar que arranc
+            std::thread::sleep(std::time::Duration::from_millis(500));
 
-        let status = child.wait().context("Failed to wait for escript process")?;
-        restore_terminal();
-        Ok(status.code().unwrap_or(0) as u8)
+            // Verificar que el proceso sigue vivo
+            match child.try_wait() {
+                Ok(Some(_status)) => {
+                    return Err(anyhow!("Daemon process exited prematurely"));
+                }
+                Ok(None) => Ok(0),
+                Err(e) => {
+                    return Err(anyhow!("Error checking daemon status: {}", e));
+                }
+            }
+        } else {
+            let status = child.wait().context("Failed to wait for escript process")?;
+            restore_terminal();
+            Ok(status.code().unwrap_or(0) as u8)
+        }
     }
 
     #[cfg(not(unix))]
@@ -278,7 +296,7 @@ fn create_escript_wrapper(
     erts_dir: &Path,
     erts_bin_dir: &Path,
     app_name: &str,
-    _exec_mode: &str,
+    exec_mode: &str,
 ) -> Result<PathBuf> {
     use std::io::Write;
 
@@ -287,6 +305,10 @@ fn create_escript_wrapper(
 
     // El escript ya tiene el shebang, solo necesitamos configurar el PATH y vars
     let erts_lib_dir = erts_dir.join("lib");
+
+    // Determinar si es modo daemon basado en si setsid nos pasó el flag
+    let daemon_flag = if exec_mode == "daemon" { "-daemon" } else { "" };
+
     let wrapper_content = format!(
         r#"#!/bin/sh
 # Batamanta escript wrapper
@@ -308,14 +330,29 @@ export EMULATOR="beam"
 export PROGNAME="$PROGNAME"
 export RELEASE_ROOT="$ERL_ROOTDIR"
 
-# Ejecutar el escript (que tiene su propio shebang)
-exec "{escript}" "$@"
+# Filtrar el flag -daemon de los argumentos si está presente
+# (lo añade setsid, no el usuario)
+args=""
+for arg in "$@"; do
+    if [ "$arg" != "-daemon" ]; then
+        args="$args $arg"
+    fi
+done
+
+# Ejecutar el escript con -noshell si es modo daemon
+if [ -n "{daemon_flag}" ]; then
+    # Ejecutar con -noshell para que erl no intente abrir una terminal
+    exec "{escript}" -noshell $args
+else
+    exec "{escript}" $args
+fi
 "#,
         bindir = erts_bin_dir.display(),
         erts_dir = erts_dir.display(),
         erts_lib_dir = erts_lib_dir.display(),
         app_name = app_name,
-        escript = escript_path.display()
+        escript = escript_path.display(),
+        daemon_flag = daemon_flag
     );
 
     let mut file = fs::File::create(&wrapper_path)?;
@@ -378,62 +415,123 @@ fn run_with_erlexec(
 
     let boot_arg = boot_path.with_extension("").to_string_lossy().into_owned();
 
-    let mut cmd = Command::new(&erlexec);
+    // Construir argumentos
+    let mut args: Vec<String> = vec![
+        "-boot".to_string(),
+        boot_arg.clone(),
+        "-boot_var".to_string(),
+        "RELEASE_LIB".to_string(),
+        release_lib.to_string_lossy().into_owned(),
+        "-boot_var".to_string(),
+        "RELEASE_ROOT".to_string(),
+        release_dir.to_string_lossy().into_owned(),
+        "-start_epmd".to_string(),
+        "false".to_string(),
+        "-noshell".to_string(),
+    ];
 
-    // Variables de entorno
-    cmd.env("ROOTDIR", release_dir)
-        .env("BINDIR", bin_path)
-        .env("ERL_LIBS", release_lib)
-        .env("RELEASE_ROOT", release_dir)
-        .env("RELEASE_PROG", app_name)
-        .env(
+    // Agregar argumentos del usuario
+    for arg in env::args().skip(1) {
+        args.push(arg);
+    }
+
+    // Spawn el proceso hijo
+    let mut child: std::process::Child = if exec_mode == "daemon" {
+        // En modo daemon, usamos setsid sin -f y esperamos
+        // setsid creará una nueva sesión y el proceso hijo se detachará cuando setsid termine
+        let mut cmd_str = erlexec.to_string_lossy().into_owned();
+        for arg in &args {
+            cmd_str.push(' ');
+            // Simple escaping
+            let escaped = arg.replace('\'', "'\\''");
+            cmd_str.push('\'');
+            cmd_str.push_str(&escaped);
+            cmd_str.push('\'');
+        }
+
+        let mut setsid_cmd = Command::new("setsid");
+        setsid_cmd
+            .arg("sh")
+            .arg("-c")
+            .arg(format!("exec {} &", cmd_str));
+
+        // Agregar todas las variables de entorno
+        setsid_cmd.env("ROOTDIR", release_dir);
+        setsid_cmd.env("BINDIR", bin_path);
+        setsid_cmd.env("ERL_LIBS", release_lib);
+        setsid_cmd.env("RELEASE_ROOT", release_dir);
+        setsid_cmd.env("RELEASE_PROG", app_name);
+        setsid_cmd.env(
             "RELEASE_SYS_CONFIG",
             releases_version_dir.join("sys.config"),
-        )
-        .env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"))
-        .env("EMU", "beam")
-        .env("PROGNAME", "erl")
-        // Boot variables
-        .arg("-boot")
-        .arg(&boot_arg)
-        .arg("-boot_var")
-        .arg("RELEASE_LIB")
-        .arg(release_lib)
-        .arg("-boot_var")
-        .arg("RELEASE_ROOT")
-        .arg(release_dir)
-        // Desactivar EPMD para evitar cuelgues
-        .arg("-start_epmd")
-        .arg("false")
-        .arg("-noshell")
-        // Pasar argumentos a la aplicación
-        .arg("-extra")
-        .arg("--")
-        .args(env::args().skip(1));
+        );
+        setsid_cmd.env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"));
+        setsid_cmd.env("EMU", "beam");
+        setsid_cmd.env("PROGNAME", "erl");
 
-    // Configurar stdio según el modo
-    if exec_mode == "daemon" {
-        cmd.arg("-detached")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        // Redirigir stdio a /dev/null
+        setsid_cmd.stdin(Stdio::null());
+        setsid_cmd.stdout(Stdio::null());
+        setsid_cmd.stderr(Stdio::null());
+
+        // setsid retorna inmediatamente, pero el proceso hijo continúa
+        setsid_cmd
+            .spawn()
+            .context("Failed to spawn daemon process (setsid)")?;
+
+        // Dar tiempo al proceso para arrancar
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // En daemon mode, retornar éxito sin esperar
+        // El daemon está corriendo independientemente
+        return Ok(0);
     } else {
-        cmd.stdin(Stdio::inherit())
+        // Modo normal: ejecutar directamente
+        let mut cmd = Command::new(&erlexec);
+        cmd.env("ROOTDIR", release_dir)
+            .env("BINDIR", bin_path)
+            .env("ERL_LIBS", release_lib)
+            .env("RELEASE_ROOT", release_dir)
+            .env("RELEASE_PROG", app_name)
+            .env(
+                "RELEASE_SYS_CONFIG",
+                releases_version_dir.join("sys.config"),
+            )
+            .env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"))
+            .env("EMU", "beam")
+            .env("PROGNAME", "erl")
+            // Boot variables
+            .arg("-boot")
+            .arg(&boot_arg)
+            .arg("-boot_var")
+            .arg("RELEASE_LIB")
+            .arg(release_lib)
+            .arg("-boot_var")
+            .arg("RELEASE_ROOT")
+            .arg(release_dir)
+            // Desactivar EPMD para evitar cuelgues
+            .arg("-start_epmd")
+            .arg("false")
+            .arg("-noshell")
+            // Pasar argumentos a la aplicación
+            .arg("-extra")
+            .arg("--")
+            .args(env::args().skip(1))
+            .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
+
+        cmd.spawn().context("Failed to spawn Erlang VM process")?
+    };
+
+    // Esperar según el modo
+    if exec_mode != "daemon" {
+        let status = child.wait().context("Failed to wait for Erlang process")?;
+        restore_terminal();
+        Ok(status.code().unwrap_or(0) as u8)
+    } else {
+        Ok(0)
     }
-
-    let mut child = cmd.spawn().context("Failed to spawn Erlang VM process")?;
-
-    if exec_mode == "daemon" {
-        return Ok(0);
-    }
-
-    let status = child.wait().context("Failed to wait for Erlang process")?;
-
-    restore_terminal();
-
-    Ok(status.code().unwrap_or(0) as u8)
 }
 
 fn extract_payload(bytes: &[u8], path: &Path) -> Result<()> {

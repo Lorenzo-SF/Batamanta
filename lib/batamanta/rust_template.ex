@@ -83,7 +83,7 @@ defmodule Batamanta.RustTemplate do
 
     # Merge with current environment
     current_env = System.get_env() |> Enum.map(fn {k, v} -> {k, v} end)
-    
+
     additional_env = [
       {"BATAMANTA_EXEC_MODE", mode_str},
       {"BATAMANTA_APP_NAME", app_name_str},

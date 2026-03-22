@@ -113,7 +113,7 @@ defmodule Batamanta.EscriptPackager do
     case File.ls(erts_root) do
       {:ok, entries} ->
         # Look for directory starting with "erts-"
-          erts_dir =
+        erts_dir =
           Enum.find(entries, fn entry ->
             String.starts_with?(entry, "erts-") && File.dir?(Path.join(erts_root, entry))
           end)
@@ -359,7 +359,7 @@ defmodule Batamanta.EscriptPackager do
 
   defp directory_size(dir) do
     dir
-    |> Path.wildcard("**/*")
+    |> Path.wildcard(match_dot: true)
     |> Enum.reject(&File.dir?/1)
     |> Enum.map(fn path ->
       case File.stat(path) do
