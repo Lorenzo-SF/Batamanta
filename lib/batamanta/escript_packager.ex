@@ -8,12 +8,14 @@ defmodule Batamanta.EscriptPackager do
 
   ## Payload Structure
 
-  For escripts, the payload contains:
+  The payload is extracted to a `release/` directory and matches the structure
+  expected by the Rust wrapper:
   ```
   payload.tar.zst
-  └── bin/                  # Escript binary (named after the app)
-      ├── <app_name>        # The compiled escript binary
-      └── erts/             # Minimal ERTS (beam emulator + required libs)
+  └── release/               # Extraction root (expected by Rust wrapper)
+      ├── bin/
+      │   └── <app_name>   # The compiled escript binary
+      └── erts/            # Minimal ERTS (beam emulator + required libs)
           ├── bin/
           │   ├── erlexec
           │   ├── erl
@@ -61,12 +63,15 @@ defmodule Batamanta.EscriptPackager do
     app_name = Path.basename(escript_path)
 
     try do
-      # 1. Copy escript
-      File.mkdir_p!(Path.join([temp_dir, "bin"]))
-      File.cp!(escript_path, Path.join([temp_dir, "bin", app_name]))
+      # Structure: release/ (matches what Rust wrapper expects after extraction)
+      release_dir = Path.join([temp_dir, "release"])
 
-      # 2. Prepare minimal ERTS
-      minimal_erts_path = Path.join([temp_dir, "erts"])
+      # 1. Copy escript to release/bin/
+      File.mkdir_p!(Path.join([release_dir, "bin"]))
+      File.cp!(escript_path, Path.join([release_dir, "bin", app_name]))
+
+      # 2. Prepare minimal ERTS in release/erts/
+      minimal_erts_path = Path.join([release_dir, "erts"])
       prepare_minimal_erts(erts_path, minimal_erts_path)
 
       # 3. Create tarball
@@ -102,6 +107,29 @@ defmodule Batamanta.EscriptPackager do
     |> Integer.to_string(16)
   end
 
+  # Finds the erts-X.Y/bin directory within the ERTS cache
+  # The cached ERTS has structure: erts-X.Y/bin/ for actual binaries
+  defp find_erts_bin_dir(erts_root) do
+    case File.ls(erts_root) do
+      {:ok, entries} ->
+        # Look for directory starting with "erts-"
+        erts_dir =
+          Enum.find(entries, fn entry ->
+            String.starts_with?(entry, "erts-") && File.dir?(Path.join(erts_root, entry))
+          end)
+
+        if erts_dir do
+          Path.join(erts_root, erts_dir, "bin")
+        else
+          # Fallback to bin/
+          Path.join(erts_root, "bin")
+        end
+
+      _ ->
+        Path.join(erts_root, "bin")
+    end
+  end
+
   @doc """
   Prepares a minimal ERTS for escript execution.
 
@@ -120,34 +148,35 @@ defmodule Batamanta.EscriptPackager do
   def prepare_minimal_erts(erts_source, erts_dest) do
     File.mkdir_p!(erts_dest)
 
-    # Copy essential bin files
+    # ERTS structure: erts_source/bin has wrapper scripts, but actual binaries
+    # (erlexec, beam.smp) are in erts_source/erts-X.Y/bin/
+    # We need to search both locations
     bin_source = Path.join(erts_source, "bin")
+    erts_bin_source = find_erts_bin_dir(erts_source)
     bin_dest = Path.join(erts_dest, "bin")
     File.mkdir_p!(bin_dest)
 
+    # Essential binaries to copy
     essential_bins = [
       "erlexec",
       "erl",
       "start",
-      "heart"
+      "heart",
+      "beam.smp"
     ]
 
     for bin <- essential_bins do
+      # Try both locations: bin/ and erts-X.Y/bin/
       src = Path.join(bin_source, bin)
-      dest = Path.join(bin_dest, bin)
+      src_erts_bin = Path.join(erts_bin_source, bin)
 
-      if File.exists?(src) do
-        File.cp!(src, dest)
+      src_path = if File.exists?(src), do: src, else: src_erts_bin
+
+      if File.exists?(src_path) do
+        dest = Path.join(bin_dest, bin)
+        File.cp!(src_path, dest)
         make_executable(dest)
       end
-    end
-
-    # Copy beam.smp (main emulator)
-    beam_smp = Path.join(bin_source, "beam.smp")
-
-    if File.exists?(beam_smp) do
-      File.cp!(beam_smp, Path.join(bin_dest, "beam.smp"))
-      make_executable(Path.join(bin_dest, "beam.smp"))
     end
 
     # Copy essential libraries
@@ -215,9 +244,17 @@ defmodule Batamanta.EscriptPackager do
   end
 
   # Makes a file executable
+  # Note: File.stat returns mode including file type (0o100000 for regular files)
+  # We need to mask out the type bits and only add execution permissions
   defp make_executable(path) do
     {:ok, %{mode: mode}} = File.stat(path)
-    File.chmod!(path, mode + 0o111)
+    # Extract only the permission bits (last 9 bits = 0o777)
+    perms = Bitwise.band(mode, 0o777)
+    # Add execute permission for user, group, and others
+    new_perms = Bitwise.bor(perms, 0o111)
+    # Combine file type with new permissions
+    new_mode = Bitwise.bor(Bitwise.band(mode, 0o77700), new_perms)
+    File.chmod!(path, new_mode)
   end
 
   # Creates a tarball from the temp directory using system tar

@@ -31,14 +31,17 @@ fn restore_terminal() {
 }
 
 fn get_exec_mode() -> String {
+    // Read from environment variable set at compile time via build.rs
     env::var("BATAMANTA_EXEC_MODE").unwrap_or_else(|_| "cli".to_string())
 }
 
 fn get_app_name() -> String {
+    // Read from environment variable set at compile time via build.rs
     env::var("BATAMANTA_APP_NAME").unwrap_or_else(|_| "app".to_string())
 }
 
 fn get_format() -> String {
+    // Read from environment variable set at compile time via build.rs
     env::var("BATAMANTA_FORMAT").unwrap_or_else(|_| "release".to_string())
 }
 
@@ -192,8 +195,9 @@ fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8
     }
 
     // Buscar erlexec para configurar variables de entorno
-    let erlexec = find_file(&erts_dir.join("bin"), "erlexec")
-        .or_else(|| find_file(&erts_dir, "erlexec"))
+    // erlexec está en erts-X.Y/bin/ dentro del ERTS cache
+    let erlexec = find_file(&erts_dir, "erlexec")
+        .or_else(|| find_file(&erts_dir.join("bin"), "erlexec"))
         .context("erlexec not found in erts")?;
 
     // Note: erl_bin is kept for potential future use but not needed currently
