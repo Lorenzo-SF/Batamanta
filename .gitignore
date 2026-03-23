@@ -12,6 +12,7 @@
 
 # Archivos temporales de Mix
 /.fetch
+/.elixir_ls
 
 # Volcados de memoria si la VM de Erlang colapsa
 erl_crash.dump
