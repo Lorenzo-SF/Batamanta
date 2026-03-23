@@ -587,7 +587,7 @@ defmodule MyEscriptApp.CLI do
 end
 ```
 
-**Note:** For escript mode, `mix.exs` should NOT include `format: :escript` - Batamanta auto-detects escript format automatically.
+**Note:** The `format: :escript` in `batamanta:` is optional if your project already has `escript:` configuration in `mix.exs` - Batamanta auto-detects escript format. But you can include it explicitly for clarity.
 
 ---
 

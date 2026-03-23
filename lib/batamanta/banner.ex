@@ -219,19 +219,10 @@ defmodule Batamanta.Banner do
 
   # Detects the row where the banner should start
   # Note: With Mix redirecting stdout, we cannot reliably detect cursor position.
-  # We use a heuristic based on terminal width and estimate Mix output lines.
+  # Mix always outputs ~2 lines before batamanta runs ("==> project", "Compiling..."),
+  # so we always start at row 3 to account for this.
   defp detect_prompt_row do
-    case :io.columns() do
-      {:ok, w} when w >= 120 ->
-        # Very wide terminal - likely fresh state (after clear)
-        1
-
-      _ ->
-        # Normal terminal - Mix shows ~2 lines of output before us
-        # (e.g., "==> project" and "Compiling...")
-        # So we start at row 3 to leave room for those
-        3
-    end
+    3
   end
 
   defp erase_image_area(rows, cols) do
