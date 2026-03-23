@@ -5,9 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.1] - 2026-03-23
+## [1.2.0] - 2026-03-23
 
 ### Added
+- **Escript Support**: New `execution_mode: :escript` option to build lightweight escripts instead of full OTP releases
+- **Auto-detection**: Automatically detects escript format when project has `:escript` config in `mix.exs`
+- **CLI Override**: `--format` option to override format detection from command line
+- **Dynamic Version Detection**: Fixed hardcoded version `0.1.0` in Rust wrapper, now reads version from `start_erl.data`
+- **Smoke Tests**: Added `test_escript` smoke test project for escript builds
 - **Retry Logic for Downloads**: ERTS downloads now retry up to 3 times with exponential backoff (1s, 2s, 4s) on network failures
 - **Cache Lock Mechanism**: File-based locking prevents race conditions when multiple processes try to download ERTS simultaneously
 - **Improved Tar Error Parsing**: Extract-specific error messages for tar failures (permission denied, disk full, corrupted archive, etc.)
@@ -18,22 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Compilation Without --warnings-as-errors**: `EscriptBuilder` no longer fails on compiler warnings, improving build reliability across different OTP versions
 - **EscriptBuilder Validation**: Improved escript validation using `File.read/1` with proper ELF/shebang magic byte detection
 - **LibcDetector Refactoring**: Consolidated regex patterns for OS detection, renamed `is_musl_distro?` to `musl_distro?` for Credo compliance
-
-### Fixed
-- **Cache Race Conditions**: TOCTOU race condition in `check_erts_cache` now protected by file locks
-- **Tar Error Messages**: Better error messages when tar extraction fails, including "Permission denied", "Disk full", etc.
-- **Download Retry Pattern**: Fixed pattern matching to handle both `:ok` (file downloads) and `{:ok, body}` (manifest downloads) return values
-
-## [1.2.0] - 2026-03-22
-
-### Added
-- **Escript Support**: New `execution_mode: :escript` option to build lightweight escripts instead of full OTP releases
-- **Auto-detection**: Automatically detects escript format when project has `:escript` config in `mix.exs`
-- **CLI Override**: `--format` option to override format detection from command line
-- **Dynamic Version Detection**: Fixed hardcoded version `0.1.0` in Rust wrapper, now reads version from `start_erl.data`
-- **Smoke Tests**: Added `test_escript` smoke test project for escript builds
-
-### Changed
 - **Smaller Binaries**: Escript format produces ~60-70% smaller binaries than release format
 - **EscriptPackager**: New module for packaging escripts with minimal ERTS
 - **EscriptBuilder**: New module for building escripts via `mix escript.build`
@@ -41,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Banner Positioning**: Improved banner display to work consistently whether terminal is fresh or has existing output
 
 ### Fixed
+- **Cache Race Conditions**: TOCTOU race condition in `check_erts_cache` now protected by file locks
+- **Tar Error Messages**: Better error messages when tar extraction fails, including "Permission denied", "Disk full", etc.
+- **Download Retry Pattern**: Fixed pattern matching to handle both `:ok` (file downloads) and `{:ok, body}` (manifest downloads) return values
 - **Version Detection**: Release version is now dynamically detected from `releases/start_erl.data` instead of being hardcoded
 - **Daemon Mode**: Fixed daemon spawning using `setsid` to properly detach from terminal
 - **Banner Spacing**: Logs now appear below the banner image instead of overwriting it
