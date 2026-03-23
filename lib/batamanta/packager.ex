@@ -35,36 +35,16 @@ defmodule Batamanta.Packager do
       File.mkdir_p!(temp)
       tar_path = Path.join(temp, "payload.tar")
 
-      # 🔴 CRÍTICO: Preparar ERTS y release para portabilidad
+      # CRÍTICO: Preparar ERTS y release para portabilidad
       prepare_erts(erts_path)
       prepare_start_boot(rel_path, app_name)
       relativize_release_scripts(rel_path)
 
-      # 🔴 Remove Mix's bundled ERTS (we'll use our own)
-      mix_erts_path = Path.join(rel_path, "erts-16.1")
+      # Remove Mix's bundled ERTS (we'll use our own from fetched cache)
+      remove_mix_bundled_erts(rel_path, erts_path)
 
-      if File.exists?(mix_erts_path) do
-        File.rm_rf!(mix_erts_path)
-      end
-
-      # 🔴 Update start_erl.data to use correct ERTS version
-      start_erl_path = Path.join(Path.join(rel_path, "releases"), "start_erl.data")
-
-      if File.exists?(start_erl_path) do
-        erts_version = extract_erts_version(erts_path)
-        releases_dir = Path.join(rel_path, "releases")
-
-        app_vsn =
-          releases_dir
-          |> File.ls!()
-          |> Enum.filter(&(&1 != "COOKIE" && &1 != "start_erl.data"))
-          |> List.first()
-
-        if erts_version && app_vsn do
-          new_content = "#{erts_version} #{app_vsn}"
-          File.write!(start_erl_path, new_content)
-        end
-      end
+      # Update start_erl.data to use correct ERTS version
+      update_start_erl_data(rel_path, erts_path)
 
       # Crear tarball con release + ERTS
       # ERTS goes inside release/ so it's at <extracted>/release/erts/
@@ -89,9 +69,7 @@ defmodule Batamanta.Packager do
   @spec prepare_erts(Path.t()) :: :ok
   defp prepare_erts(erts_path) do
     flatten_nested_erts(erts_path)
-
     cleanup_erts(erts_path)
-
     ensure_executable_permissions(erts_path)
   end
 
@@ -244,14 +222,9 @@ defmodule Batamanta.Packager do
   @spec boot_priority(String.t(), String.t()) :: integer()
   defp boot_priority(path, app_name) do
     cond do
-      String.contains?(path, "#{app_name}.boot") ->
-        0
-
-      String.contains?(path, "start.boot") ->
-        1
-
-      true ->
-        2
+      String.contains?(path, "#{app_name}.boot") -> 0
+      String.contains?(path, "start.boot") -> 1
+      true -> 2
     end
   end
 
@@ -261,6 +234,45 @@ defmodule Batamanta.Packager do
 
     if File.exists?(default_boot) do
       File.cp!(default_boot, start_boot)
+    end
+  end
+
+  # ============================================================================
+  # MIX BUNDLED ERTS REMOVAL
+  # ============================================================================
+
+  # Remove Mix's bundled ERTS and replace with our fetched ERTS
+  defp remove_mix_bundled_erts(rel_path, erts_path) do
+    # Extract the ERTS version dynamically from the fetched ERTS
+    erts_version = extract_erts_version(erts_path)
+
+    if erts_version do
+      mix_erts_path = Path.join(rel_path, "erts-#{erts_version}")
+
+      if File.exists?(mix_erts_path) do
+        File.rm_rf!(mix_erts_path)
+      end
+    end
+  end
+
+  # Update start_erl.data with the correct ERTS version
+  defp update_start_erl_data(rel_path, erts_path) do
+    start_erl_path = Path.join([rel_path, "releases", "start_erl.data"])
+
+    if File.exists?(start_erl_path) do
+      erts_version = extract_erts_version(erts_path)
+      releases_dir = Path.join(rel_path, "releases")
+
+      app_vsn =
+        releases_dir
+        |> File.ls!()
+        |> Enum.filter(&(&1 != "COOKIE" && &1 != "start_erl.data"))
+        |> List.first()
+
+      if erts_version && app_vsn do
+        new_content = "#{erts_version} #{app_vsn}"
+        File.write!(start_erl_path, new_content)
+      end
     end
   end
 
@@ -365,6 +377,9 @@ defmodule Batamanta.Packager do
   @spec compress_with_zstd(Path.t(), Path.t(), integer()) ::
           {:ok, Path.t()} | {:error, String.t()}
   defp compress_with_zstd(tar, zst, level) do
+    # Ensure zstd is available before attempting compression
+    ensure_zstd_available!()
+
     case System.cmd("zstd", ["-z", "-f", "--rm", "-#{level}", tar, "-o", zst],
            stderr_to_stdout: true
          ) do
@@ -373,6 +388,28 @@ defmodule Batamanta.Packager do
 
       {err, code} ->
         {:error, "Zstd failed (exit code #{code}): #{err}"}
+    end
+  end
+
+  # Verify zstd is installed
+  defp ensure_zstd_available! do
+    unless System.find_executable("zstd") do
+      raise """
+      zstd is required but not installed.
+
+      Install with:
+        # Debian/Ubuntu
+        sudo apt install zstd
+
+        # macOS
+        brew install zstd
+
+        # Alpine
+        apk add zstd
+
+        # Or build from source:
+        # https://facebook.github.io/zstd/
+      """
     end
   end
 
