@@ -25,6 +25,10 @@ defmodule Batamanta.ERTS.Fetcher do
   @cache_dir_name "batamanta"
   @manifest_cache_key {:batamanta_erts_manifest, :loaded}
 
+  # Retry configuration
+  @max_download_retries 3
+  @retry_base_delay_ms 1000
+
   @type otp_version :: String.t()
   @type version_mode :: :explicit | :auto
 
@@ -51,34 +55,87 @@ defmodule Batamanta.ERTS.Fetcher do
   def fetch(otp_version, target \\ nil, opts \\ [])
 
   def fetch(otp_version, nil, opts) do
-    fetch(otp_version, detect_platform(), opts)
+    fetch_for_platform(otp_version, detect_platform(), opts)
   end
 
   def fetch(otp_version, :auto, opts) do
-    fetch(otp_version, detect_platform(), opts)
+    fetch_for_platform(otp_version, detect_platform(), opts)
   end
 
   def fetch(otp_version, target, opts) when is_atom(target) do
     platform = target_atom_to_platform(target)
-    fetch(otp_version, platform, opts)
+    fetch_for_platform(otp_version, platform, opts)
   end
 
   def fetch(otp_version, target, opts) when is_map(target) do
+    fetch_for_platform(otp_version, target, opts)
+  end
+
+  # Core fetching logic with platform map
+  defp fetch_for_platform(otp_version, target, opts) do
     version_mode = Keyword.get(opts, :version_mode, :auto)
     otp_vsn = normalize_otp_version(otp_version)
     platform_key = build_platform_key(target)
 
     log_info(">> Fetching ERTS for OTP #{otp_vsn} (#{platform_key})...")
 
-    # Check cache first
-    case check_erts_cache(otp_vsn, platform_key) do
+    # Check cache with lock to prevent race conditions
+    with_lock(otp_vsn, platform_key, fn ->
+      case check_erts_cache(otp_vsn, platform_key) do
+        {:ok, cached_path} ->
+          log_info(">> ✅ ERTS cached at: #{cached_path}")
+          {:ok, cached_path}
+
+        :not_found ->
+          fetch_erts_with_manifest(otp_vsn, platform_key, version_mode)
+      end
+    end)
+  end
+
+  # Simple lock mechanism using file system
+  defp with_lock(otp_version, platform_key, fun) do
+    lock_dir = Path.join(get_cache_dir(), ".locks")
+    File.mkdir_p!(lock_dir)
+    lock_file = Path.join(lock_dir, "erts-#{otp_version}-#{platform_key}.lock")
+
+    # Try to acquire lock
+    lock_acquired =
+      case File.open(lock_file, [:exclusive, :raw]) do
+        {:ok, pid} ->
+          # Write PID for debugging
+          :file.write(pid, :erlang.term_to_binary(:erlang.system_time(:second)))
+          File.close(pid)
+          true
+
+        {:error, _} ->
+          # Lock exists, wait briefly and retry
+          :timer.sleep(100)
+          false
+      end
+
+    if lock_acquired do
+      try do
+        fun.()
+      after
+        # Release lock
+        File.rm(lock_file)
+      end
+    else
+      # Another process is downloading, wait for cache
+      wait_for_cache(otp_version, platform_key, 10)
+    end
+  end
+
+  defp wait_for_cache(_otp_version, _platform_key, 0), do: :not_found
+
+  defp wait_for_cache(otp_version, platform_key, retries) do
+    case check_erts_cache(otp_version, platform_key) do
       {:ok, cached_path} ->
-        log_info(">> ✅ ERTS cached at: #{cached_path}")
         {:ok, cached_path}
 
       :not_found ->
-        # Not in cache, need to download MANIFEST and possibly ERTS
-        fetch_erts_with_manifest(otp_vsn, platform_key, version_mode)
+        :timer.sleep(500)
+        wait_for_cache(otp_version, platform_key, retries - 1)
     end
   end
 
@@ -249,7 +306,7 @@ defmodule Batamanta.ERTS.Fetcher do
     # First, try to download from remote
     log_info(">>    Downloading MANIFEST.json from remote...")
 
-    case download_manifest() do
+    case download_with_retry(&download_manifest/0) do
       {:ok, body} ->
         # Save to cache for future use
         File.mkdir_p!(get_cache_dir())
@@ -279,58 +336,78 @@ defmodule Batamanta.ERTS.Fetcher do
     end
   end
 
+  # Retry wrapper with exponential backoff
+  defp download_with_retry(download_fun) do
+    download_with_retry(download_fun, @max_download_retries, 0)
+  end
+
+  defp download_with_retry(_download_fun, 0, _attempt) do
+    {:error, "Max retries exceeded"}
+  end
+
+  defp download_with_retry(download_fun, retries, attempt) do
+    case download_fun.() do
+      # Handle {:ok, body} pattern (for manifest downloads)
+      {:ok, _body} = result ->
+        result
+
+      # Handle :ok pattern (for file downloads that save to disk)
+      :ok ->
+        :ok
+
+      {:error, _reason} when retries > 0 ->
+        delay = (@retry_base_delay_ms * :math.pow(2, attempt)) |> round()
+        log_info(">>    Retry #{attempt + 1}/#{@max_download_retries} in #{delay}ms...")
+        :timer.sleep(delay)
+        download_with_retry(download_fun, retries - 1, attempt + 1)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
   # ============================================================================
-  # JSON PARSING - Using Jason if available, fallback to manual parser
+  # JSON PARSING - Manual parser (Jason optional, not required)
   # ============================================================================
 
-  # Try to use Jason if available (recommended)
-  if Code.ensure_loaded?(Jason) do
-    defp parse_json(json_string) do
-      case Jason.decode(json_string) do
-        {:ok, manifest} -> manifest
-        {:error, _} -> %{}
-      end
-    end
-  else
-    # Fallback: Manual parser that actually works correctly
-    defp parse_json(json_string) do
-      json_string
-      |> parse_json_object()
-      |> Enum.into(%{})
-    end
+  # Use simple manual JSON parser - no external dependency required
+  defp parse_json(json_string) do
+    json_string
+    |> parse_json_object()
+    |> Enum.into(%{})
+  end
 
-    defp parse_json_object(json) do
-      json
-      |> String.trim()
-      |> String.replace("\n", "")
-      |> String.replace(" ", "")
-      |> extract_key_values()
-      |> Enum.filter(&match?({key, _} when is_binary(key) and byte_size(key) > 0, &1))
-    end
+  defp parse_json_object(json) do
+    json
+    |> String.trim()
+    |> String.replace("\n", "")
+    |> String.replace(" ", "")
+    |> extract_key_values()
+    |> Enum.filter(&match?({key, _} when is_binary(key) and byte_size(key) > 0, &1))
+  end
 
-    defp extract_key_values(json) do
-      # Find all "KEY": "VALUE" or "KEY": { ... } patterns
-      regex = ~r/"([^"]+)"\s*:\s*("(?:[^"\\]|\\.)*"|\{[^}]*\})/
+  defp extract_key_values(json) do
+    # Find all "KEY": "VALUE" or "KEY": { ... } patterns
+    regex = ~r/"([^"]+)"\s*:\s*("(?:[^"\\]|\\.)*"|\{[^}]*\})/
 
-      Regex.scan(regex, json)
-      |> Enum.map(fn [_full, key, value] ->
-        {key, parse_json_value(value)}
-      end)
-    end
+    Regex.scan(regex, json)
+    |> Enum.map(fn [_full, key, value] ->
+      {key, parse_json_value(value)}
+    end)
+  end
 
-    defp parse_json_value("{" <> rest) do
-      # Nested object
-      ("{" <> rest)
-      |> String.trim_trailing("}")
-      |> extract_key_values()
-      |> Enum.into(%{})
-    end
+  defp parse_json_value("{" <> rest) do
+    # Nested object
+    ("{" <> rest)
+    |> String.trim_trailing("}")
+    |> extract_key_values()
+    |> Enum.into(%{})
+  end
 
-    defp parse_json_value(value) do
-      # String value - remove quotes
-      value
-      |> String.trim("\"")
-    end
+  defp parse_json_value(value) do
+    # String value - remove quotes
+    value
+    |> String.trim("\"")
   end
 
   defp local_manifest_path do
@@ -357,7 +434,7 @@ defmodule Batamanta.ERTS.Fetcher do
       {:ok, {{_, 200, _}, _, body}} ->
         {:ok, body}
 
-      {:ok, {{_, status, _}, _, _}} ->
+      {:ok, {{_, status, _}, _}} ->
         {:error, "HTTP #{status}"}
 
       {:error, reason} ->
@@ -539,12 +616,13 @@ defmodule Batamanta.ERTS.Fetcher do
 
     log_info(">>    Downloading ERTS...")
 
-    case download_file(url, cache_path) do
+    # Download with retry
+    case download_with_retry(fn -> download_file(url, cache_path) end) do
       :ok ->
         extract_erts(cache_path, extract_dir, otp_version)
 
       {:error, reason} ->
-        {:error, "Download failed: #{reason}"}
+        {:error, "Download failed after #{@max_download_retries} retries: #{reason}"}
     end
   end
 
@@ -570,7 +648,7 @@ defmodule Batamanta.ERTS.Fetcher do
       if exit_code == 0 do
         :ok
       else
-        {:error, "tar command failed: #{output}"}
+        {:error, parse_tar_error(output)}
       end
 
     case result do
@@ -579,16 +657,44 @@ defmodule Batamanta.ERTS.Fetcher do
           {:ok, extract_dir}
         else
           File.rm_rf(extract_dir)
-          {:error, "ERTS validation failed"}
+          {:error, "ERTS validation failed: missing required files"}
         end
 
       {:error, reason} ->
         File.rm_rf(extract_dir)
-        {:error, "Tar extraction failed: #{inspect(reason)}"}
+        {:error, "Tar extraction failed: #{reason}"}
     end
   rescue
     e ->
+      File.rm_rf(extract_dir)
       {:error, "Failed to extract: #{inspect(e)}"}
+  end
+
+  # Parse tar error output to provide meaningful error messages
+  defp parse_tar_error(output) do
+    cond do
+      matches_any?(output, ["Permission denied"]) ->
+        "Permission denied: cannot extract archive. Check file permissions."
+
+      matches_any?(output, ["No space left", "No space left on device"]) ->
+        "Disk full: no space left on device. Free up space and try again."
+
+      matches_any?(output, ["Cannot open", "cannot open"]) ->
+        "Archive corrupted or missing: cannot open the archive file."
+
+      matches_any?(output, ["Truncated", "unexpected end of file"]) ->
+        "Archive truncated: download may have been interrupted. Try downloading again."
+
+      matches_any?(output, ["child died", "signal killed"]) ->
+        "Process killed: possibly out of memory or timeout."
+
+      true ->
+        "tar command failed: #{String.trim(output)}"
+    end
+  end
+
+  defp matches_any?(string, patterns) do
+    Enum.any?(patterns, &String.contains?(string, &1))
   end
 
   defp download_file(url, cache_path) do
@@ -608,14 +714,17 @@ defmodule Batamanta.ERTS.Fetcher do
       {:ok, {{_, 200, _}, _, body}} ->
         save_file(body, cache_path)
 
-      {:ok, {{_, 404, _}, _, _}} ->
-        {:error, "File not found (404)"}
+      {:ok, {{_, 404, _}, _}} ->
+        {:error, "File not found on server (404)"}
 
-      {:ok, {{_, status, _}, _, _}} ->
+      {:ok, {{_, status, _}, _}} ->
         {:error, "HTTP error: #{status}"}
 
+      {:error, reason} when is_atom(reason) ->
+        {:error, "Network error: #{reason}"}
+
       {:error, reason} ->
-        {:error, inspect(reason)}
+        {:error, "Download error: #{inspect(reason)}"}
     end
   end
 
@@ -630,11 +739,11 @@ defmodule Batamanta.ERTS.Fetcher do
 
           {:error, reason} ->
             File.rm(tmp_path)
-            {:error, reason}
+            {:error, "Failed to save cache: #{reason}"}
         end
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, "Failed to write temp file: #{reason}"}
     end
   end
 

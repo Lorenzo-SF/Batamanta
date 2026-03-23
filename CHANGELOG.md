@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-03-23
+
+### Added
+- **Retry Logic for Downloads**: ERTS downloads now retry up to 3 times with exponential backoff (1s, 2s, 4s) on network failures
+- **Cache Lock Mechanism**: File-based locking prevents race conditions when multiple processes try to download ERTS simultaneously
+- **Improved Tar Error Parsing**: Extract-specific error messages for tar failures (permission denied, disk full, corrupted archive, etc.)
+- **zstd Dependency Check**: Packager now raises a clear error with installation instructions if zstd is not found
+- **Integration Tests**: New `FetcherIntegrationTest` module for tests requiring network access (excluded by default, run with `mix test --include integration`)
+
+### Changed
+- **Compilation Without --warnings-as-errors**: `EscriptBuilder` no longer fails on compiler warnings, improving build reliability across different OTP versions
+- **EscriptBuilder Validation**: Improved escript validation using `File.read/1` with proper ELF/shebang magic byte detection
+- **LibcDetector Refactoring**: Consolidated regex patterns for OS detection, renamed `is_musl_distro?` to `musl_distro?` for Credo compliance
+
+### Fixed
+- **Cache Race Conditions**: TOCTOU race condition in `check_erts_cache` now protected by file locks
+- **Tar Error Messages**: Better error messages when tar extraction fails, including "Permission denied", "Disk full", etc.
+- **Download Retry Pattern**: Fixed pattern matching to handle both `:ok` (file downloads) and `{:ok, body}` (manifest downloads) return values
+
 ## [1.2.0] - 2026-03-22
 
 ### Added
