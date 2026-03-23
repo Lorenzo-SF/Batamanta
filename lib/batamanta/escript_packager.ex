@@ -264,23 +264,30 @@ defmodule Batamanta.EscriptPackager do
     # then we'll compress it with zstd
     tar_temp = String.replace_trailing(tar_path, ".tar", "_uncompressed.tar")
 
-    # Build tar with explicit paths
-    # -C: change to directory before archiving
-    # -c: create archive
-    # -f: output file
-    # --owner=0 --group=0: set uniform ownership for reproducibility
-    # --mtime: set consistent timestamps
-    case System.cmd("tar", [
-           "-C",
-           source_dir,
-           "-c",
-           "-f",
-           tar_temp,
-           "--owner=0",
-           "--group=0",
-           "--mtime=1970-01-01 00:00:00",
-           "."
-         ]) do
+    # Build tar options based on OS (GNU tar vs BSD tar)
+    # BSD tar (macOS) doesn't support --mtime, --owner, --group
+    {os_type, os_name} = :os.type()
+
+    tar_opts =
+      if os_type == :unix and os_name == :darwin do
+        # BSD tar (macOS)
+        ["-C", source_dir, "-c", "-f", tar_temp, "."]
+      else
+        # GNU tar (Linux)
+        [
+          "-C",
+          source_dir,
+          "-c",
+          "-f",
+          tar_temp,
+          "--owner=0",
+          "--group=0",
+          "--mtime=1970-01-01 00:00:00",
+          "."
+        ]
+      end
+
+    case System.cmd("tar", tar_opts) do
       {_, 0} ->
         # Rename temp tar to final tar
         File.rename(tar_temp, tar_path)

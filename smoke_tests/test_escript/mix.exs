@@ -11,6 +11,7 @@ defmodule TestEscript.MixProject do
       escript: escript(),
       # Configuración de Batamanta
       batamanta: [
+        format: :escript,
         execution_mode: :cli,
         compression: 1
       ]

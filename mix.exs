@@ -47,7 +47,7 @@ defmodule Batamanta.MixProject do
   defp package do
     [
       name: "batamanta",
-      files: ["lib", "priv", "mix.exs", "README*", "LICENSE*", "CHANGELOG*", "assets"],
+      files: ~w(lib priv mix.exs README* LICENSE* CHANGELOG* assets),
       maintainers: ["Lorenzo-SF"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url}

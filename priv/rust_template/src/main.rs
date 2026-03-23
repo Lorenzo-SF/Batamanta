@@ -15,6 +15,51 @@ use std::os::unix::fs::PermissionsExt;
 
 static TERMINAL_RESTORED: AtomicBool = AtomicBool::new(false);
 
+/// Spawns a process detached from terminal (portable: works on Linux and macOS)
+/// Returns immediately in parent, child continues running independently
+#[cfg(unix)]
+fn spawn_detached(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<()> {
+    unsafe {
+        let pid = libc::fork();
+        if pid < 0 {
+            return Err(anyhow!("fork failed"));
+        }
+        if pid > 0 {
+            // Parent: give child time to start and return
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            return Ok(());
+        }
+        // Child: create new session (detaches from terminal)
+        libc::setsid();
+        // Close stdin, redirect stdout/stderr to /dev/null
+        libc::close(0);
+        libc::open("/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR);
+        libc::dup2(0, 1);
+        libc::dup2(0, 2);
+        // Execute the program
+        let mut env_ptrs: Vec<*mut libc::c_char> = env
+            .iter()
+            .map(|(k, v)| {
+                let s = format!("{}={}", k, v);
+                std::ffi::CString::new(s).unwrap().into_raw()
+            })
+            .collect();
+        let env_ptrs_mut = env_ptrs.as_mut_ptr();
+        let program_cstr = std::ffi::CString::new(program).unwrap();
+        let mut arg_ptrs: Vec<*mut libc::c_char> = args
+            .iter()
+            .map(|s| std::ffi::CString::new(*s).unwrap().into_raw())
+            .collect();
+        libc::execve(
+            program_cstr.as_ptr(),
+            arg_ptrs.as_ptr() as *const *const libc::c_char,
+            env_ptrs_mut as *const *const libc::c_char,
+        );
+        // If execve returns, it failed
+        libc::_exit(1);
+    }
+}
+
 /// Restaura la terminal a un estado seguro al salir
 fn restore_terminal() {
     if !TERMINAL_RESTORED.swap(true, Ordering::SeqCst) {
@@ -213,18 +258,30 @@ fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8
     {
         let wrapper_script =
             create_escript_wrapper(&escript_path, &erts_dir, &erts_bin_dir, app_name, exec_mode)?;
+        let wrapper_script_str = wrapper_script.to_string_lossy().into_owned();
 
         let mut cmd = if exec_mode == "daemon" {
-            // Usar setsid para crear una nueva sesión (detaches del terminal)
-            let mut c = Command::new("setsid");
-            c.arg(&wrapper_script)
-                .arg("-daemon") // Flag para indicar modo daemon al wrapper
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            c
+            // Usar spawn_detached para crear una nueva sesión (portable: Linux y macOS)
+            let mut all_args: Vec<String> = vec![wrapper_script_str.clone(), "-daemon".to_string()];
+            all_args.extend(env::args().skip(1));
+            let args: Vec<&str> = all_args.iter().map(|s| s.as_str()).collect();
+            let bindir_str = erts_bin_dir.to_string_lossy().into_owned();
+            let erl_libs_str = erts_dir.join("lib").to_string_lossy().into_owned();
+            let rootdir_str = escript_path
+                .parent()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let env: Vec<(&str, &str)> = vec![
+                ("BINDIR", &bindir_str),
+                ("ERL_LIBS", &erl_libs_str),
+                ("ROOTDIR", &rootdir_str),
+                ("EMULATOR", "beam"),
+            ];
+            spawn_detached(&wrapper_script_str, &args, &env)?;
+            return Ok(0);
         } else {
-            let mut c = Command::new(&wrapper_script);
+            let mut c = Command::new(&wrapper_script_str);
             c.stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit());
@@ -437,53 +494,32 @@ fn run_with_erlexec(
 
     // Spawn el proceso hijo
     let mut child: std::process::Child = if exec_mode == "daemon" {
-        // En modo daemon, usamos setsid sin -f y esperamos
-        // setsid creará una nueva sesión y el proceso hijo se detachará cuando setsid termine
-        let mut cmd_str = erlexec.to_string_lossy().into_owned();
-        for arg in &args {
-            cmd_str.push(' ');
-            // Simple escaping
-            let escaped = arg.replace('\'', "'\\''");
-            cmd_str.push('\'');
-            cmd_str.push_str(&escaped);
-            cmd_str.push('\'');
-        }
-
-        let mut setsid_cmd = Command::new("setsid");
-        setsid_cmd
-            .arg("sh")
-            .arg("-c")
-            .arg(format!("exec {} &", cmd_str));
-
-        // Agregar todas las variables de entorno
-        setsid_cmd.env("ROOTDIR", release_dir);
-        setsid_cmd.env("BINDIR", bin_path);
-        setsid_cmd.env("ERL_LIBS", release_lib);
-        setsid_cmd.env("RELEASE_ROOT", release_dir);
-        setsid_cmd.env("RELEASE_PROG", app_name);
-        setsid_cmd.env(
-            "RELEASE_SYS_CONFIG",
-            releases_version_dir.join("sys.config"),
-        );
-        setsid_cmd.env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"));
-        setsid_cmd.env("EMU", "beam");
-        setsid_cmd.env("PROGNAME", "erl");
-
-        // Redirigir stdio a /dev/null
-        setsid_cmd.stdin(Stdio::null());
-        setsid_cmd.stdout(Stdio::null());
-        setsid_cmd.stderr(Stdio::null());
-
-        // setsid retorna inmediatamente, pero el proceso hijo continúa
-        setsid_cmd
-            .spawn()
-            .context("Failed to spawn daemon process (setsid)")?;
-
-        // Dar tiempo al proceso para arrancar
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        // En daemon mode, retornar éxito sin esperar
-        // El daemon está corriendo independientemente
+        // Usar spawn_detached para crear una nueva sesión (portable: Linux y macOS)
+        let erlexec_str = erlexec.to_string_lossy().into_owned();
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let rootdir_str = release_dir.to_string_lossy().into_owned();
+        let bindir_str = bin_path.to_string_lossy().into_owned();
+        let erl_libs_str = release_lib.to_string_lossy().into_owned();
+        let sys_config_str = releases_version_dir
+            .join("sys.config")
+            .to_string_lossy()
+            .into_owned();
+        let vm_args_str = releases_version_dir
+            .join("vm.args")
+            .to_string_lossy()
+            .into_owned();
+        let env: Vec<(&str, &str)> = vec![
+            ("ROOTDIR", &rootdir_str),
+            ("BINDIR", &bindir_str),
+            ("ERL_LIBS", &erl_libs_str),
+            ("RELEASE_ROOT", &rootdir_str),
+            ("RELEASE_PROG", app_name),
+            ("RELEASE_SYS_CONFIG", &sys_config_str),
+            ("RELEASE_VM_ARGS", &vm_args_str),
+            ("EMU", "beam"),
+            ("PROGNAME", "erl"),
+        ];
+        spawn_detached(&erlexec_str, &args_refs, &env)?;
         return Ok(0);
     } else {
         // Modo normal: ejecutar directamente
