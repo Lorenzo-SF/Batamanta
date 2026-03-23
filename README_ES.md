@@ -174,7 +174,7 @@ mix batamanta --format escript
 # Forzar formato release
 mix batamanta --format release
 ```
-```
+
 
 Esto genera: `mi_app-0.1.0-x86_64-linux`
 
