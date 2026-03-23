@@ -126,19 +126,20 @@ defmodule Batamanta.ERTS.FetcherTest do
   # ============================================================================
 
   describe "OTP version normalization" do
-    test "normalize major-only version" do
-      # This tests the internal normalization through the public API
-      # "28" should normalize to "28"
+    test "normalize major-only version returns valid result" do
+      # "28" should normalize to "28" and return a valid result
+      # Note: This may fail due to network issues in test environment
+      # so we accept both success and error
       result = Fetcher.fetch("28", :ubuntu_22_04_x86_64)
       assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
 
-    test "normalize major.minor version" do
+    test "normalize major.minor version returns valid result" do
       result = Fetcher.fetch("28.1", :ubuntu_22_04_x86_64)
       assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
 
-    test "normalize major.minor.patch version" do
+    test "normalize major.minor.patch version returns valid result" do
       result = Fetcher.fetch("28.0.0", :ubuntu_22_04_x86_64)
       assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
@@ -224,10 +225,11 @@ defmodule Batamanta.ERTS.FetcherTest do
     assert is_atom(target)
   end
 
-  test "fetch/2 with explicit target" do
+  test "fetch/2 with explicit target returns valid result" do
     # Usamos una versión OTP genérica
     # El test verifica que la función de fetch funciona correctamente
-    # Nota: Este test requiere conexión a internet y puede fallar si Hex.pm está caído
+    # Nota: Este test puede fallar si la red no está disponible
+    # o si Hex.pm está caído
     otp_version = "26.0"
 
     # Intentar fetch - puede tener éxito o fallar por 404 si la versión no existe

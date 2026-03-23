@@ -66,14 +66,31 @@ defmodule Batamanta.EscriptBuilder do
         stderr_to_stdout: true
       )
 
-    # Compile the project
+    # Compile the project (without --warnings-as-errors to avoid false positives)
     Logger.info(banner_ctx, ">> 📦 Compiling project...")
 
-    {_out, _status} =
-      System.cmd("mix", ["compile", "--warnings-as-errors"],
+    {compile_output, compile_status} =
+      System.cmd("mix", ["compile"],
         env: [{"MIX_ENV", "prod"}],
         stderr_to_stdout: true
       )
+
+    # Log warnings but don't fail the build unless there are actual errors
+    if String.contains?(compile_output, "warning:") do
+      Logger.info(banner_ctx, ">> ⚠️  Compiler warnings detected:")
+
+      compile_output
+      |> String.split("\n")
+      |> Enum.filter(&String.contains?(&1, "warning:"))
+      |> Enum.take(5)
+      |> Enum.each(&Logger.info(banner_ctx, ">>    #{&1}"))
+    end
+
+    if compile_status != 0 do
+      Logger.error(banner_ctx, "Escript build failed during compilation:")
+      Logger.error(banner_ctx, compile_output)
+      Mix.raise("Mix compile failed. Check output above for details.")
+    end
 
     # Build the escript
     Logger.info(banner_ctx, ">> 📦 Building escript...")
@@ -162,22 +179,20 @@ defmodule Batamanta.EscriptBuilder do
   end
 
   defp validate_magic_bytes!(escript_path) do
-    {:ok, pid} = File.open(escript_path, [:read])
-    magic = IO.binread(pid, 4)
-    File.close(pid)
+    case File.read(escript_path) do
+      {:ok, <<0x7F, "ELF", _::binary>>} ->
+        :ok
 
-    # Check for shebang (#!) or ELF magic
-    if magic && String.starts_with?(magic, "#!") do
-      :ok
-    else
-      validate_elf_magic!(magic, escript_path)
+      {:ok, <<"#!", _::binary>>} ->
+        :ok
+
+      {:ok, _} ->
+        Mix.raise("Escript has invalid format (not ELF or shebang): #{escript_path}")
+
+      {:error, reason} ->
+        Mix.raise("Cannot read escript: #{reason}")
     end
   end
-
-  defp validate_elf_magic!(<<0x7F, "ELF", _rest::binary>>, _escript_path), do: :ok
-
-  defp validate_elf_magic!(_magic, escript_path),
-    do: Mix.raise("Escript has invalid format: #{escript_path}")
 
   @doc """
   Gets the main module from escript configuration.
