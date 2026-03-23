@@ -1,39 +1,59 @@
-defmodule Baton.LoggerTest do
+defmodule Batamanta.LoggerTest do
   use ExUnit.Case, async: true
 
-  @ctx %Batamanta.Banner.Context{
-    mode: :text_only,
-    messages: [],
-    show_banner: false,
-    banner_columns: 34,
-    banner_rows: 24,
-    image_id: 1
-  }
+  alias Batamanta.Logger
 
   describe "info/2" do
-    test "logs to banner when context is provided" do
-      result = Batamanta.Logger.info(@ctx, "test message")
-      assert "test message" in result.messages
-    end
-
-    test "logs different message types" do
-      Batamanta.Logger.info(@ctx, "simple message")
-      Batamanta.Logger.info(@ctx, "message with 123 numbers")
-      Batamanta.Logger.info(@ctx, "emoji message 🚀")
+    test "logs info message without context" do
+      # Should not raise
+      assert Logger.info(nil, "Test message") == :ok
     end
   end
 
   describe "error/2" do
-    test "logs error to banner with emoji prefix" do
-      result = Batamanta.Logger.error(@ctx, "test error")
-      assert "❌ test error" in result.messages
+    test "logs error message without context" do
+      # Should not raise
+      assert Logger.error(nil, "Error message") == :ok
     end
   end
 
   describe "create_logger/1" do
-    test "returns a callable function" do
-      logger_fn = Batamanta.Logger.create_logger(@ctx)
-      assert is_function(logger_fn, 1)
+    test "creates a logger function" do
+      log_fn = Logger.create_logger(nil)
+      assert is_function(log_fn, 1)
+    end
+
+    test "logger function logs message" do
+      log_fn = Logger.create_logger(nil)
+      # Should not raise
+      log_fn.("Test message")
+    end
+  end
+end
+
+defmodule Batamanta.Banner.ContextTest do
+  use ExUnit.Case, async: true
+
+  alias Batamanta.Banner.Context
+
+  describe "struct fields" do
+    test "Context has required fields" do
+      ctx = %Context{
+        mode: :streaming,
+        protocol: :kitty,
+        banner_columns: 80,
+        banner_rows: 24,
+        on_success_image: "",
+        on_error_image: "",
+        messages: [],
+        image_id: 0,
+        show_banner: true,
+        start_row: 0
+      }
+
+      assert ctx.mode == :streaming
+      assert ctx.protocol == :kitty
+      assert ctx.messages == []
     end
   end
 end

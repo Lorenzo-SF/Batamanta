@@ -14,6 +14,9 @@
 - **Zstandard compression**: Optimal balance between size and speed
 - **Multiple execution modes**: CLI, TUI, Daemon, and Escript support
 - **Relativized releases**: Portable binaries with no absolute paths
+- **Robust downloads**: Automatic retry with exponential backoff on network failures
+- **Concurrent-safe caching**: File-based locking prevents race conditions in multi-process builds
+- **Clear error messages**: Specific error codes for disk full, permission denied, corrupted archives
 
 ---
 

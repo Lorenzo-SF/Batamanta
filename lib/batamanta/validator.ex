@@ -184,12 +184,26 @@ defmodule Batamanta.Validator do
         config
 
       version ->
-        if Version.compare(version, @min_elixir_version) == :lt do
+        # Normalize version to semver format (X.Y.Z)
+        normalized_version = normalize_version(version)
+
+        if Version.compare(normalized_version, @min_elixir_version) == :lt do
           raise ArgumentError,
                 "Elixir version must be >= #{@min_elixir_version}, got: #{version}"
         end
 
         config
+    end
+  end
+
+  # Normalize version strings to semver format
+  defp normalize_version(version) when is_binary(version) do
+    parts = String.split(version, ".")
+
+    case length(parts) do
+      1 -> "#{version}.0.0"
+      2 -> "#{version}.0"
+      _ -> version
     end
   end
 

@@ -27,6 +27,9 @@ defmodule Batamanta.ERTS.LibcDetector do
 
   @type libc_type :: :gnu | :musl | :unknown
 
+  # Known musl-based distributions
+  @musl_distros ~w(alpine void postmarketos)
+
   @doc """
   Detects the libc type of the current system.
 
@@ -43,7 +46,6 @@ defmodule Batamanta.ERTS.LibcDetector do
   """
   @spec detect() :: :gnu | :musl
   def detect do
-    # Método 1: ldd --version (MÁS CONFIABLE)
     case detect_by_ldd() do
       :unknown -> detect_by_loader()
       result -> result
@@ -57,7 +59,6 @@ defmodule Batamanta.ERTS.LibcDetector do
   """
   @spec detect_by_ldd() :: libc_type()
   def detect_by_ldd do
-    # Verificar si ldd existe antes de ejecutarlo
     if System.find_executable("ldd") == nil do
       :unknown
     else
@@ -68,27 +69,25 @@ defmodule Batamanta.ERTS.LibcDetector do
   defp do_detect_by_ldd do
     case System.cmd("ldd", ["--version"], stderr_to_stdout: true) do
       {output, 0} ->
-        cond do
-          # musl se identifica claramente
-          String.match?(output, ~r/musl/i) ->
-            :musl
+        detect_libc_in_string(output)
 
-          # glibc tiene múltiples formatos
-          String.match?(output, ~r/glibc/i) ->
-            :gnu
-
-          String.match?(output, ~r/GNU.*libc/i) ->
-            :gnu
-
-          String.match?(output, ~r/GNU C Library/i) ->
-            :gnu
-
-          true ->
-            :unknown
-        end
-
-      # ldd disponible pero falló
       _ ->
+        :unknown
+    end
+  end
+
+  # Detect libc type from string output (shared logic)
+  defp detect_libc_in_string(output) do
+    cond do
+      # musl se identifica claramente
+      String.match?(output, ~r/musl/i) ->
+        :musl
+
+      # glibc tiene múltiples formatos
+      String.match?(output, ~r/(?:glibc|GNU.*libc|GNU C Library)/i) ->
+        :gnu
+
+      true ->
         :unknown
     end
   end
@@ -119,16 +118,9 @@ defmodule Batamanta.ERTS.LibcDetector do
     ]
 
     cond do
-      # Verificar musl primero (más específico)
-      Enum.any?(musl_loaders, &File.exists?/1) ->
-        :musl
-
-      # Verificar glibc
-      Enum.any?(gnu_loaders, &File.exists?/1) ->
-        :gnu
-
-      true ->
-        detect_by_os_release()
+      Enum.any?(musl_loaders, &File.exists?/1) -> :musl
+      Enum.any?(gnu_loaders, &File.exists?/1) -> :gnu
+      true -> detect_by_os_release()
     end
   end
 
@@ -151,28 +143,45 @@ defmodule Batamanta.ERTS.LibcDetector do
 
   @spec detect_by_os_release_content(String.t()) :: libc_type()
   defp detect_by_os_release_content(content) do
-    # Distros musl conocidos
-    if musl_distro?(content) do
+    # Extraer ID y ID_LIKE para detección
+    os_id = extract_os_id(content)
+    os_like = extract_os_id_like(content)
+
+    if musl_distro?(os_id, os_like) do
       :musl
     else
       :gnu
     end
   end
 
-  defp musl_distro?(content) do
-    # Verificar ID primero (más específico)
-    alpine?(content) or
-      void?(content) or
-      postmarketos?(content) or
-      alpine_like?(content) or
-      has_musl_hint?(content)
+  # Extract ID from os-release content
+  defp extract_os_id(content) do
+    case Regex.run(~r/^ID="?([^"\n]+)"?/im, content) do
+      [_, id] -> String.downcase(id)
+      _ -> ""
+    end
   end
 
-  defp alpine?(content), do: String.match?(content, ~r/^ID="?alpine"?/im)
-  defp void?(content), do: String.match?(content, ~r/^ID="?void"?/im)
-  defp postmarketos?(content), do: String.match?(content, ~r/^ID="?postmarketos"?/im)
-  defp alpine_like?(content), do: String.match?(content, ~r/^ID_LIKE="?alpine"?/im)
-  defp has_musl_hint?(content), do: String.match?(content, ~r/musl/i)
+  # Extract ID_LIKE from os-release content
+  defp extract_os_id_like(content) do
+    case Regex.run(~r/^ID_LIKE="?([^"\n]+)"?/im, content) do
+      [_, like] -> String.downcase(like)
+      _ -> ""
+    end
+  end
+
+  # Check if distribution is musl-based
+  defp musl_distro?(os_id, os_like) do
+    # Check ID directly
+    if os_id in @musl_distros do
+      true
+    else
+      # Check ID_LIKE (space-separated list)
+      os_like
+      |> String.split(~r/\s+/)
+      |> Enum.any?(&(&1 in @musl_distros))
+    end
+  end
 
   @doc """
   Detects libc by reading `/proc/self/maps`.
@@ -193,17 +202,11 @@ defmodule Batamanta.ERTS.LibcDetector do
   defp detect_by_proc_maps_content(content) do
     cond do
       # Buscar referencias explícitas a musl
-      String.match?(content, ~r/libc\.musl/) ->
-        :musl
-
-      String.match?(content, ~r/ld-musl/) ->
+      String.match?(content, ~r/(?:libc\.musl|ld-musl)/) ->
         :musl
 
       # Referencias a glibc
-      String.match?(content, ~r/libc-2\./) ->
-        :gnu
-
-      String.match?(content, ~r/libc-6\./) ->
+      String.match?(content, ~r/libc-(?:2|6)\./) ->
         :gnu
 
       # libc.so genérico - verificar path
