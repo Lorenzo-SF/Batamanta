@@ -162,7 +162,7 @@ impl Drop for TempDirGuard {
 }
 
 fn main() -> Result<ExitCode> {
-    let bytes = include_bytes!("payload.tar.zst");
+    let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/payload.tar.zst"));
     let hash = format!("{:x}", md5::compute(bytes));
 
     let mut temp_path = env::temp_dir();

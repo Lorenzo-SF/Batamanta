@@ -511,6 +511,7 @@ defmodule Mix.Tasks.Batamanta do
   defp cleanup_temporaries(_ctx) do
     # 1. Clean Rust cargo cache target dir
     cargo_target_dir = Path.join(System.tmp_dir!(), "bat_cargo_cache")
+
     if File.exists?(cargo_target_dir) do
       File.rm_rf(cargo_target_dir)
     end

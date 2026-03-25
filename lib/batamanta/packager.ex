@@ -416,21 +416,15 @@ defmodule Batamanta.Packager do
   defp extract_erts_version(erts_path) do
     releases_path = Path.join(erts_path, "releases")
 
-    if File.exists?(releases_path) do
-      case File.ls(releases_path) do
-        {:ok, entries} ->
-          entries
-          |> Enum.filter(fn entry ->
-            full = Path.join(releases_path, entry)
-            File.dir?(full) and entry not in [".", ".."]
-          end)
-          |> List.first()
-
-        _ ->
-          nil
-      end
+    with true <- File.exists?(releases_path),
+         {:ok, entries} <- File.ls(releases_path) do
+      entries
+      |> Enum.find(fn entry ->
+        full = Path.join(releases_path, entry)
+        File.dir?(full) and entry not in [".", ".."]
+      end)
     else
-      nil
+      _ -> nil
     end
   end
 end
