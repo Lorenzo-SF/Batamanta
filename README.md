@@ -14,6 +14,7 @@
 - **Zstandard compression**: Optimal balance between size and speed
 - **Multiple execution modes**: CLI, TUI, Daemon, and Escript support
 - **Relativized releases**: Portable binaries with no absolute paths
+- **Automatic build cleanup**: Intermediate artifacts are wiped after build, leaving the system pristine while preserving ERTS cache
 - **Robust downloads**: Automatic retry with exponential backoff on network failures
 - **Concurrent-safe caching**: File-based locking prevents race conditions in multi-process builds
 - **Clear error messages**: Specific error codes for disk full, permission denied, corrupted archives
@@ -106,7 +107,7 @@ end
 |--------|------|---------|-------------|
 | `erts_target` | atom | `:auto` | Target platform (see below) |
 | `otp_version` | string | `:auto` | OTP version (e.g., "28.1") |
-| `execution_mode` | atom | `:cli` | `:cli`, `:tui`, `:daemon`, or `:escript` |
+| `execution_mode` | atom | `:cli` | `:cli`, `:tui`, or `:daemon` |
 | `compression` | integer | `3` | Zstd compression level (1-19) |
 | `binary_name` | string | app name | Custom binary name |
 | `show_banner` | boolean | `true` | Show build banner |
@@ -224,7 +225,15 @@ In auto mode, if the exact version is not available:
 | `:cli` | Standard CLI with inherited stdin/stdout/stderr | All |
 | `:tui` | Text UI with raw terminal mode, arrow key navigation | Unix only |
 | `:daemon` | Runs in background, no terminal I/O | Unix only |
-| `:escript` | Standalone escript built with `mix escript.build` | All |
+
+---
+
+## Output Formats
+
+| Format | Description | Notes |
+|--------|-------------|-------|
+| `:release` | Full OTP release with ERTS (default) | Larger (~60-70MB), self-contained |
+| `:escript` | Lightweight escript bundle with minified ERTS | Smaller (~20MB), self-contained |
 
 ---
 
@@ -559,7 +568,7 @@ def project do
     app: :my_escript_app,
     version: "0.1.0",
     batamanta: [
-      execution_mode: :escript,
+      format: :escript,                  # :escript or :release
       escript_module: MyEscriptApp.CLI  # Module with main/1 function
     ],
     escript: [
@@ -579,7 +588,7 @@ defmodule MyEscriptApp.CLI do
 end
 ```
 
-**Note:** For escript mode, `mix.exs` should NOT include `format: :escript` - Batamanta auto-detects escript format automatically.
+**Note:** The `format: :escript` in `batamanta:` is optional if your project already has `escript:` configuration in `mix.exs` - Batamanta auto-detects escript format. But you can include it explicitly for clarity.
 
 ---
 

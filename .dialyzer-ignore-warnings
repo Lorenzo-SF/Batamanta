@@ -1,0 +1,13 @@
+# Dialyzer warnings to ignore
+#
+# Format: regex:line:message
+# Or just: regex:message
+
+# Known issues from dependencies
+# Elixir standard library type inference limitations
+.*:10:no_return
+.*:47:no_return
+.*:62:no_return
+
+# Unused functions (acceptable in some cases)
+.*:unused_fun

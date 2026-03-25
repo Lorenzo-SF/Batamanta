@@ -54,11 +54,20 @@ defmodule Batamanta.RustTemplate do
     File.cp_r!(template_dir, build_dir)
     File.rm_rf!(Path.join(build_dir, "target"))
 
+    # P1 FIX: Copy payload to the Rust template source directory
+    # Rust will include it at compile time using CARGO_MANIFEST_DIR
     dest_payload = Path.join([build_dir, "src", "payload.tar.zst"])
 
     result =
       with :ok <- copy_payload(payload_path, dest_payload),
-           :ok <- compile_rust(build_dir, target_triple, config, cargo_target_dir, format) do
+           :ok <-
+             compile_rust(
+               build_dir,
+               target_triple,
+               config,
+               cargo_target_dir,
+               format
+             ) do
         copy_binary(cargo_target_dir, binary_name, target_triple)
       end
 
@@ -66,6 +75,8 @@ defmodule Batamanta.RustTemplate do
     result
   end
 
+  # P1 FIX: Copy payload to src/ directory before compilation
+  # Rust will include it using CARGO_MANIFEST_DIR at compile time
   defp copy_payload(payload_path, dest_payload) do
     case File.cp(payload_path, dest_payload) do
       :ok -> :ok

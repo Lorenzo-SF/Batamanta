@@ -29,6 +29,15 @@ defmodule Mix.Tasks.Batamanta do
   In auto mode (no version specified), the system tries:
   - 28.0 → 28.1 → 28.2 → ... (fallback to first available)
 
+  ## Automatic Cleanup and Cache
+
+  Batamanta handles its own garbage. After each successful compilation, it:
+  - **Removes** `bat_cargo_cache` from the system temp directory
+  - **Deletes** `bat_pkg_*` and `bat_build_*` intermediate folders
+  - **Preserves** the ERTS cache (`~/.cache/batamanta`) for sub-second repeat builds
+
+  To manually wipe the entire cache (including downloaded ERTS), use `mix batamanta.clean`.
+
   ## ERTS Target Configuration
 
   Use `:erts_target` for unified platform specification:
@@ -452,6 +461,7 @@ defmodule Mix.Tasks.Batamanta do
     case RustTemplate.build(payload_path, final_name, rust_target, config, format) do
       :ok ->
         apply_minify(final_name, banner_ctx)
+        cleanup_temporaries(banner_ctx)
         Logger.info(banner_ctx, "✅ Process completed: #{final_name}")
         Banner.set_image(banner_ctx, :success)
 
@@ -496,5 +506,26 @@ defmodule Mix.Tasks.Batamanta do
       on_success_image: "batamantaman_happy.png",
       on_error_image: "batamantaman_sad.png"
     )
+  end
+
+  defp cleanup_temporaries(_ctx) do
+    # 1. Clean Rust cargo cache target dir
+    cargo_target_dir = Path.join(System.tmp_dir!(), "bat_cargo_cache")
+
+    if File.exists?(cargo_target_dir) do
+      File.rm_rf(cargo_target_dir)
+    end
+
+    # 2. Clean packaging / payload directories
+    System.tmp_dir!()
+    |> Path.join("bat_pkg_*")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm_rf/1)
+
+    # 3. Clean rust build directories
+    System.tmp_dir!()
+    |> Path.join("bat_build_*")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm_rf/1)
   end
 end

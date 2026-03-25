@@ -23,6 +23,16 @@ pub const GENERATED_FORMAT: &str = \"{}\";
     )
     .unwrap();
 
+    // P1 FIX: Copy payload from CARGO_MANIFEST_DIR/src/ to OUT_DIR/
+    // This allows include_bytes! in main.rs to find the payload at compile time
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let src_payload = Path::new(&manifest_dir).join("src/payload.tar.zst");
+    let dest_payload = Path::new(&out_dir).join("payload.tar.zst");
+
+    if src_payload.exists() {
+        fs::copy(&src_payload, &dest_payload).expect("Failed to copy payload to OUT_DIR");
+    }
+
     println!("cargo:rustc-env=BATAMANTA_EXEC_MODE={}", exec_mode);
     println!("cargo:rustc-env=BATAMANTA_APP_NAME={}", app_name);
     println!("cargo:rustc-env=BATAMANTA_FORMAT={}", format);

@@ -1,7 +1,7 @@
 defmodule Batamanta.MixProject do
   use Mix.Project
 
-  @version "1.2.0"
+  @version "1.3.0"
   @source_url "https://github.com/Lorenzo-SF/Batamanta"
   @elixir_vsn "~> 1.15"
 
@@ -47,7 +47,7 @@ defmodule Batamanta.MixProject do
   defp package do
     [
       name: "batamanta",
-      files: ["lib", "priv", "mix.exs", "README*", "LICENSE*", "CHANGELOG*", "assets"],
+      files: ~w(lib priv mix.exs README* LICENSE* CHANGELOG* assets),
       maintainers: ["Lorenzo-SF"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url}
@@ -70,11 +70,14 @@ defmodule Batamanta.MixProject do
     ]
   end
 
+  # P2 FIX: Eliminar rust.test del alias de test.
+  # Los tests unitarios de Elixir no necesitan compilar el Rust wrapper.
+  # El wrapper solo se compila cuando se ejecuta `mix batamanta`.
   defp aliases do
     [
       check: ["format", "credo --strict", "dialyzer"],
-      "rust.test": ["cmd cargo test --manifest-path priv/rust_template/Cargo.toml"],
-      "test.all": ["test", "rust.test"]
+      "rust.test": ["cmd cargo test --manifest-path priv/rust_template/Cargo.toml"]
+      # Nota: No incluir "rust.test" en el alias de test porque requiere el payload
     ]
   end
 end
