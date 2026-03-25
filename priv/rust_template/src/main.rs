@@ -35,11 +35,11 @@ fn spawn_detached(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<
         }
         // Child: create new session (detaches from terminal)
         libc::setsid();
-        // Close stdin, redirect stdout/stderr to /dev/null
+        // Close stdin, redirect stdout/stderr to /dev/null IF needed
         libc::close(0);
         libc::open("/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR);
-        libc::dup2(0, 1);
-        libc::dup2(0, 2);
+        // We let stdout and stderr connected to current terminal so testing/logs output correctly.
+        // If we strictly dup2 to /dev/null, everything printed directly to shell is silenced.
 
         // Build full environment: inherit parent env + merge additional vars
         let mut full_env: std::collections::HashMap<String, String> = std::env::vars().collect();

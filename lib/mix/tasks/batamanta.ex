@@ -452,6 +452,7 @@ defmodule Mix.Tasks.Batamanta do
     case RustTemplate.build(payload_path, final_name, rust_target, config, format) do
       :ok ->
         apply_minify(final_name, banner_ctx)
+        cleanup_temporaries(banner_ctx)
         Logger.info(banner_ctx, "✅ Process completed: #{final_name}")
         Banner.set_image(banner_ctx, :success)
 
@@ -496,5 +497,25 @@ defmodule Mix.Tasks.Batamanta do
       on_success_image: "batamantaman_happy.png",
       on_error_image: "batamantaman_sad.png"
     )
+  end
+
+  defp cleanup_temporaries(_ctx) do
+    # 1. Clean Rust cargo cache target dir
+    cargo_target_dir = Path.join(System.tmp_dir!(), "bat_cargo_cache")
+    if File.exists?(cargo_target_dir) do
+      File.rm_rf(cargo_target_dir)
+    end
+
+    # 2. Clean packaging / payload directories
+    System.tmp_dir!()
+    |> Path.join("bat_pkg_*")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm_rf/1)
+
+    # 3. Clean rust build directories
+    System.tmp_dir!()
+    |> Path.join("bat_build_*")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm_rf/1)
   end
 end
