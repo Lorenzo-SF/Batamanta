@@ -29,6 +29,15 @@ defmodule Mix.Tasks.Batamanta do
   In auto mode (no version specified), the system tries:
   - 28.0 → 28.1 → 28.2 → ... (fallback to first available)
 
+  ## Automatic Cleanup and Cache
+
+  Batamanta handles its own garbage. After each successful compilation, it:
+  - **Removes** `bat_cargo_cache` from the system temp directory
+  - **Deletes** `bat_pkg_*` and `bat_build_*` intermediate folders
+  - **Preserves** the ERTS cache (`~/.cache/batamanta`) for sub-second repeat builds
+
+  To manually wipe the entire cache (including downloaded ERTS), use `mix batamanta.clean`.
+
   ## ERTS Target Configuration
 
   Use `:erts_target` for unified platform specification:

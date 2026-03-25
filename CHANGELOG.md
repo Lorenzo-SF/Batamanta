@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-25
+
+### Added
+- **Temporary Files Cleanup**: Batamanta now automatically cleans up internal temporary artifacts (`bat_cargo_cache`, `bat_pkg_*`, `bat_build_*`) after each compilation to keep `/tmp` empty while strictly preserving the ERTS cache.
+
+### Fixed
+- **Daemon Initialization Crash (Crítical / `undef`)**: Reimplemented the `spawn_detached` hook in Rust to fully inherit the parent environment (`std::env::vars()`) and properly map `argv[0]`. Fixing an elusive bug where the BEAM VM crashed on spawn in Daemon mode due to a missing environment block.
+- **Daemon Logging Isolation**: `spawn_detached` no longer strictly forces a `dup2` redirect to `/dev/null` for standard file descriptors, allowing application logs to correctly print to the terminal prior to background detachment. Perfectly compatible with CI Smoke Tests.
+- **Dialyzer & Compiler Specs**: Resolved compiler typing violations related to `{error, _}` on `detect_host` in `Target` and removed unused legacy branches.
+- **Cleaned Test Coverage**: Updated multiple test namespaces (`Baton` -> `Batamanta`) and expanded coverage for internal functions.
+
 ## [1.2.1] - 2026-03-23
 
 ### Fixed

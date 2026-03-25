@@ -14,6 +14,7 @@
 - **Zstandard compression**: Optimal balance between size and speed
 - **Multiple execution modes**: CLI, TUI, Daemon, and Escript support
 - **Relativized releases**: Portable binaries with no absolute paths
+- **Automatic build cleanup**: Intermediate artifacts are wiped after build, leaving the system pristine while preserving ERTS cache
 - **Robust downloads**: Automatic retry with exponential backoff on network failures
 - **Concurrent-safe caching**: File-based locking prevents race conditions in multi-process builds
 - **Clear error messages**: Specific error codes for disk full, permission denied, corrupted archives
@@ -232,7 +233,7 @@ In auto mode, if the exact version is not available:
 | Format | Description | Notes |
 |--------|-------------|-------|
 | `:release` | Full OTP release with ERTS (default) | Larger (~60-70MB), self-contained |
-| `:escript` | Lightweight escript built with `mix escript.build` | Smaller (~20MB), requires host Erlang |
+| `:escript` | Lightweight escript bundle with minified ERTS | Smaller (~20MB), self-contained |
 
 ---
 
