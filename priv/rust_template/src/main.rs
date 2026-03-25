@@ -162,10 +162,11 @@ fn main() -> Result<ExitCode> {
     let payload_path = env::var("BATAMANTA_PAYLOAD_PATH")
         .context("BATAMANTA_PAYLOAD_PATH environment variable not set")?;
 
-    let bytes = fs::read(&payload_path)
+    // P1 FIX: fs::read returns Vec<u8>, we need to borrow it as &[u8] for extract_payload
+    let bytes: Vec<u8> = fs::read(&payload_path)
         .with_context(|| format!("Failed to read payload from: {}", payload_path))?;
 
-    let hash = format!("{:x}", md5::compute(bytes));
+    let hash = format!("{:x}", md5::compute(&bytes));
 
     let mut temp_path = env::temp_dir();
     temp_path.push(format!("batamanta_{}", hash));
@@ -193,10 +194,10 @@ fn main() -> Result<ExitCode> {
                     .unwrap(),
             );
             spinner.set_message("Extracting payload...");
-            extract_payload(bytes, &temp_path)?;
+            extract_payload(&bytes, &temp_path)?;
             spinner.finish_and_clear();
         } else {
-            extract_payload(bytes, &temp_path)?;
+            extract_payload(&bytes, &temp_path)?;
         }
     }
 
