@@ -51,10 +51,8 @@ fn spawn_detached(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<
             .iter()
             .map(|(k, v)| std::ffi::CString::new(format!("{}={}", k, v)).unwrap())
             .collect();
-        let mut env_ptrs: Vec<*const libc::c_char> = env_cstrings
-            .iter()
-            .map(|s| s.as_ptr())
-            .collect();
+        let mut env_ptrs: Vec<*const libc::c_char> =
+            env_cstrings.iter().map(|s| s.as_ptr()).collect();
         env_ptrs.push(std::ptr::null()); // null-terminate
 
         // Build argv: argv[0] must be program name (POSIX requirement)
@@ -70,11 +68,7 @@ fn spawn_detached(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<
         }
         arg_ptrs.push(std::ptr::null()); // null-terminate
 
-        libc::execve(
-            program_cstr.as_ptr(),
-            arg_ptrs.as_ptr(),
-            env_ptrs.as_ptr(),
-        );
+        libc::execve(program_cstr.as_ptr(), arg_ptrs.as_ptr(), env_ptrs.as_ptr());
         // If execve returns, it failed
         libc::_exit(1);
     }
@@ -162,7 +156,15 @@ impl Drop for TempDirGuard {
 }
 
 fn main() -> Result<ExitCode> {
-    let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/payload.tar.zst"));
+    // P1 FIX: Leer el payload desde la variable de entorno en tiempo de ejecución
+    // en lugar de usar include_bytes! que requiere el archivo en tiempo de compilación.
+    // Esto evita el problema de tener que copiar el payload al directorio OUT_DIR de Cargo.
+    let payload_path = env::var("BATAMANTA_PAYLOAD_PATH")
+        .context("BATAMANTA_PAYLOAD_PATH environment variable not set")?;
+
+    let bytes = fs::read(&payload_path)
+        .with_context(|| format!("Failed to read payload from: {}", payload_path))?;
+
     let hash = format!("{:x}", md5::compute(bytes));
 
     let mut temp_path = env::temp_dir();
