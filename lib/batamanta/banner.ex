@@ -21,8 +21,7 @@ defmodule Batamanta.Banner do
             on_error_image: String.t(),
             messages: [String.t()],
             image_id: non_neg_integer(),
-            show_banner: boolean(),
-            start_row: non_neg_integer()
+            show_banner: boolean()
           }
 
     defstruct [
@@ -34,8 +33,7 @@ defmodule Batamanta.Banner do
       :on_error_image,
       :messages,
       :image_id,
-      :show_banner,
-      start_row: 1
+      :show_banner
     ]
   end
 
@@ -77,21 +75,38 @@ defmodule Batamanta.Banner do
 
   def append_line(%Context{} = passed_ctx, message) do
     ctx = Process.get(:batamanta_banner_ctx, passed_ctx)
-    message_index = length(ctx.messages)
+    line_index = length(ctx.messages)
+    current_dist = max(ctx.banner_rows, line_index)
 
-    # Logs start after the image ends (start_row + banner_rows + 3 lines gap)
-    # Each log on its own line, consecutive (no overwriting)
-    target_row = ctx.start_row + ctx.banner_rows + 3 + message_index
-
-    # Move to target row, column 1
-    IO.write("\e[#{target_row}G\e[1G")
-
-    # Write the message with newline
-    IO.write(message <> "\n")
+    move_up(ctx, current_dist)
+    write_message(ctx, line_index, message)
+    move_down(ctx, current_dist)
 
     new_ctx = %{ctx | messages: ctx.messages ++ [message]}
     Process.put(:batamanta_banner_ctx, new_ctx)
     new_ctx
+  end
+
+  defp move_up(_ctx, 0), do: :ok
+
+  defp move_up(_ctx, dist) do
+    IO.write("\e[#{dist}A\e[1G")
+  end
+
+  defp move_down(_ctx, 0), do: :ok
+
+  defp move_down(_ctx, dist) do
+    IO.write("\e[#{dist}B\e[1G")
+  end
+
+  defp write_message(ctx, 0, message) do
+    clean_msg = String.replace_prefix(message, ">> ", "")
+    IO.write("\e[#{ctx.banner_columns + 2}G >> " <> clean_msg)
+  end
+
+  defp write_message(ctx, line_index, message) do
+    clean_msg = String.replace_prefix(message, ">> ", "")
+    IO.write("\e[#{line_index}B\e[#{ctx.banner_columns + 2}G >> " <> clean_msg)
   end
 
   def set_image(%Context{mode: :text_only}, _status), do: :ok
@@ -108,16 +123,13 @@ defmodule Batamanta.Banner do
     new_image_path = find_image_path(image_filename)
 
     if new_image_path && File.exists?(new_image_path) do
-      # Save current position
-      IO.write("\e[s")
-
-      # Move to start_row (where the banner image starts)
-      IO.write("\e[#{ctx.start_row}G")
+      line_index = length(ctx.messages)
+      current_dist = max(ctx.banner_rows, line_index)
+      move_up(ctx, current_dist)
 
       _new_id = replace_image(ctx, new_image_path, status)
 
-      # Restore position
-      IO.write("\e[u")
+      move_down(ctx, current_dist)
     end
 
     :ok
@@ -152,26 +164,10 @@ defmodule Batamanta.Banner do
     initial_image_path = find_image_path(@image_filename_default)
 
     if initial_image_path && File.exists?(initial_image_path) do
-      # Get current cursor position using ANSI query
-      # This works in real terminals but may fail with Mix redirection
-      start_row = detect_prompt_row()
-
-      # Move cursor to start of line
-      IO.write("\r")
-
-      # If we're not at row 1, add newlines to reach the desired start row
-      if start_row > 1 do
-        IO.write(String.duplicate("\n", start_row - 1))
-      end
-
-      # Save this position for message alignment
-      actual_start_row = start_row
-
-      # Write space for banner
       IO.write(String.duplicate("\n", @image_cells_height))
 
-      # Move back up to paint the banner
       IO.write("\e[#{@image_cells_height}A")
+      IO.write("\e[1G")
 
       if protocol == :kitty do
         preload_kitty_images(
@@ -204,8 +200,7 @@ defmodule Batamanta.Banner do
         messages: [],
         # ID 1 is default, 2 is success, 3 is error
         image_id: 1,
-        show_banner: true,
-        start_row: actual_start_row
+        show_banner: true
       }
 
       Enum.reduce(messages, ctx, fn msg, acc_ctx ->
@@ -215,14 +210,6 @@ defmodule Batamanta.Banner do
       print_messages(messages)
       %Context{mode: :text_only, messages: messages, show_banner: true}
     end
-  end
-
-  # Detects the row where the banner should start
-  # Note: With Mix redirecting stdout, we cannot reliably detect cursor position.
-  # Mix always outputs ~2 lines before batamanta runs ("==> project", "Compiling..."),
-  # so we always start at row 3 to account for this.
-  defp detect_prompt_row do
-    3
   end
 
   defp erase_image_area(rows, cols) do
