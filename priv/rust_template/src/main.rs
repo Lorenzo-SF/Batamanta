@@ -163,6 +163,12 @@ fn main() -> Result<ExitCode> {
         .context("BATAMANTA_PAYLOAD_PATH environment variable not set")?;
 
     // P1 FIX: fs::read returns Vec<u8>, we need to borrow it as &[u8] for extract_payload
+    // Also validate that the payload file exists before trying to read it
+    if !Path::new(&payload_path).exists() {
+        return Err(anyhow!("Payload file does not exist: {}", payload_path))
+            .context("BATAMANTA_PAYLOAD_PATH is invalid");
+    }
+
     let bytes: Vec<u8> = fs::read(&payload_path)
         .with_context(|| format!("Failed to read payload from: {}", payload_path))?;
 
