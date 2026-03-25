@@ -10,14 +10,11 @@
   <a href="https://hex.pm/packages/batamanta">
     <img src="https://img.shields.io/hexpm/v/batamanta.svg" alt="Hex Version">
   </a>
-  <a href="https://github.com/Lorenzo-SF/Batamanta/releases">
-    <img src="https://img.shields.io/github/v/release/Lorenzo-SF/Batamanta" alt="GitHub Release">
-  </a>
   <img src="https://img.shields.io/badge/self--contained-binaries-success" alt="Self-contained">
   <img src="https://img.shields.io/badge/ERTS-embedded-critical" alt="ERTS Embedded">
 </p>
 
----
+--
 
 ## Features
 
