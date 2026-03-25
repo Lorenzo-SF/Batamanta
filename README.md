@@ -5,38 +5,16 @@
 > Package your Elixir applications as 100% self-contained executables. No Erlang/Elixir installation required on the target machine.
 
 ---
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Lorenzo-SF/Batamanta/main/assets/batamantaman.png" width="400" alt="Batamanta Mascot" />
-</p>
-
+  
 <p align="center">
   <a href="https://hex.pm/packages/batamanta">
     <img src="https://img.shields.io/hexpm/v/batamanta.svg" alt="Hex Version">
   </a>
-  <a href="https://hex.pm/packages/batamanta">
-    <img src="https://img.shields.io/hexpm/dt/batamanta.svg" alt="Downloads">
-  </a>
-  <a href="https://github.com/Lorenzo-SF/Batamanta/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/Lorenzo-SF/Batamanta/ci.yml" alt="Build Status">
-  </a>
-  <a href="https://coveralls.io/github/Lorenzo-SF/Batamanta">
-    <img src="https://img.shields.io/coveralls/github/Lorenzo-SF/Batamanta" alt="Coverage">
-  </a>
-  <a href="https://github.com/Lorenzo-SF/Batamanta/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/Lorenzo-SF/Batamanta.svg" alt="License">
-  </a>
   <a href="https://github.com/Lorenzo-SF/Batamanta/releases">
     <img src="https://img.shields.io/github/v/release/Lorenzo-SF/Batamanta" alt="GitHub Release">
   </a>
-  <img src="https://img.shields.io/badge/Elixir-1.15%2B-purple" alt="Elixir Version">
-  <img src="https://img.shields.io/badge/OTP-25%2B-blue" alt="OTP Version">
-  <img src="https://img.shields.io/badge/Rust-required-orange" alt="Rust Required">
-  <img src="https://img.shields.io/badge/compression-zstd-green" alt="Zstandard">
-<img src="https://img.shields.io/badge/self--contained-binaries-success" alt="Self-contained">
-  <img src="https://img.shields.io/badge/cross--compilation-linux%20%7C%20macos%20%7C%20windows-informational" alt="Cross Compilation">
+  <img src="https://img.shields.io/badge/self--contained-binaries-success" alt="Self-contained">
   <img src="https://img.shields.io/badge/ERTS-embedded-critical" alt="ERTS Embedded">
-  <img src="https://img.shields.io/badge/portable-no%20runtime%20deps-blue" alt="Portable">
 </p>
 
 ---
