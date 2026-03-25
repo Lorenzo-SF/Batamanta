@@ -10,6 +10,12 @@
   <a href="https://hex.pm/packages/batamanta">
     <img src="https://img.shields.io/hexpm/v/batamanta.svg" alt="Hex Version">
   </a>
+  <a href="https://hexdocs.pm/batamanta">
+    <img src="https://img.shields.io/badge/docs-hexdocs-blue" alt="HexDocs">
+  </a>
+  <a href="https://github.com/Lorenzo-SF/Batamanta/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/Lorenzo-SF/Batamanta/ci.yml" alt="CI Status">
+  </a>
   <img src="https://img.shields.io/badge/self--contained-binaries-success" alt="Self-contained">
   <img src="https://img.shields.io/badge/ERTS-embedded-critical" alt="ERTS Embedded">
 </p>
