@@ -24,8 +24,8 @@ rm test_tui-0.1.0-x86_64-linux
 
 cd ../test_daemon 
 test
-./test_escript-0.1.0-x86_64-linux 
-rm test_escript-0.1.0-x86_64-linux 
+./test_daemon-0.1.0-x86_64-linux 
+rm test_daemon-0.1.0-x86_64-linux 
 
 
 cd ../test_escript 

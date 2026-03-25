@@ -29,6 +29,7 @@ defmodule Batamanta.Logger do
 
   def info(%Banner.Context{} = ctx, message) do
     Banner.append_line(ctx, message)
+    :ok
   end
 
   @doc """
@@ -40,6 +41,7 @@ defmodule Batamanta.Logger do
 
   def error(%Banner.Context{} = ctx, message) do
     Banner.append_line(ctx, "❌ " <> message)
+    :ok
   end
 
   @doc """
