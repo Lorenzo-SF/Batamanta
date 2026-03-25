@@ -32,30 +32,20 @@ defmodule Batamanta.RustTemplateTest do
   end
 
   describe "build/4" do
-    # P1 FIX: With the new architecture, the payload is passed as an environment variable
-    # and read at runtime, not at compile time. This means:
-    # - Build succeeds (Rust compiles successfully)
-    # - Error occurs when trying to RUN the binary with non-existent payload
-    # 
-    # These tests now verify that build succeeds (compilation works),
-    # but in a real scenario, the binary would fail at runtime if payload doesn't exist.
+    # Note: The build requires a valid payload file to exist. If the payload doesn't exist,
+    # the Rust compilation will fail because build.rs copies the payload to OUT_DIR during build.
 
-    test "succeeds even when payload file doesn't exist (runtime error, not build error)", %{
-      temp: temp
-    } do
+    test "returns error when payload file doesn't exist", %{temp: temp} do
       payload_path = Path.join(temp, "nonexistent.tar.zst")
       binary_name = Path.join(temp, "binary")
 
-      # With new architecture, build succeeds (compilation works)
-      # The runtime error would occur when trying to execute the binary
       result = RustTemplate.build(payload_path, binary_name, "x86_64-unknown-linux-gnu", [])
-      assert result == :ok
+      assert match?({:error, _}, result)
     end
 
-    test "succeeds with invalid path (runtime error, not build error)" do
-      # Build succeeds, runtime error would occur when executing
+    test "returns error when payload is invalid" do
       result = RustTemplate.build("nonexistent", "nonexistent", "x86_64-unknown-linux-gnu", [])
-      assert result == :ok
+      assert match?({:error, _}, result)
     end
   end
 

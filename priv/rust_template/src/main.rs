@@ -156,23 +156,11 @@ impl Drop for TempDirGuard {
 }
 
 fn main() -> Result<ExitCode> {
-    // P1 FIX: Leer el payload desde la variable de entorno en tiempo de ejecución
-    // en lugar de usar include_bytes! que requiere el archivo en tiempo de compilación.
-    // Esto evita el problema de tener que copiar el payload al directorio OUT_DIR de Cargo.
-    let payload_path = env::var("BATAMANTA_PAYLOAD_PATH")
-        .context("BATAMANTA_PAYLOAD_PATH environment variable not set")?;
+    // Include payload at compile time using OUT_DIR
+    // build.rs will copy the payload to OUT_DIR during compilation
+    let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/payload.tar.zst"));
 
-    // P1 FIX: fs::read returns Vec<u8>, we need to borrow it as &[u8] for extract_payload
-    // Also validate that the payload file exists before trying to read it
-    if !Path::new(&payload_path).exists() {
-        return Err(anyhow!("Payload file does not exist: {}", payload_path))
-            .context("BATAMANTA_PAYLOAD_PATH is invalid");
-    }
-
-    let bytes: Vec<u8> = fs::read(&payload_path)
-        .with_context(|| format!("Failed to read payload from: {}", payload_path))?;
-
-    let hash = format!("{:x}", md5::compute(&bytes));
+    let hash = format!("{:x}", md5::compute(bytes));
 
     let mut temp_path = env::temp_dir();
     temp_path.push(format!("batamanta_{}", hash));
@@ -200,10 +188,10 @@ fn main() -> Result<ExitCode> {
                     .unwrap(),
             );
             spinner.set_message("Extracting payload...");
-            extract_payload(&bytes, &temp_path)?;
+            extract_payload(bytes, &temp_path)?;
             spinner.finish_and_clear();
         } else {
-            extract_payload(&bytes, &temp_path)?;
+            extract_payload(bytes, &temp_path)?;
         }
     }
 

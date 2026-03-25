@@ -54,19 +54,19 @@ defmodule Batamanta.RustTemplate do
     File.cp_r!(template_dir, build_dir)
     File.rm_rf!(Path.join(build_dir, "target"))
 
-    # P1 FIX: No copiamos el payload al código fuente.
-    # En su lugar, pasamos la ruta como variable de entorno para que Rust lo copie en tiempo de ejecución.
-    # Esto evita el problema de OUT_DIR en tiempo de compilación.
+    # P1 FIX: Copy payload to the Rust template source directory
+    # Rust will include it at compile time using CARGO_MANIFEST_DIR
+    dest_payload = Path.join([build_dir, "src", "payload.tar.zst"])
 
     result =
-      with :ok <-
+      with :ok <- copy_payload(payload_path, dest_payload),
+           :ok <-
              compile_rust(
                build_dir,
                target_triple,
                config,
                cargo_target_dir,
-               format,
-               payload_path
+               format
              ) do
         copy_binary(cargo_target_dir, binary_name, target_triple)
       end
@@ -75,8 +75,16 @@ defmodule Batamanta.RustTemplate do
     result
   end
 
-  # P1 FIX: Pasamos payload_path como variable de entorno en lugar de copiarlo al código fuente
-  defp compile_rust(build_dir, target_triple, config, cargo_target_dir, format, payload_path) do
+  # P1 FIX: Copy payload to src/ directory before compilation
+  # Rust will include it using CARGO_MANIFEST_DIR at compile time
+  defp copy_payload(payload_path, dest_payload) do
+    case File.cp(payload_path, dest_payload) do
+      :ok -> :ok
+      {:error, reason} -> {:error, "Error copying payload: #{inspect(reason)}"}
+    end
+  end
+
+  defp compile_rust(build_dir, target_triple, config, cargo_target_dir, format) do
     cmd = resolve_compiler(target_triple)
 
     bata_config = Keyword.get(config, :batamanta, [])
@@ -91,9 +99,7 @@ defmodule Batamanta.RustTemplate do
       {"BATAMANTA_EXEC_MODE", mode_str},
       {"BATAMANTA_APP_NAME", app_name_str},
       {"BATAMANTA_FORMAT", format_str},
-      {"CARGO_TARGET_DIR", cargo_target_dir},
-      # P1 FIX: Pasar la ruta del payload como variable de entorno
-      {"BATAMANTA_PAYLOAD_PATH", payload_path}
+      {"CARGO_TARGET_DIR", cargo_target_dir}
     ]
 
     env = current_env ++ additional_env
