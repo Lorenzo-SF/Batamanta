@@ -74,7 +74,7 @@ defmodule Batamanta.MixProject do
     [
       check: ["format", "credo --strict", "dialyzer"],
       "rust.test": ["cmd cargo test --manifest-path priv/rust_template/Cargo.toml"],
-      "test.all": ["test", "rust.test"]
+      test: ["test", "rust.test"]
     ]
   end
 end

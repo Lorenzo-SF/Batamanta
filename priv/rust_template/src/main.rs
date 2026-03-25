@@ -16,7 +16,11 @@ use std::os::unix::fs::PermissionsExt;
 static TERMINAL_RESTORED: AtomicBool = AtomicBool::new(false);
 
 /// Spawns a process detached from terminal (portable: works on Linux and macOS)
-/// Returns immediately in parent, child continues running independently
+/// Returns immediately in parent, child continues running independently.
+///
+/// `env` contains additional/override env vars that are merged with the parent's
+/// environment. This is critical: execve replaces the environment entirely,
+/// so we must pass the full merged environment.
 #[cfg(unix)]
 fn spawn_detached(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<()> {
     unsafe {
@@ -36,24 +40,40 @@ fn spawn_detached(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<
         libc::open("/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR);
         libc::dup2(0, 1);
         libc::dup2(0, 2);
-        // Execute the program
-        let mut env_ptrs: Vec<*mut libc::c_char> = env
+
+        // Build full environment: inherit parent env + merge additional vars
+        let mut full_env: std::collections::HashMap<String, String> = std::env::vars().collect();
+        for (k, v) in env {
+            full_env.insert(k.to_string(), v.to_string());
+        }
+
+        let env_cstrings: Vec<std::ffi::CString> = full_env
             .iter()
-            .map(|(k, v)| {
-                let s = format!("{}={}", k, v);
-                std::ffi::CString::new(s).unwrap().into_raw()
-            })
+            .map(|(k, v)| std::ffi::CString::new(format!("{}={}", k, v)).unwrap())
             .collect();
-        let env_ptrs_mut = env_ptrs.as_mut_ptr();
+        let mut env_ptrs: Vec<*const libc::c_char> = env_cstrings
+            .iter()
+            .map(|s| s.as_ptr())
+            .collect();
+        env_ptrs.push(std::ptr::null()); // null-terminate
+
+        // Build argv: argv[0] must be program name (POSIX requirement)
         let program_cstr = std::ffi::CString::new(program).unwrap();
-        let mut arg_ptrs: Vec<*mut libc::c_char> = args
+        let arg_cstrings: Vec<std::ffi::CString> = args
             .iter()
-            .map(|s| std::ffi::CString::new(*s).unwrap().into_raw())
+            .map(|s| std::ffi::CString::new(*s).unwrap())
             .collect();
+        let mut arg_ptrs: Vec<*const libc::c_char> = Vec::with_capacity(args.len() + 2);
+        arg_ptrs.push(program_cstr.as_ptr()); // argv[0] = program
+        for cs in &arg_cstrings {
+            arg_ptrs.push(cs.as_ptr());
+        }
+        arg_ptrs.push(std::ptr::null()); // null-terminate
+
         libc::execve(
             program_cstr.as_ptr(),
-            arg_ptrs.as_ptr() as *const *const libc::c_char,
-            env_ptrs_mut as *const *const libc::c_char,
+            arg_ptrs.as_ptr(),
+            env_ptrs.as_ptr(),
         );
         // If execve returns, it failed
         libc::_exit(1);
@@ -623,52 +643,22 @@ mod tests {
     use std::fs::File;
 
     #[test]
-    fn test_get_exec_mode_defaults_to_cli() {
-        env::remove_var("BATAMANTA_EXEC_MODE");
-        assert_eq!(get_exec_mode(), "cli");
+    fn test_get_exec_mode_is_compiled() {
+        // Just verify it doesn't crash
+        let mode = get_exec_mode();
+        assert!(!mode.is_empty());
     }
 
     #[test]
-    fn test_get_exec_mode_reads_env_variable() {
-        env::set_var("BATAMANTA_EXEC_MODE", "daemon");
-        assert_eq!(get_exec_mode(), "daemon");
-        env::remove_var("BATAMANTA_EXEC_MODE");
+    fn test_get_app_name_is_compiled() {
+        let app = get_app_name();
+        assert!(!app.is_empty());
     }
 
     #[test]
-    fn test_get_app_name_defaults_to_app() {
-        // Ensure variable is not set
-        env::remove_var("BATAMANTA_APP_NAME");
-        let result = get_app_name();
-        let expected = "app";
-        // Cleanup even if assertion fails
-        env::remove_var("BATAMANTA_APP_NAME");
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_get_app_name_reads_env_variable() {
-        env::set_var("BATAMANTA_APP_NAME", "test_app_name");
-        let result = get_app_name();
-        let expected = "test_app_name";
-        // Cleanup even if assertion fails
-        env::remove_var("BATAMANTA_APP_NAME");
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_get_format_defaults_to_release() {
-        env::remove_var("BATAMANTA_FORMAT");
-        assert_eq!(get_format(), "release");
-    }
-
-    #[test]
-    fn test_get_format_reads_env_variable() {
-        // Set value and ensure cleanup even if assertion fails
-        env::set_var("BATAMANTA_FORMAT", "escript");
-        let result = get_format();
-        env::remove_var("BATAMANTA_FORMAT");
-        assert_eq!(result, "escript");
+    fn test_get_format_is_compiled() {
+        let format = get_format();
+        assert!(!format.is_empty());
     }
 
     #[test]

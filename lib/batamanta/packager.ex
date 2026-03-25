@@ -418,8 +418,13 @@ defmodule Batamanta.Packager do
 
     if File.exists?(releases_path) do
       case File.ls(releases_path) do
-        {:ok, [version | _]} ->
-          version
+        {:ok, entries} ->
+          entries
+          |> Enum.filter(fn entry ->
+            full = Path.join(releases_path, entry)
+            File.dir?(full) and entry not in [".", ".."]
+          end)
+          |> List.first()
 
         _ ->
           nil

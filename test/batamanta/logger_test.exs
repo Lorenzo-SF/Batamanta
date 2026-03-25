@@ -47,8 +47,7 @@ defmodule Batamanta.Banner.ContextTest do
         on_error_image: "",
         messages: [],
         image_id: 0,
-        show_banner: true,
-        start_row: 0
+        show_banner: true
       }
 
       assert ctx.mode == :streaming

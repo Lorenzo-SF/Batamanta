@@ -80,7 +80,10 @@ defmodule Batamanta.Banner do
 
     move_up(ctx, current_dist)
     write_message(ctx, line_index, message)
-    move_down(ctx, current_dist)
+    # write_message moved cursor down by line_index rows from the banner top,
+    # so we only need to descend (current_dist - line_index) to return to the
+    # original cursor position below the banner.
+    move_down(ctx, current_dist - line_index)
 
     new_ctx = %{ctx | messages: ctx.messages ++ [message]}
     Process.put(:batamanta_banner_ctx, new_ctx)

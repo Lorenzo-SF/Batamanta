@@ -365,7 +365,7 @@ defmodule Batamanta.EscriptPackager do
   end
 
   defp directory_size(dir) do
-    dir
+    Path.join(dir, "**/*")
     |> Path.wildcard(match_dot: true)
     |> Enum.reject(&File.dir?/1)
     |> Enum.map(fn path ->

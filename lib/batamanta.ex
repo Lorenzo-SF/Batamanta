@@ -50,11 +50,11 @@ defmodule Batamanta do
   ## Version
 
       iex> Batamanta.version()
-      "1.0.1"
+      "1.2.1"
 
   """
 
-  @version "1.0.1"
+  @version "1.2.1"
 
   @doc """
   Returns the current version of Batamanta.
