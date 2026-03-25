@@ -10,9 +10,11 @@ defmodule Batamanta do
   ## Features
 
   - **Self-contained binaries**: No Erlang/Elixir installation required on target
-  - **Cross-compilation**: Build for Linux (MUSL), macOS, and Windows from any platform
+  - **Cross-compilation**: Build for Linux (glibc/musl), macOS, and Windows from any platform
   - **Compression**: Uses Zstandard for optimal size/performance balance
   - **Multiple execution modes**: CLI, TUI, and Daemon support
+  - **Escript support**: Lightweight bundling for projects using `mix escript.build`
+  - **Automatic Cleanup**: Wipes temporary build artifacts while preserving the ERTS cache
 
   ## Quick Start
 
@@ -50,11 +52,11 @@ defmodule Batamanta do
   ## Version
 
       iex> Batamanta.version()
-      "1.0.1"
+      "1.3.0"
 
   """
 
-  @version "1.0.1"
+  @version "1.3.0"
 
   @doc """
   Returns the current version of Batamanta.

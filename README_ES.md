@@ -11,8 +11,9 @@
 - **Binarios autocontenidos**: Un único archivo con tu app + ERTS incluido
 - **Compilación cruzada**: Construye para Linux, macOS y Windows desde cualquier plataforma
 - **Compresión Zstandard**: Óptimo equilibrio entre tamaño y velocidad
-- **Múltiples modos de ejecución**: CLI, TUI y Daemon
-- **Caché inteligente**: Las descargas de ERTS se almacenan localmente
+- **Formatos Versátiles**: Soporte para `:release` (completo) y `:escript` (ligero)
+- **Limpieza Automática**: Borra temporales de construcción tras éxito, manteniendo el sistema limpio pero preservando la caché de ERTS
+- **Caché Inteligente**: Descargas de ERTS locales con bloqueos para evitar condiciones de carrera en compilaciones concurrentes
 
 ---
 
@@ -144,6 +145,7 @@ batamanta: [
 Genera un escript ligero con runtime de Elixir embebido. Ideal para:
 - Herramientas CLI
 - Proyectos que ya usan `mix escript.build`
+- **Binarios autocontenidos**: Embebe un ERTS ligero y no requiere Erlang en el host
 - Binarios pequeños (~60-70% más pequeños)
 
 ```elixir

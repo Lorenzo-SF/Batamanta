@@ -83,7 +83,7 @@ defmodule Batamanta.EscriptBuilder do
       |> String.split("\n")
       |> Enum.filter(&String.contains?(&1, "warning:"))
       |> Enum.take(5)
-      |> Enum.each(&Logger.info(banner_ctx, ">>    #{&1}"))
+      |> Enum.each(fn line -> Logger.info(banner_ctx, ">>    #{line}") end)
     end
 
     if compile_status != 0 do

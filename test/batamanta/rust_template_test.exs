@@ -32,6 +32,9 @@ defmodule Batamanta.RustTemplateTest do
   end
 
   describe "build/4" do
+    # Note: The build requires a valid payload file to exist. If the payload doesn't exist,
+    # the Rust compilation will fail because build.rs copies the payload to OUT_DIR during build.
+
     test "returns error when payload file doesn't exist", %{temp: temp} do
       payload_path = Path.join(temp, "nonexistent.tar.zst")
       binary_name = Path.join(temp, "binary")
@@ -41,7 +44,6 @@ defmodule Batamanta.RustTemplateTest do
     end
 
     test "returns error when payload is invalid" do
-      # When payload file doesn't exist, build returns an error tuple
       result = RustTemplate.build("nonexistent", "nonexistent", "x86_64-unknown-linux-gnu", [])
       assert match?({:error, _}, result)
     end

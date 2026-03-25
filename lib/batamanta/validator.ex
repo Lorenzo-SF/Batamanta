@@ -87,9 +87,8 @@ defmodule Batamanta.Validator do
     for os <- @supported_os,
         arch <- @supported_arch,
         mode <- @supported_modes,
-        do:
-          %{os: os, arch: arch, mode: mode}
-          |> Enum.filter(&valid_combination?/1)
+        valid_combination?(%{os: os, arch: arch, mode: mode}),
+        do: %{os: os, arch: arch, mode: mode}
   end
 
   @doc """

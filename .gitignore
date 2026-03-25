@@ -78,7 +78,6 @@ Thumbs.db
 /smoke_tests/*/test_cli-0.1.0*
 /smoke_tests/*/test_tui-0.1.0*
 /smoke_tests/*/test_daemon-0.1.0*
- daemon_test_result.txt
-daemon_alive.txt
+/smoke_tests/*/test_escript-0.1.0*
+daemon*.txt
 test_escript-*
-daemon_custom.txt

@@ -5,10 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-25
+
+### Added
+- **Temporary Files Cleanup**: Batamanta now automatically cleans up internal temporary artifacts (`bat_cargo_cache`, `bat_pkg_*`, `bat_build_*`) after each compilation to keep `/tmp` empty while strictly preserving the ERTS cache.
+
+### Fixed
+- **Daemon Initialization Crash (Crítical / `undef`)**: Reimplemented the `spawn_detached` hook in Rust to fully inherit the parent environment (`std::env::vars()`) and properly map `argv[0]`. Fixing an elusive bug where the BEAM VM crashed on spawn in Daemon mode due to a missing environment block.
+- **Daemon Logging Isolation**: `spawn_detached` no longer strictly forces a `dup2` redirect to `/dev/null` for standard file descriptors, allowing application logs to correctly print to the terminal prior to background detachment. Perfectly compatible with CI Smoke Tests.
+- **Dialyzer & Compiler Specs**: Resolved compiler typing violations related to `{error, _}` on `detect_host` in `Target` and removed unused legacy branches.
+- **Cleaned Test Coverage**: Updated multiple test namespaces (`Baton` -> `Batamanta`) and expanded coverage for internal functions.
+
+## [1.2.1] - 2026-03-23
+
+### Fixed
+- **Execution Mode vs Format Nomenclature**: Corrected confusing naming - renamed `execution_mode` to `format` in configuration and documentation
+- **Daemon Mode macOS Support**: Fixed daemon spawning to work on both Linux and macOS (uses `fork()` + `setsid()` via libc)
+- **Banner Positioning**: Improved banner display to work consistently whether terminal is fresh or has existing output
+
 ## [1.2.0] - 2026-03-23
 
 ### Added
-- **Escript Support**: New `execution_mode: :escript` option to build lightweight escripts instead of full OTP releases
+- **Escript Support**: New `format: :escript` option to build lightweight escripts instead of full OTP releases
 - **Auto-detection**: Automatically detects escript format when project has `:escript` config in `mix.exs`
 - **CLI Override**: `--format` option to override format detection from command line
 - **Dynamic Version Detection**: Fixed hardcoded version `0.1.0` in Rust wrapper, now reads version from `start_erl.data`
@@ -26,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Smaller Binaries**: Escript format produces ~60-70% smaller binaries than release format
 - **EscriptPackager**: New module for packaging escripts with minimal ERTS
 - **EscriptBuilder**: New module for building escripts via `mix escript.build`
-- **Rust Template**: Updated to support both `:release` and `:escript` execution modes via `BATAMANTA_FORMAT` env var
+- **Rust Template**: Updated to support both `:release` and `:escript` output formats via `BATAMANTA_FORMAT` env var
 - **Banner Positioning**: Improved banner display to work consistently whether terminal is fresh or has existing output
 
 ### Fixed
@@ -34,8 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tar Error Messages**: Better error messages when tar extraction fails, including "Permission denied", "Disk full", etc.
 - **Download Retry Pattern**: Fixed pattern matching to handle both `:ok` (file downloads) and `{:ok, body}` (manifest downloads) return values
 - **Version Detection**: Release version is now dynamically detected from `releases/start_erl.data` instead of being hardcoded
-- **Daemon Mode**: Fixed daemon spawning using `setsid` to properly detach from terminal
-- **Banner Spacing**: Logs now appear below the banner image instead of overwriting it
 
 ## [1.1.0] - 2026-03-19
 
