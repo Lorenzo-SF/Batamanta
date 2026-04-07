@@ -29,6 +29,7 @@
 - **Compresión Zstandard**: Óptimo equilibrio entre tamaño y velocidad
 - **Formatos Versátiles**: Soporte para `:release` (completo) y `:escript` (ligero)
 - **Limpieza Automática**: Borra temporales de construcción tras éxito, manteniendo el sistema limpio pero preservando la caché de ERTS
+- **Aislamiento del Entorno**: Aísla automáticamente el proceso de construcción de gestores de versiones (`asdf`, `mise`, `kerl`) para evitar discrepancias de versión
 - **Caché Inteligente**: Descargas de ERTS locales con bloqueos para evitar condiciones de carrera en compilaciones concurrentes
 
 ---
@@ -490,6 +491,28 @@ El build continúa usando el ERTS del sistema. Esto significa:
 3. **Package**: Crea el tarball comprimido (release + ERTS)
 4. **Compile**: El dispenser de Rust embeber el payload
 5. **Run**: El dispenser extrae el payload y lanza la VM de Erlang
+
+---
+
+## Aislamiento del Entorno de Construcción
+
+La versión 1.4.0+ de Batamanta incluye `Batamanta.EnvCleaner`, diseñado para asegurar un aislamiento total del proceso de construcción del binario frente al host.
+
+### ¿Por qué es importante?
+
+Al usar gestores como `asdf`, `mise` o `kerl`, el `PATH` apunta a versiones gestionadas mediante shims. Si estas versiones no coinciden exactamente con el ERTS que se está embebiendo, pueden surgir:
+- Fallos de "Corrupt atom table" en ejecución.
+- Errores de compatibilidad entre el bytecode compilado y el runtime.
+- Fallos silenciosos en entornos CI.
+
+### ¿Cómo funciona?
+
+Cuando ejecutas `mix batamanta`, la herramienta:
+1. Detecta y filtra cualquier ruta de gestor de versiones del `PATH`.
+2. Sanitiza el entorno limitándolo solo a variables esenciales del sistema.
+3. (En modo escript) Antepone el binario del ERTS descargado al `PATH`, garantizando paridad total entre tiempo de compilación y ejecución.
+
+Esto garantiza que el binario generado sea 100% consistente con el runtime que transporta.
 
 ---
 

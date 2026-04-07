@@ -7,7 +7,7 @@ defmodule Batamanta.EscriptBuilder do
 
   ## Usage
 
-      escript_path = EscriptBuilder.build(config, banner_ctx)
+      escript_path = EscriptBuilder.build(config, banner_ctx, erts_path)
       # Returns: "/path/to/project/_build/prod/lib/app_name/ebin/app_name"
 
   ## Escript vs Release
@@ -34,6 +34,8 @@ defmodule Batamanta.EscriptBuilder do
   - Need distributed Erlang
   """
 
+  alias Batamanta.EnvCleaner
+
   alias Batamanta.Logger
 
   @doc """
@@ -43,6 +45,7 @@ defmodule Batamanta.EscriptBuilder do
 
   - `config` - Mix project config (from `Mix.Project.config()`)
   - `banner_ctx` - Banner context for logging
+  - `erts_path` - Path to the ERTS that will be embedded (for build consistency)
 
   ## Returns
 
@@ -53,16 +56,21 @@ defmodule Batamanta.EscriptBuilder do
   - `Mix.Error` if escript build fails
   - `Mix.Error` if escript file is not found after build
   """
-  @spec build(keyword(), any()) :: Path.t()
-  def build(config, banner_ctx) do
+  @spec build(keyword(), any(), Path.t()) :: Path.t()
+  def build(config, banner_ctx, erts_path) do
     Logger.info(banner_ctx, ">> 📦 Running mix escript.build...")
+
+    # CRITICAL: Use the ERTS that will be embedded to ensure build-time
+    # and runtime ERTS are exactly the same (fixes asdf/version manager issue)
+    build_env = EnvCleaner.erts_env(erts_path, true)
+    env_with_mix = [{"MIX_ENV", "prod"} | build_env]
 
     # Ensure dependencies are compiled first
     Logger.info(banner_ctx, ">> 📦 Compiling dependencies...")
 
     {_out, _status} =
       System.cmd("mix", ["do", "deps.get", "--force"],
-        env: [{"MIX_ENV", "prod"}],
+        env: env_with_mix,
         stderr_to_stdout: true
       )
 
@@ -71,7 +79,7 @@ defmodule Batamanta.EscriptBuilder do
 
     {compile_output, compile_status} =
       System.cmd("mix", ["compile"],
-        env: [{"MIX_ENV", "prod"}],
+        env: env_with_mix,
         stderr_to_stdout: true
       )
 
@@ -97,7 +105,7 @@ defmodule Batamanta.EscriptBuilder do
 
     {output, status} =
       System.cmd("mix", ["escript.build"],
-        env: [{"MIX_ENV", "prod"}],
+        env: env_with_mix,
         stderr_to_stdout: true
       )
 
