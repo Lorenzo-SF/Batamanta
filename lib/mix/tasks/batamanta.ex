@@ -96,16 +96,16 @@ defmodule Mix.Tasks.Batamanta do
   """
   use Mix.Task
 
-  alias BatmanManta.Banner
-  alias BatmanManta.ERTS
-  alias BatmanManta.EnvCleaner
-  alias BatmanManta.EscriptBuilder
-  alias BatmanManta.EscriptPackager
-  alias BatmanManta.Logger
-  alias BatmanManta.Packager
-  alias BatmanManta.RustTemplate
-  alias BatmanManta.Target
-  alias BatmanManta.Validator
+  alias Batamanta.Banner
+  alias Batamanta.EnvCleaner
+  alias Batamanta.ERTS
+  alias Batamanta.EscriptBuilder
+  alias Batamanta.EscriptPackager
+  alias Batamanta.Logger
+  alias Batamanta.Packager
+  alias Batamanta.RustTemplate
+  alias Batamanta.Target
+  alias Batamanta.Validator
 
   @shortdoc "Generates a monolithic binary"
 
@@ -596,29 +596,27 @@ defmodule Mix.Tasks.Batamanta do
     build_dir = Path.join(project_root, "_build")
 
     if File.dir?(build_dir) do
-      # Clean old dev and test builds if they're very old
       ["dev", "test"]
-      |> Enum.each(fn env ->
-        env_dir = Path.join(build_dir, env)
-
-        if File.dir?(env_dir) do
-          try do
-            case File.stat(env_dir) do
-              {:ok, %{mtime: mtime}} ->
-                age_seconds = NaiveDateTime.diff(NaiveDateTime.utc_now(), mtime, :second)
-                # Only clean if older than 24 hours
-                if age_seconds > 86400 do
-                  File.rm_rf(env_dir)
-                end
-
-              _ ->
-                :skip
-            end
-          rescue
-            _ -> :skip
-          end
-        end
-      end)
+      |> Enum.map(&Path.join(build_dir, &1))
+      |> Enum.filter(&File.dir?/1)
+      |> Enum.each(&clean_if_stale/1)
     end
+  end
+
+  defp clean_if_stale(dir) do
+    case File.stat(dir) do
+      {:ok, %{mtime: mtime}} ->
+        age_seconds = NaiveDateTime.diff(NaiveDateTime.utc_now(), mtime, :second)
+
+        # Only clean if older than 24 hours
+        if age_seconds > 86_400 do
+          File.rm_rf(dir)
+        end
+
+      _ ->
+        :skip
+    end
+  rescue
+    _ -> :skip
   end
 end

@@ -1,4 +1,4 @@
-defmodule BatmanManta.EnvCleaner do
+defmodule Batamanta.EnvCleaner do
   @moduledoc """
   Provides environment isolation for build commands.
 
@@ -115,7 +115,7 @@ defmodule BatmanManta.EnvCleaner do
   def system_erlang_path do
     system_paths()
     |> Enum.map(&Path.join(&1, "erl"))
-    |> Enum.find(&File.executable?/1)
+    |> Enum.find(&File.regular?/1)
   end
 
   @doc """
@@ -125,7 +125,7 @@ defmodule BatmanManta.EnvCleaner do
   def system_elixir_path do
     system_paths()
     |> Enum.map(&Path.join(&1, "elixir"))
-    |> Enum.find(&File.executable?/1)
+    |> Enum.find(&File.regular?/1)
   end
 
   @doc """
@@ -135,7 +135,7 @@ defmodule BatmanManta.EnvCleaner do
   def system_mix_path do
     system_paths()
     |> Enum.map(&Path.join(&1, "mix"))
-    |> Enum.find(&File.executable?/1)
+    |> Enum.find(&File.regular?/1)
   end
 
   # ============================================================================
@@ -190,82 +190,66 @@ defmodule BatmanManta.EnvCleaner do
   # Common system Erlang/Elixir installation paths (platform-aware)
   defp system_paths do
     erlang_root = :code.root_dir() |> to_string()
-    os_type = :os.type()
 
-    base_paths =
-      case os_type do
-        {:unix, :darwin} ->
-          # macOS - check both Intel and Apple Silicon paths
-          [
-            # Apple Silicon
-            "/opt/homebrew/bin",
-            # Intel
-            "/usr/local/bin",
-            Path.join(erlang_root, "bin"),
-            Path.join(System.get_env("HOME") || "", "bin")
-          ]
-
-        {:unix, :linux} ->
-          # Check libc type to determine additional paths
-          libc = detect_libc()
-
-          base = [
-            "/usr/bin",
-            "/usr/local/bin",
-            # Ubuntu snap
-            "/snap/bin",
-            Path.join(erlang_root, "bin"),
-            Path.join(System.get_env("HOME") || "", "bin")
-          ]
-
-          # Add musl-specific paths for Alpine
-          if libc == "musl" do
-            base ++ ["/opt/alpine/bin"]
-          else
-            base
-          end
-
-        {:win32, :nt} ->
-          # Windows
-          erlang_winpath = Path.join(erlang_root, "bin")
-          system_drive = System.get_env("SYSTEMDRIVE") || "C:"
-
-          # Build Windows paths manually (Path.join doesn't support > 2 args)
-          prog_files = system_drive <> "\\Program Files"
-
-          app_data =
-            system_drive <>
-              "\\Users\\" <> (System.get_env("USERNAME") || "") <> "\\AppData\\Roaming"
-
-          [
-            prog_files <> "\\erl*",
-            app_data <> "\\erl*",
-            erlang_winpath
-          ]
-
-        _ ->
-          # Fallback
-          [
-            Path.join(erlang_root, "bin"),
-            Path.join(System.get_env("HOME") || "", "bin")
-          ]
-      end
-
-    # Expand wildcards on Windows and filter
-    base_paths
-    |> Enum.flat_map(fn path ->
-      # Check if path contains wildcard
-      has_wildcard = String.match?(path, ~r/\*/)
-
-      if has_wildcard do
-        # Windows path expansion
-        Path.wildcard(path)
-      else
-        [path]
-      end
-    end)
+    base_paths_for_os(:os.type(), erlang_root)
+    |> Enum.flat_map(&expand_wildcards/1)
     |> Enum.reject(&version_manager_path?/1)
     |> Enum.uniq()
+  end
+
+  defp expand_wildcards(path) do
+    if String.match?(path, ~r/\*/) do
+      Path.wildcard(path)
+    else
+      [path]
+    end
+  end
+
+  defp base_paths_for_os({:unix, :darwin}, erlang_root) do
+    [
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      Path.join(erlang_root, "bin"),
+      Path.join(System.get_env("HOME") || "", "bin")
+    ]
+  end
+
+  defp base_paths_for_os({:unix, :linux}, erlang_root) do
+    base = [
+      "/usr/bin",
+      "/usr/local/bin",
+      "/snap/bin",
+      Path.join(erlang_root, "bin"),
+      Path.join(System.get_env("HOME") || "", "bin")
+    ]
+
+    if detect_libc() == "musl" do
+      base ++ ["/opt/alpine/bin"]
+    else
+      base
+    end
+  end
+
+  defp base_paths_for_os({:win32, :nt}, erlang_root) do
+    erlang_winpath = Path.join(erlang_root, "bin")
+    system_drive = System.get_env("SYSTEMDRIVE") || "C:"
+    prog_files = system_drive <> "\\Program Files"
+
+    app_data =
+      system_drive <> "\\Users\\" <> (System.get_env("USERNAME") || "") <> "\\AppData\\Roaming"
+
+    [
+      prog_files <> "\\erl*",
+      app_data <> "\\erl*",
+      erlang_winpath
+    ]
+  end
+
+  defp base_paths_for_os(_, erlang_root) do
+    [
+      Path.join(erlang_root, "bin"),
+      Path.join(System.get_env("HOME") || "", "bin")
+    ]
   end
 
   # Detect libc type on Linux
@@ -314,6 +298,6 @@ defmodule BatmanManta.EnvCleaner do
   defp find_mix_in_erts_or_system(erts_path) do
     # First try in ERTS bin
     mix_in_erts = Path.join(erts_path, "bin/mix")
-    if File.executable?(mix_in_erts), do: mix_in_erts, else: nil
+    if File.regular?(mix_in_erts), do: mix_in_erts, else: nil
   end
 end

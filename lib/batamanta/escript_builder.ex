@@ -34,9 +34,9 @@ defmodule Batamanta.EscriptBuilder do
   - Need distributed Erlang
   """
 
-  alias BatmanManta.EnvCleaner
+  alias Batamanta.EnvCleaner
 
-  alias BatmanManta.Logger
+  alias Batamanta.Logger
 
   @doc """
   Builds an escript using `mix escript.build`.
