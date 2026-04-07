@@ -38,6 +38,13 @@ defmodule Mix.Tasks.Batamanta do
 
   To manually wipe the entire cache (including downloaded ERTS), use `mix batamanta.clean`.
 
+  ## Environment Isolation
+
+  Batamanta isolates the build environment to ensure that Erlang/Elixir versions
+  from managers like `asdf`, `mise`, or `kerl` do not interfere. It sanitizes the
+  `PATH` and keeps only essential system variables (`HOME`, `USER`, `TMPDIR`,
+  `LANG`, `SHELL`, `TERM`, `SSH_AUTH_SOCK`) to guarantee build consistency.
+
   ## ERTS Target Configuration
 
   Use `:erts_target` for unified platform specification:
