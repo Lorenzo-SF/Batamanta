@@ -345,13 +345,15 @@ defmodule Mix.Tasks.Batamanta do
     env_with_mix = [{"MIX_ENV", "prod"} | clean_env]
 
     # Run release isolated in a subprocess to ensure compiler/mix stdout is totally silenced
-    {_out, status} =
+    {out, status} =
       System.cmd("mix", ["release", "--overwrite", "--quiet"],
         env: env_with_mix,
         stderr_to_stdout: true
       )
 
     if status != 0 do
+      Logger.error(banner_ctx, "Mix release compilation failed:")
+      Logger.error(banner_ctx, out)
       Banner.set_image(banner_ctx, :error)
       Mix.raise("Mix release compilation failed.")
     end

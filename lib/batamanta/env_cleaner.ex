@@ -42,7 +42,8 @@ defmodule Batamanta.EnvCleaner do
   @spec clean_env() :: %{optional(binary()) => binary() | nil}
   def clean_env do
     base_env = base_environment()
-    cleaned_path = clean_path(base_env["PATH"] || "")
+    system_path = System.get_env("PATH") || ""
+    cleaned_path = clean_path(system_path)
     Map.put(base_env, "PATH", cleaned_path)
   end
 
@@ -149,8 +150,18 @@ defmodule Batamanta.EnvCleaner do
       "TMPDIR" => System.get_env("TMPDIR") || System.tmp_dir!(),
       "LANG" => System.get_env("LANG") || "en_US.UTF-8",
       "LC_ALL" => System.get_env("LC_ALL") || "en_US.UTF-8",
-      "SHELL" => System.get_env("SHELL") || "/bin/sh"
+      "SHELL" => System.get_env("SHELL") || "/bin/sh",
+      "TERM" => System.get_env("TERM") || "xterm-256color"
     }
+    |> maybe_add_ssh_auth()
+  end
+
+  defp maybe_add_ssh_auth(env) do
+    if sock = System.get_env("SSH_AUTH_SOCK") do
+      Map.put(env, "SSH_AUTH_SOCK", sock)
+    else
+      env
+    end
   end
 
   defp clean_path(current_path) do
