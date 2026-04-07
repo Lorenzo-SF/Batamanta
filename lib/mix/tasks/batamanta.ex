@@ -38,6 +38,13 @@ defmodule Mix.Tasks.Batamanta do
 
   To manually wipe the entire cache (including downloaded ERTS), use `mix batamanta.clean`.
 
+  ## Environment Isolation
+
+  Batamanta isolates the build environment to ensure that Erlang/Elixir versions
+  from managers like `asdf`, `mise`, or `kerl` do not interfere. It sanitizes the
+  `PATH` and keeps only essential system variables (`HOME`, `USER`, `TMPDIR`,
+  `LANG`, `SHELL`, `TERM`, `SSH_AUTH_SOCK`) to guarantee build consistency.
+
   ## ERTS Target Configuration
 
   Use `:erts_target` for unified platform specification:
@@ -97,6 +104,7 @@ defmodule Mix.Tasks.Batamanta do
   use Mix.Task
 
   alias Batamanta.Banner
+  alias Batamanta.EnvCleaner
   alias Batamanta.ERTS
   alias Batamanta.EscriptBuilder
   alias Batamanta.EscriptPackager
@@ -111,6 +119,9 @@ defmodule Mix.Tasks.Batamanta do
   @impl Mix.Task
   def run(args) do
     validate_toolchain!()
+
+    # Clean up any stale temp directories from previous runs before starting
+    cleanup_stale_temporaries()
 
     opts = parse_options(args)
     config = Mix.Project.config()
@@ -336,14 +347,20 @@ defmodule Mix.Tasks.Batamanta do
        ) do
     Logger.info(banner_ctx, ">> 📦 Creating Release...")
 
+    # Get clean environment (without asdf/mise/kerl paths)
+    clean_env = EnvCleaner.clean_env_tuples()
+    env_with_mix = [{"MIX_ENV", "prod"} | clean_env]
+
     # Run release isolated in a subprocess to ensure compiler/mix stdout is totally silenced
-    {_out, status} =
+    {out, status} =
       System.cmd("mix", ["release", "--overwrite", "--quiet"],
-        env: [{"MIX_ENV", "prod"}],
+        env: env_with_mix,
         stderr_to_stdout: true
       )
 
     if status != 0 do
+      Logger.error(banner_ctx, "Mix release compilation failed:")
+      Logger.error(banner_ctx, out)
       Banner.set_image(banner_ctx, :error)
       Mix.raise("Mix release compilation failed.")
     end
@@ -387,8 +404,8 @@ defmodule Mix.Tasks.Batamanta do
        ) do
     Logger.info(banner_ctx, ">> 📦 Creating Escript...")
 
-    # Build the escript
-    escript_path = EscriptBuilder.build(config, banner_ctx)
+    # Build the escript (pass erts_path to ensure build uses same ERTS as runtime)
+    escript_path = EscriptBuilder.build(config, banner_ctx, erts_path)
 
     payload_path =
       Path.join(System.tmp_dir!(), "payload_#{:erlang.unique_integer([:positive])}.tar.zst")
@@ -527,5 +544,88 @@ defmodule Mix.Tasks.Batamanta do
     |> Path.join("bat_build_*")
     |> Path.wildcard()
     |> Enum.each(&File.rm_rf/1)
+
+    # 4. Clean batamanta extraction directories
+    System.tmp_dir!()
+    |> Path.join("batamanta_*")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm_rf/1)
+  end
+
+  # Cleans stale temp directories from previous runs on startup
+  # This ensures a clean state and prevents accumulation of old builds
+  defp cleanup_stale_temporaries do
+    temp_base = System.tmp_dir!()
+
+    # List of patterns to clean (old style - should cover most cases)
+    patterns = [
+      "bat_pkg_*",
+      "bat_build_*",
+      "bat_cargo_cache",
+      "batamanta_*",
+      "batamanta_escript_wrapper_*"
+    ]
+
+    Enum.each(patterns, fn pattern ->
+      temp_base
+      |> Path.join(pattern)
+      |> Path.wildcard()
+      |> Enum.each(fn dir ->
+        try do
+          # Only clean if it's older than 1 hour (in case current build is running)
+          case File.stat(dir) do
+            {:ok, %{mtime: mtime}} ->
+              age_seconds = NaiveDateTime.diff(NaiveDateTime.utc_now(), mtime, :second)
+
+              if age_seconds > 3600 do
+                File.rm_rf(dir)
+              end
+
+            _ ->
+              :skip
+          end
+        rescue
+          _ -> :skip
+        end
+      end)
+    end)
+
+    # Also clean Mix build artifacts in _build that might be stale
+    # but preserve the prod release if it exists (needed for packaging)
+    clean_mix_build_artifacts()
+  end
+
+  # Clean stale Mix build artifacts while preserving current release/escript
+  defp clean_mix_build_artifacts do
+    project_root =
+      Mix.Project.build_path()
+      |> Path.dirname()
+      |> Path.dirname()
+
+    build_dir = Path.join(project_root, "_build")
+
+    if File.dir?(build_dir) do
+      ["dev", "test"]
+      |> Enum.map(&Path.join(build_dir, &1))
+      |> Enum.filter(&File.dir?/1)
+      |> Enum.each(&clean_if_stale/1)
+    end
+  end
+
+  defp clean_if_stale(dir) do
+    case File.stat(dir) do
+      {:ok, %{mtime: mtime}} ->
+        age_seconds = NaiveDateTime.diff(NaiveDateTime.utc_now(), mtime, :second)
+
+        # Only clean if older than 24 hours
+        if age_seconds > 86_400 do
+          File.rm_rf(dir)
+        end
+
+      _ ->
+        :skip
+    end
+  rescue
+    _ -> :skip
   end
 end
