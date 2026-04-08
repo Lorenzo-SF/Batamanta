@@ -95,7 +95,15 @@ defmodule Batamanta.EscriptBuilder do
     end
 
     if compile_status != 0 do
+      # Log more details for debugging
       Logger.error(banner_ctx, "Escript build failed during compilation:")
+      Logger.error(banner_ctx, "Exit status: #{compile_status}")
+
+      Logger.error(
+        banner_ctx,
+        "Environment PATH: #{List.keyfind(env_with_mix, "PATH", 0) |> elem(1)}"
+      )
+
       Logger.error(banner_ctx, compile_output)
       Mix.raise("Mix compile failed. Check output above for details.")
     end

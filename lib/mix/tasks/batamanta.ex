@@ -281,7 +281,31 @@ defmodule Mix.Tasks.Batamanta do
     if explicit_version do
       {explicit_version, :explicit}
     else
-      {:erlang.system_info(:otp_release) |> to_string(), :auto}
+      # 1. Try .tool-versions
+      # 2. Fall back to current shell version
+      case detect_from_tool_versions() do
+        {:ok, version} ->
+          {version, :auto}
+
+        :error ->
+          {:erlang.system_info(:otp_release) |> to_string(), :auto}
+      end
+    end
+  end
+
+  defp detect_from_tool_versions do
+    tool_versions_path = Path.join(File.cwd!(), ".tool-versions")
+
+    if File.exists?(tool_versions_path) do
+      content = File.read!(tool_versions_path)
+
+      # Match erlang version (ignoring prefixes like otp-)
+      case Regex.run(~r/erlang\s+(?:otp-)?([\d.]+)/i, content) do
+        [_, version] -> {:ok, version}
+        _ -> :error
+      end
+    else
+      :error
     end
   end
 

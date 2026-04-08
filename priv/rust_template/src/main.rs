@@ -42,7 +42,8 @@ fn spawn_detached(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<
         // If we strictly dup2 to /dev/null, everything printed directly to shell is silenced.
 
         // Build full environment: inherit parent env + merge additional vars
-        let mut full_env: std::collections::HashMap<String, String> = std::env::vars().collect();
+        // We clean it to avoid version manager interference
+        let mut full_env = get_cleaned_env();
         for (k, v) in env {
             full_env.insert(k.to_string(), v.to_string());
         }
@@ -87,6 +88,47 @@ fn restore_terminal() {
                 .output();
         }
     }
+}
+
+/// Obtiene el entorno actual pero libre de variables de gestores de versiones (asdf, mise, etc.)
+fn get_cleaned_env() -> std::collections::HashMap<String, String> {
+    let mut env: std::collections::HashMap<String, String> = std::env::vars().collect();
+
+    // Variables a eliminar (gestores de versiones conocidos)
+    let to_remove = [
+        "ASDF_DIR",
+        "ASDF_DATA_DIR",
+        "ASDF_USER_CONFIG_DIR",
+        "ASDF_ELIXIR_VERSION",
+        "ASDF_ERLANG_VERSION",
+        "MISE_DIR",
+        "KERL_PATH",
+        "KERL_INSTALL_PATH",
+    ];
+
+    for var in &to_remove {
+        env.remove(*var);
+    }
+
+    // Limpiar el PATH para eliminar shims
+    if let Some(path) = env.get("PATH") {
+        let cleaned_path = path
+            .split(':')
+            .filter(|p| {
+                let p_lower = p.to_lowercase();
+                !p_lower.contains(".asdf")
+                    && !p_lower.contains(".mise")
+                    && !p_lower.contains(".kerl")
+                    && !p_lower.contains(".rvm")
+                    && !p_lower.contains(".nodenv")
+                    && !p_lower.contains(".pyenv")
+            })
+            .collect::<Vec<_>>()
+            .join(":");
+        env.insert("PATH".to_string(), cleaned_path);
+    }
+
+    env
 }
 
 // Include generated config from build.rs
@@ -257,14 +299,15 @@ fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8
     }
 
     // Buscar erlexec para configurar variables de entorno
-    // erlexec está en erts-X.Y/bin/ dentro del ERTS cache
+    // erlexec puede estar en varias ubicaciones:
+    // - erts/bin/ (wrapper scripts)
+    // - erts/lib/erts-X.Y/bin/ (binarios reales)
     let erlexec = find_file(&erts_dir, "erlexec")
         .or_else(|| find_file(&erts_dir.join("bin"), "erlexec"))
+        .or_else(|| find_file(&erts_dir.join("lib"), "erlexec"))
         .context("erlexec not found in erts")?;
 
-    // Note: erl_bin is kept for potential future use but not needed currently
-    let _erl_bin = find_file(&erts_dir.join("bin"), "erl").or_else(|| find_file(&erts_dir, "erl"));
-
+    // Determine BINDIR - where erlexec is located
     let erts_bin_dir = erlexec
         .parent()
         .map(|p| p.to_path_buf())
@@ -380,21 +423,36 @@ fn create_escript_wrapper(
     // El escript ya tiene el shebang, solo necesitamos configurar el PATH y vars
     let erts_lib_dir = erts_dir.join("lib");
 
+    // Get absolute path for the escript file
+    let escript_abs = escript_path.to_string_lossy().into_owned();
+
     // Determinar si es modo daemon basado en si setsid nos pasó el flag
     let daemon_flag = if exec_mode == "daemon" { "-daemon" } else { "" };
 
-    let wrapper_content = format!(
-        r#"#!/bin/sh
+    let wrapper_content = r#"#!/bin/sh
 # Batamanta escript wrapper
 # Generated automatically
 
-BINDIR="{bindir}"
-ERL_ROOTDIR="{erts_dir}"
-ERL_LIBS="{erts_lib_dir}"
-PROGNAME="{app_name}"
+# ERTS configuration (absolute paths for current extraction)
+ERTS_DIR="__ERTS_DIR__"
+BINDIR="__BINDIR__"
+ERL_ROOTDIR="__ERTS_DIR__"
+ERL_LIBS="__ERTS_LIB_DIR__"
+PROGNAME="__PROGNAME__"
 
-# Configurar PATH para que erl/beam sean encontrables
-export PATH="$BINDIR:$PATH"
+# CRITICAL: Start with clean PATH - only ERTS bin and system paths
+# This prevents version manager (asdf/mise/kerl) from interfering
+# We put BINDIR first to ensure our bundled tools are used!
+export PATH="$BINDIR:/usr/local/bin:/usr/bin:/bin"
+
+# Unset version manager variables that might leak
+unset ASDF_DIR
+unset ASDF_DATA_DIR
+unset ASDF_USER_CONFIG_DIR
+unset ASDF_ELIXIR_VERSION
+unset ASDF_ERLANG_VERSION
+unset MISE_DIR
+unset KERL_PATH
 
 # Variables de entorno para el escript
 export ROOTDIR="$ERL_ROOTDIR"
@@ -406,28 +464,20 @@ export RELEASE_ROOT="$ERL_ROOTDIR"
 
 # Filtrar el flag -daemon de los argumentos si está presente
 # (lo añade setsid, no el usuario)
-args=""
-for arg in "$@"; do
-    if [ "$arg" != "-daemon" ]; then
-        args="$args $arg"
-    fi
-done
-
-# Ejecutar el escript con -noshell si es modo daemon
-if [ -n "{daemon_flag}" ]; then
-    # Ejecutar con -noshell para que erl no intente abrir una terminal
-    exec "{escript}" -noshell $args
+if [ "$1" = "-daemon" ]; then
+    shift
+    # Para modo daemon, usamos -noshell para evitar problemas de terminal
+    exec "$BINDIR/escript" -noshell "__ESCRIPT_ABS__" "$@"
 else
-    exec "{escript}" $args
+    exec "$BINDIR/escript" "__ESCRIPT_ABS__" "$@"
 fi
-"#,
-        bindir = erts_bin_dir.display(),
-        erts_dir = erts_dir.display(),
-        erts_lib_dir = erts_lib_dir.display(),
-        app_name = app_name,
-        escript = escript_path.display(),
-        daemon_flag = daemon_flag
-    );
+"#
+    .replace("__PROGNAME__", app_name)
+    .replace("__DAEMON_FLAG__", daemon_flag)
+    .replace("__ESCRIPT_ABS__", &escript_abs)
+    .replace("__BINDIR__", &erts_bin_dir.to_string_lossy())
+    .replace("__ERTS_DIR__", &erts_dir.to_string_lossy())
+    .replace("__ERTS_LIB_DIR__", &erts_lib_dir.to_string_lossy());
 
     let mut file = fs::File::create(&wrapper_path)?;
     file.write_all(wrapper_content.as_bytes())?;
@@ -541,6 +591,10 @@ fn run_with_erlexec(
     } else {
         // Modo normal: ejecutar directamente
         let mut cmd = Command::new(&erlexec);
+        let cleaned_env = get_cleaned_env();
+        cmd.env_clear();
+        cmd.envs(cleaned_env);
+
         cmd.env("ROOTDIR", release_dir)
             .env("BINDIR", bin_path)
             .env("ERL_LIBS", release_lib)
