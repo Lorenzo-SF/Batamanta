@@ -77,23 +77,33 @@ defmodule Batamanta.EnvCleaner do
   def erts_env(erts_path, include_mix \\ true) do
     erts_bin = Path.join(erts_path, "bin")
 
-    # Find mix if available (might be in a separate location)
-    mix_bin =
+    # Find mix and elixir if available
+    {mix_bin, elixir_bin} =
       if include_mix do
-        find_mix_in_erts_or_system(erts_path)
+        find_mix_and_elixir_in_erts_or_system(erts_path)
       else
-        nil
+        {nil, nil}
       end
 
     # Build path with ERTS bin at the front (highest priority)
     current_path = System.get_env("PATH") || ""
     cleaned_path = clean_path(current_path)
 
-    # Prepend ERTS bin (and mix if found)
+    # Prepend ERTS bin, elixir bin, and mix bin (in that order for proper resolution)
+    # mix is a script that starts with #!/usr/bin/env elixir, so elixir must come before mix
     new_path =
-      case mix_bin do
-        nil -> "#{erts_bin}:#{cleaned_path}"
-        mix when is_binary(mix) -> "#{mix}:#{erts_bin}:#{cleaned_path}"
+      case {elixir_bin, mix_bin} do
+        {nil, nil} ->
+          "#{erts_bin}:#{cleaned_path}"
+
+        {elixir, nil} when is_binary(elixir) ->
+          "#{Path.dirname(elixir)}:#{erts_bin}:#{cleaned_path}"
+
+        {nil, mix} when is_binary(mix) ->
+          "#{Path.dirname(mix)}:#{erts_bin}:#{cleaned_path}"
+
+        {elixir, mix} when is_binary(elixir) and is_binary(mix) ->
+          "#{Path.dirname(elixir)}:#{Path.dirname(mix)}:#{erts_bin}:#{cleaned_path}"
       end
 
     base_environment()
@@ -101,6 +111,47 @@ defmodule Batamanta.EnvCleaner do
     |> Map.put("ERL_AFLAGS", "-kernel shell_history enabled")
     |> Map.to_list()
     |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+  end
+
+  # Find both mix and elixir binaries
+  defp find_mix_and_elixir_in_erts_or_system(erts_path) do
+    mix = find_mix_in_erts_or_system(erts_path)
+    elixir = find_elixir_in_erts_or_system(erts_path)
+    {mix, elixir}
+  end
+
+  # Find elixir in ERTS or system
+  defp find_elixir_in_erts_or_system(erts_path) do
+    elixir_in_erts = Path.join(erts_path, "bin/elixir")
+
+    if File.regular?(elixir_in_erts) do
+      elixir_in_erts
+    else
+      find_system_elixir()
+    end
+  end
+
+  # Find elixir in system paths
+  defp find_system_elixir do
+    # Check common installation paths
+    common_elixir_paths =
+      [
+        erlang_root_asdf_elixir(),
+        "/opt/homebrew/Cellar/elixir",
+        "/usr/local/Cellar/elixir",
+        Path.join(System.get_env("HOME") || "", ".asdf/installs/elixir")
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.flat_map(&expand_elixir_versions/1)
+      |> Enum.map(&Path.join(&1, "elixir"))
+      |> Enum.find(&File.regular?/1)
+
+    system_elixir =
+      system_paths()
+      |> Enum.map(&Path.join(&1, "elixir"))
+      |> Enum.find(&File.regular?/1)
+
+    common_elixir_paths || system_elixir
   end
 
   @doc """
@@ -305,10 +356,123 @@ defmodule Batamanta.EnvCleaner do
     end
   end
 
-  # Try to find mix in the downloaded ERTS, fall back to system
-  defp find_mix_in_erts_or_system(erts_path) do
-    # First try in ERTS bin
+  # Try to find mix - first in ERTS, then fall back to system (without version managers)
+  def find_mix_in_erts_or_system(erts_path) do
+    # First try in ERTS bin (Elixir might be bundled)
     mix_in_erts = Path.join(erts_path, "bin/mix")
-    if File.regular?(mix_in_erts), do: mix_in_erts, else: nil
+    if File.regular?(mix_in_erts), do: mix_in_erts, else: find_system_mix()
+  end
+
+  # Find mix in system paths, ignoring version managers in PATH but
+  # explicitly searching in common Elixir installation directories
+  defp find_system_mix do
+    # First check common installation paths that might not be in PATH
+    # (these are not filtered by version_manager_path? because they're
+    # searched explicitly, not via system PATH)
+    common_elixir_paths =
+      [
+        # Elixir installed via asdf (detected from erlang root)
+        erlang_root_asdf_elixir(),
+        # Homebrew Elixir
+        "/opt/homebrew/Cellar/elixir",
+        "/usr/local/Cellar/elixir",
+        # asdf elixir installations
+        Path.join(System.get_env("HOME") || "", ".asdf/installs/elixir")
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.flat_map(&expand_elixir_versions/1)
+      |> Enum.map(&Path.join(&1, "mix"))
+      |> Enum.find(&File.regular?/1)
+
+    # Also try system_paths which searches standard bins
+    system_mix =
+      system_paths()
+      |> Enum.map(&Path.join(&1, "mix"))
+      |> Enum.find(&File.regular?/1)
+
+    common_elixir_paths || system_mix
+  end
+
+  # Expand elixir paths to their bin directories
+  # Handles both version directories (e.g., .../1.19.5-otp-28) and bin directories (e.g., .../1.19.5-otp-28/bin)
+  defp expand_elixir_versions(path) do
+    cond do
+      # Already a bin directory - return as-is
+      String.ends_with?(path, "/bin") ->
+        [path]
+
+      # Contains wildcards - use wildcard expansion
+      String.match?(path, ~r/\*/) ->
+        Path.wildcard(path)
+
+      # Is a directory with version subdirectories
+      File.dir?(path) ->
+        expand_elixir_versions_from_dir(path)
+
+      # Single file/path that exists - return as-is
+      true ->
+        [path]
+    end
+  end
+
+  # Expands elixir versions from a directory listing
+  defp expand_elixir_versions_from_dir(path) do
+    case File.ls(path) do
+      {:ok, versions} when is_list(versions) ->
+        Enum.flat_map(versions, &version_to_bin_path(path, &1))
+
+      _ ->
+        [path]
+    end
+  end
+
+  # Convert a version directory to its bin path
+  defp version_to_bin_path(base_path, version) do
+    version_path = Path.join(base_path, version)
+    bin_path = Path.join(version_path, "bin")
+
+    if File.dir?(bin_path) do
+      [bin_path]
+    else
+      [version_path]
+    end
+  end
+
+  # Try to find Elixir installation corresponding to current Erlang from asdf
+  defp erlang_root_asdf_elixir do
+    erlang_root = :code.root_dir() |> to_string()
+
+    # Extract OTP version from Erlang root
+    # e.g., "/Users/.../.asdf/installs/erlang/28.1" -> "28"
+    otp_version = extract_otp_version(erlang_root)
+
+    elixir_versions_dir = Path.join(System.get_env("HOME") || "", ".asdf/installs/elixir")
+
+    unless File.dir?(elixir_versions_dir), do: nil
+
+    # Try to find matching Elixir version (e.g., 1.19.5-otp-28)
+    with {:ok, versions} <- File.ls(elixir_versions_dir),
+         matching when is_binary(matching) <-
+           Enum.find(versions, &String.contains?(&1, "-otp-#{otp_version}")) do
+      Path.join([elixir_versions_dir, matching, "bin"])
+    else
+      _ ->
+        # Fallback: use latest version
+        with {:ok, versions} <- File.ls(elixir_versions_dir),
+             latest when is_binary(latest) <- List.first(versions) do
+          Path.join([elixir_versions_dir, latest, "bin"])
+        else
+          _ -> nil
+        end
+    end
+  end
+
+  # Extract only the major OTP version from path
+  # e.g., "/Users/.../.asdf/installs/erlang/28.1" -> "28"
+  defp extract_otp_version(erlang_root) do
+    case Regex.run(~r/erlang\/(\d+)/, erlang_root) do
+      [_, version] -> version
+      _ -> nil
+    end
   end
 end

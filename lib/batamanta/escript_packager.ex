@@ -107,27 +107,41 @@ defmodule Batamanta.EscriptPackager do
     |> Integer.to_string(16)
   end
 
-  # Finds the erts-X.Y/bin directory within the ERTS cache
-  # The cached ERTS has structure: erts-X.Y/bin/ for actual binaries
-  defp find_erts_bin_dir(erts_root) do
-    case File.ls(erts_root) do
-      {:ok, entries} ->
-        # Look for directory starting with "erts-"
-        erts_dir =
-          Enum.find(entries, fn entry ->
-            String.starts_with?(entry, "erts-") && File.dir?(Path.join(erts_root, entry))
-          end)
+  # Find the actual ERTS version directory (e.g., erts-16.0) in the ERTS cache
+  # Checks both:
+  # - lib/erts-X.Y (real OTP structure)
+  # - erts-X.Y (alternate structure seen in some ERTS downloads)
+  defp find_erts_version_dir(erts_source) do
+    # Try lib/erts-X.Y first (standard OTP structure)
+    lib_path = Path.join(erts_source, "lib")
+    result = find_erts_in_dir(lib_path)
 
-        if erts_dir do
-          Path.join([erts_root, erts_dir, "bin"])
-        else
-          # Fallback to bin/
-          Path.join(erts_root, "bin")
-        end
+    if result, do: result, else: find_erts_version_dir_root(erts_source)
+  end
 
-      _ ->
-        Path.join(erts_root, "bin")
+  # Find erts entry in a directory
+  defp find_erts_in_dir(dir_path) do
+    if File.dir?(dir_path) do
+      case File.ls(dir_path) do
+        {:ok, entries} -> find_erts_entry(entries, dir_path)
+        _ -> nil
+      end
     end
+  end
+
+  # Try finding erts-X.Y at root level
+  defp find_erts_version_dir_root(erts_source) do
+    case File.ls(erts_source) do
+      {:ok, entries} -> find_erts_entry(entries, erts_source)
+      _ -> nil
+    end
+  end
+
+  # Find entry that starts with "erts-"
+  defp find_erts_entry(entries, base_path) do
+    Enum.find(entries, fn entry ->
+      String.starts_with?(entry, "erts-") and File.dir?(Path.join(base_path, entry))
+    end)
   end
 
   @doc """
@@ -148,97 +162,283 @@ defmodule Batamanta.EscriptPackager do
   def prepare_minimal_erts(erts_source, erts_dest) do
     File.mkdir_p!(erts_dest)
 
-    # ERTS structure: erts_source/bin has wrapper scripts, but actual binaries
-    # (erlexec, beam.smp) are in erts_source/erts-X.Y/bin/
-    # We need to search both locations
+    # Determine source paths
     bin_source = Path.join(erts_source, "bin")
-    erts_bin_source = find_erts_bin_dir(erts_source)
+    erts_version_dir = find_erts_version_dir(erts_source)
+    erts_bin_source = resolve_erts_bin_source(erts_source, erts_version_dir)
+
+    # Copy binaries from both locations
     bin_dest = Path.join(erts_dest, "bin")
     File.mkdir_p!(bin_dest)
+    copy_essential_bins(bin_source, erts_bin_source, bin_dest)
 
-    # Essential binaries to copy
+    # Copy ERTS lib directory if nested structure exists
+    copy_erts_lib_dir(erts_source, erts_dest, erts_version_dir)
+
+    # Copy essential libraries
+    copy_essential_libs(erts_source, erts_dest)
+
+    # Copy releases directory
+    copy_releases_dir(erts_source, erts_dest)
+
+    :ok
+  end
+
+  # Resolve the actual ERTS bin source path
+  # Handles both lib/erts-X.Y/bin and erts-X.Y/bin structures
+  defp resolve_erts_bin_source(erts_source, erts_version_dir) do
+    if erts_version_dir do
+      resolve_erts_bin_with_version(erts_source, erts_version_dir)
+    else
+      Path.join(erts_source, "bin")
+    end
+  end
+
+  # Resolve bin path when version dir exists
+  defp resolve_erts_bin_with_version(erts_source, erts_version_dir) do
+    lib_erts_bin = Path.join([erts_source, "lib", erts_version_dir, "bin"])
+
+    if File.dir?(lib_erts_bin) do
+      lib_erts_bin
+    else
+      resolve_erts_bin_fallback(erts_source, erts_version_dir)
+    end
+  end
+
+  # Fallback to root erts-X.Y/bin or root bin
+  defp resolve_erts_bin_fallback(erts_source, erts_version_dir) do
+    root_erts_bin = Path.join([erts_source, erts_version_dir, "bin"])
+
+    if File.dir?(root_erts_bin) do
+      root_erts_bin
+    else
+      Path.join(erts_source, "bin")
+    end
+  end
+
+  # Copy essential binaries from both bin locations
+  defp copy_essential_bins(bin_source, erts_bin_source, bin_dest) do
     essential_bins = [
       "erlexec",
+      "escript",
       "erl",
       "start",
       "heart",
-      "beam.smp"
+      "beam.smp",
+      "dyn_erl"
     ]
 
     for bin <- essential_bins do
-      # Try both locations: bin/ and erts-X.Y/bin/
-      src = Path.join(bin_source, bin)
+      src_bin = Path.join(bin_source, bin)
       src_erts_bin = Path.join(erts_bin_source, bin)
+      src_path = find_first_existing([src_bin, src_erts_bin])
 
-      src_path = if File.exists?(src), do: src, else: src_erts_bin
-
-      if File.exists?(src_path) do
+      if src_path do
         dest = Path.join(bin_dest, bin)
         File.cp!(src_path, dest)
         make_executable(dest)
+
+        # Patch erl script to use relative paths instead of hardcoded paths
+        if bin == "erl" do
+          patch_erl_script(dest)
+        end
       end
     end
 
-    # Copy essential libraries
-    lib_source = Path.join(erts_source, "lib")
+    # Copy all boot and support files (critical for VM startup)
+    for src <- [bin_source, erts_bin_source],
+        file <- Path.wildcard(Path.join(src, "*.{boot,script,config}")),
+        not File.dir?(file) do
+      dest = Path.join(bin_dest, Path.basename(file))
+      unless File.exists?(dest), do: File.cp!(file, dest)
+    end
+
+    # Also copy any other binaries from erts_bin_source
+    copy_additional_bins(erts_bin_source, bin_dest)
+  end
+
+  # Patch erl script to use relative paths
+  # The original script has hardcoded paths like: BINDIR="$ROOTDIR/erts-16.0/bin"
+  # We change it to use relative paths from the script's location
+  defp patch_erl_script(path) do
+    # Overwrite erl script with a clean, relocatable version
+    # Our structure: release/erts/bin/erl and release/erts/bin/erlexec
+    # So BINDIR is the script directory, and ROOTDIR is its parent.
+    content = """
+    #!/bin/sh
+    # Batamanta relocatable erl wrapper
+    SELF_PATH=$(cd "$(dirname "$0")" && pwd)
+    export BINDIR="$SELF_PATH"
+    export ROOTDIR=$(cd "$SELF_PATH/.." && pwd)
+    export EMU=beam
+    export PROGNAME=$(basename "$0")
+    exec "$BINDIR/erlexec" "$@"
+    """
+
+    File.write!(path, content)
+  end
+
+  # Find first existing path from list
+  defp find_first_existing(paths) do
+    Enum.find(paths, &File.exists?/1)
+  end
+
+  # Copy additional binaries from ERTS bin directory
+  defp copy_additional_bins(erts_bin_source, bin_dest) do
+    if File.dir?(erts_bin_source) do
+      entries = File.ls!(erts_bin_source)
+      copy_additional_bins_entries(entries, erts_bin_source, bin_dest)
+    end
+  end
+
+  # Copy each additional binary
+  defp copy_additional_bins_entries(entries, erts_bin_source, bin_dest) do
+    for entry <- entries do
+      src = Path.join(erts_bin_source, entry)
+      dest = Path.join(bin_dest, entry)
+
+      if File.regular?(src) and not File.exists?(dest) do
+        File.cp!(src, dest)
+        make_executable(dest)
+      end
+    end
+  end
+
+  # Copy the ERTS lib directory (e.g., lib/erts-16.0 or erts-16.0)
+  defp copy_erts_lib_dir(_erts_source, _erts_dest, nil), do: :ok
+
+  defp copy_erts_lib_dir(erts_source, erts_dest, erts_version_dir) do
+    # Try lib/erts-X.Y first
+    src_erts_lib = Path.join([erts_source, "lib", erts_version_dir])
+    dest_erts_lib = Path.join([erts_dest, "lib", erts_version_dir])
+
+    if File.dir?(src_erts_lib) do
+      File.mkdir_p!(Path.dirname(dest_erts_lib))
+      File.cp_r!(src_erts_lib, dest_erts_lib)
+    else
+      # Try root-level: erts-X.Y
+      src_root_erts = Path.join([erts_source, erts_version_dir])
+      dest_root_erts = Path.join([erts_dest, "lib", erts_version_dir])
+
+      if File.dir?(src_root_erts) do
+        File.mkdir_p!(Path.dirname(dest_root_erts))
+        File.cp_r!(src_root_erts, dest_root_erts)
+      end
+    end
+  end
+
+  # Copy essential libraries
+  defp copy_essential_libs(erts_source, erts_dest) do
     lib_dest = Path.join(erts_dest, "lib")
     File.mkdir_p!(lib_dest)
 
-    essential_libs = [
-      "kernel",
-      "stdlib",
-      "compiler",
-      "elixir"
-    ]
+    # 1. Copiar librerías de Erlang desde el ERTS descargado
+    erlang_lib_source = Path.join(erts_source, "lib")
 
-    for lib <- essential_libs do
-      src_lib = Path.join(lib_source, lib)
+    if File.dir?(erlang_lib_source) do
+      case File.ls(erlang_lib_source) do
+        {:ok, entries} ->
+          erlang_prefixes = [
+            "kernel",
+            "stdlib",
+            "compiler",
+            "runtime_tools",
+            "crypto",
+            "asn1",
+            "public_key",
+            "ssl",
+            "syntax_tools",
+            "xmerl",
+            "tools",
+            "parsetools"
+          ]
 
-      if File.exists?(src_lib) do
-        dest_lib = Path.join(lib_dest, lib)
-        copy_minimal_lib(src_lib, dest_lib)
+          for entry <- entries do
+            if Enum.any?(erlang_prefixes, &prefix_matches?(&1, entry)) do
+              src_lib = Path.join(erlang_lib_source, entry)
+              dest_lib = Path.join(lib_dest, entry)
+              copy_minimal_lib(src_lib, dest_lib)
+            end
+          end
+
+        _ ->
+          :ok
       end
     end
 
-    # Copy releases directory for ERTS versioning
+    # 2. Bundle Elixir Core Libs desde el sistema (son BEAMs portátiles)
+    # Esto es CRÍTICO para que el binario sea 100% autocontenido y no dependa
+    # de si el host tiene Elixir instalado o no.
+    elixir_apps = [:elixir, :logger, :mix, :eex, :iex]
+
+    for app <- elixir_apps do
+      case :code.lib_dir(app) do
+        path when is_list(path) ->
+          src_path = List.to_string(path)
+          dest_path = Path.join(lib_dest, Path.basename(src_path))
+
+          unless File.exists?(dest_path) do
+            copy_minimal_lib(src_path, dest_path)
+          end
+
+        path when is_binary(path) ->
+          dest_path = Path.join(lib_dest, Path.basename(path))
+
+          unless File.exists?(dest_path) do
+            copy_minimal_lib(path, dest_path)
+          end
+
+        _ ->
+          :ok
+      end
+    end
+  end
+
+  defp prefix_matches?(prefix, entry) do
+    entry == prefix or String.starts_with?(entry, "#{prefix}-")
+  end
+
+  # Copy releases directory for ERTS versioning
+  defp copy_releases_dir(erts_source, erts_dest) do
     releases_source = Path.join(erts_source, "releases")
     releases_dest = Path.join(erts_dest, "releases")
 
     if File.exists?(releases_source) do
       File.mkdir_p!(releases_dest)
+      copy_release_files(releases_source, releases_dest)
+    end
+  end
 
-      # Copy only start_erl.data
-      start_erl = Path.join(releases_source, "start_erl.data")
+  # Copy all release files
+  defp copy_release_files(releases_source, releases_dest) do
+    for file <- Path.wildcard(Path.join(releases_source, "*")) do
+      dest = Path.join(releases_dest, Path.basename(file))
 
-      if File.exists?(start_erl) do
-        File.cp!(start_erl, Path.join(releases_dest, "start_erl.data"))
+      if File.dir?(file) do
+        File.cp_r!(file, dest)
+      else
+        File.cp!(file, dest)
       end
     end
-
-    :ok
   end
 
   # Copies a library with minimal content (no docs, no src)
   defp copy_minimal_lib(src, dest) do
     File.mkdir_p!(dest)
 
-    # Copy ebin (compiled beam files)
     src_ebin = Path.join(src, "ebin")
     dest_ebin = Path.join(dest, "ebin")
 
     if File.exists?(src_ebin) do
       File.mkdir_p!(dest_ebin)
-
-      for beam <- Path.wildcard(Path.join(src_ebin, "*.beam")) do
-        File.cp!(beam, Path.join(dest_ebin, Path.basename(beam)))
-      end
+      File.cp_r!(src_ebin, dest_ebin)
     end
 
-    # Copy priv if exists
     src_priv = Path.join(src, "priv")
     dest_priv = Path.join(dest, "priv")
 
     if File.exists?(src_priv) do
+      File.mkdir_p!(dest_priv)
       File.cp_r!(src_priv, dest_priv)
     end
   end

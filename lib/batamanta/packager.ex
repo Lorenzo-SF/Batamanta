@@ -35,20 +35,26 @@ defmodule Batamanta.Packager do
       File.mkdir_p!(temp)
       tar_path = Path.join(temp, "payload.tar")
 
-      # CRÍTICO: Preparar ERTS y release para portabilidad
-      prepare_erts(erts_path)
+      # CRÍTICO: No modificar el caché original. Copiar a un directorio temporal.
+      temp_erts = Path.join(temp, "erts_prepared")
+      File.mkdir_p!(temp_erts)
+      File.cp_r!(erts_path, temp_erts)
+
+      # Preparar ERTS y release para portabilidad en el directorio temporal
+      prepare_erts(temp_erts)
       prepare_start_boot(rel_path, app_name)
       relativize_release_scripts(rel_path)
 
       # Remove Mix's bundled ERTS (we'll use our own from fetched cache)
-      remove_mix_bundled_erts(rel_path, erts_path)
+      remove_mix_bundled_erts(rel_path, temp_erts)
 
       # Update start_erl.data to use correct ERTS version
-      update_start_erl_data(rel_path, erts_path)
+      update_start_erl_data(rel_path, temp_erts)
 
       # Crear tarball con release + ERTS
-      # ERTS goes inside release/ so it's at <extracted>/release/erts/
-      files = collect_files(rel_path, erts_path, "release", "release/erts")
+      # Para :release, el ERTS debe estar en el mismo nivel que el release
+      # para que ROOTDIR/lib contenga tanto las apps de Erlang como las de la app.
+      files = collect_files(rel_path, temp_erts, "release", "release")
 
       case :erl_tar.create(String.to_charlist(tar_path), files) do
         :ok ->
@@ -71,6 +77,10 @@ defmodule Batamanta.Packager do
     flatten_nested_erts(erts_path)
     cleanup_erts(erts_path)
     ensure_executable_permissions(erts_path)
+
+    # Patch erl script for relocatability
+    erl_path = Path.join(erts_path, "bin/erl")
+    if File.exists?(erl_path), do: patch_erl_script(erl_path)
   end
 
   defp flatten_nested_erts(erts_path) do
@@ -144,6 +154,24 @@ defmodule Batamanta.Packager do
     end)
 
     :ok
+  end
+
+  defp patch_erl_script(path) do
+    # Overwrite erl script with a clean, relocatable version
+    # Our structure: release/erts/bin/erl and release/erts/bin/erlexec
+    # So BINDIR is the script directory, and ROOTDIR is its parent.
+    content = """
+    #!/bin/sh
+    # Batamanta relocatable erl wrapper
+    SELF_PATH=$(cd "$(dirname "$0")" && pwd)
+    export BINDIR="$SELF_PATH"
+    export ROOTDIR=$(cd "$SELF_PATH/.." && pwd)
+    export EMU=beam
+    export PROGNAME=$(basename "$0")
+    exec "$BINDIR/erlexec" "$@"
+    """
+
+    File.write!(path, content)
   end
 
   defp files_in_dir(dir) do

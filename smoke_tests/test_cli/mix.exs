@@ -11,7 +11,8 @@ defmodule TestCli.MixProject do
       # Si no se especifica erts_target, se usa :auto por defecto
       batamanta: [
         execution_mode: :cli,
-        compression: 1
+        compression: 1,
+        binary_name: "test_cli"
         # erts_target: :auto  # Por defecto si no se especifica
       ],
       releases: [

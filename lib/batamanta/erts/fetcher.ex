@@ -520,7 +520,7 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   # "28.1.1" -> try exact, then 28.1.0, then 28.0.0
-  defp generate_full_variants([major, minor, patch]) do
+  defp generate_full_variants([major, minor, patch | _rest]) do
     minor_int = try_parse_integer(minor)
     patch_int = try_parse_integer(patch)
 
