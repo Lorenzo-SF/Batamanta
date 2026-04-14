@@ -525,17 +525,19 @@ fn run_with_erlexec(
             .join("vm.args")
             .to_string_lossy()
             .into_owned();
-        let env: Vec<(&str, &str)> = vec![
-            ("ROOTDIR", &rootdir_str),
-            ("BINDIR", &bindir_str),
-            ("ERL_LIBS", &erl_libs_str),
-            ("RELEASE_ROOT", &rootdir_str),
+        let mut env = vec![
+            ("ROOTDIR", rootdir_str.as_str()),
+            ("BINDIR", bindir_str.as_str()),
+            ("ERL_LIBS", erl_libs_str.as_str()),
+            ("RELEASE_ROOT", rootdir_str.as_str()),
             ("RELEASE_PROG", app_name),
-            ("RELEASE_SYS_CONFIG", &sys_config_str),
-            ("RELEASE_VM_ARGS", &vm_args_str),
+            ("RELEASE_SYS_CONFIG", sys_config_str.as_str()),
+            ("RELEASE_VM_ARGS", vm_args_str.as_str()),
             ("EMU", "beam"),
             ("PROGNAME", "erl"),
         ];
+        let path_val = format!("{}:{}", bindir_str, env::var("PATH").unwrap_or_default());
+        env.push(("PATH", path_val.as_str()));
         spawn_detached(&erlexec_str, &args_refs, &env)?;
         return Ok(0);
     } else {
@@ -572,7 +574,15 @@ fn run_with_erlexec(
             .args(env::args().skip(1))
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::inherit())
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    bin_path.display(),
+                    env::var("PATH").unwrap_or_default()
+                ),
+            );
 
         cmd.spawn().context("Failed to spawn Erlang VM process")?
     };
