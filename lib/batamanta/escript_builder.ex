@@ -57,44 +57,6 @@ defmodule Batamanta.EscriptBuilder do
   def build(config, banner_ctx) do
     Logger.info(banner_ctx, ">> 📦 Running mix escript.build...")
 
-    # Ensure dependencies are compiled first
-    Logger.info(banner_ctx, ">> 📦 Compiling dependencies...")
-
-    {_out, _status} =
-      System.cmd("mix", ["do", "deps.get", "--force"],
-        env: [{"MIX_ENV", "prod"}],
-        stderr_to_stdout: true
-      )
-
-    # Compile the project (without --warnings-as-errors to avoid false positives)
-    Logger.info(banner_ctx, ">> 📦 Compiling project...")
-
-    {compile_output, compile_status} =
-      System.cmd("mix", ["compile"],
-        env: [{"MIX_ENV", "prod"}],
-        stderr_to_stdout: true
-      )
-
-    # Log warnings but don't fail the build unless there are actual errors
-    if String.contains?(compile_output, "warning:") do
-      Logger.info(banner_ctx, ">> ⚠️  Compiler warnings detected:")
-
-      compile_output
-      |> String.split("\n")
-      |> Enum.filter(&String.contains?(&1, "warning:"))
-      |> Enum.take(5)
-      |> Enum.each(fn line -> Logger.info(banner_ctx, ">>    #{line}") end)
-    end
-
-    if compile_status != 0 do
-      Logger.error(banner_ctx, "Escript build failed during compilation:")
-      Logger.error(banner_ctx, compile_output)
-      Mix.raise("Mix compile failed. Check output above for details.")
-    end
-
-    # Build the escript
-    Logger.info(banner_ctx, ">> 📦 Building escript...")
-
     {output, status} =
       System.cmd("mix", ["escript.build"],
         env: [{"MIX_ENV", "prod"}],
