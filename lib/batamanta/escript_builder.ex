@@ -5,12 +5,9 @@ defmodule Batamanta.EscriptBuilder do
   This module handles the generation of escripts using `mix escript.build`
   and provides utilities for locating and validating the generated output.
 
-  ## Usage
 
       escript_path = EscriptBuilder.build(config, banner_ctx)
-      # Returns: "/path/to/project/_build/prod/lib/app_name/ebin/app_name"
 
-  ## Escript vs Release
 
   Escripts are lightweight executables that embed the Elixir runtime
   directly, unlike releases which include the full OTP system.
@@ -39,16 +36,13 @@ defmodule Batamanta.EscriptBuilder do
   @doc """
   Builds an escript using `mix escript.build`.
 
-  ## Parameters
 
   - `config` - Mix project config (from `Mix.Project.config()`)
   - `banner_ctx` - Banner context for logging
 
-  ## Returns
 
   Path to the generated escript binary.
 
-  ## Raises
 
   - `Mix.Error` if escript build fails
   - `Mix.Error` if escript file is not found after build
@@ -69,14 +63,12 @@ defmodule Batamanta.EscriptBuilder do
       Mix.raise("Mix escript.build failed. Check output above for details.")
     end
 
-    # Find the generated escript
     escript_path = find_escript_path(config)
 
     unless File.exists?(escript_path) do
       Mix.raise("Escript not found at expected path: #{escript_path}")
     end
 
-    # Validate escript
     validate_escript!(escript_path)
 
     Logger.info(banner_ctx, ">> ✅ Escript built: #{escript_path}")
@@ -97,11 +89,9 @@ defmodule Batamanta.EscriptBuilder do
     app_name = config[:app]
     escript_config = config[:escript] || []
 
-    # Check for custom path in escript config
     if custom_path = Keyword.get(escript_config, :path) do
       Path.join(project_root, custom_path)
     else
-      # Standard path: in project root (mix escript.build default)
       Path.join(project_root, Atom.to_string(app_name))
     end
   end
@@ -109,7 +99,6 @@ defmodule Batamanta.EscriptBuilder do
   @doc """
   Validates that the escript is a valid executable.
 
-  ## Checks
 
   1. File exists
   2. File is executable
@@ -122,7 +111,6 @@ defmodule Batamanta.EscriptBuilder do
       Mix.raise("Escript not found: #{escript_path}")
     end
 
-    # Check file size
     case File.stat(escript_path) do
       {:ok, %{size: size}} when size > 0 ->
         :ok
@@ -134,7 +122,6 @@ defmodule Batamanta.EscriptBuilder do
         Mix.raise("Cannot stat escript: #{reason}")
     end
 
-    # Validate magic bytes (shebang or ELF)
     validate_magic_bytes!(escript_path)
 
     :ok
@@ -167,7 +154,6 @@ defmodule Batamanta.EscriptBuilder do
     Keyword.get(escript_config, :main_module)
   end
 
-  # Gets the project root directory
   defp project_root do
     Mix.Project.build_path()
     |> Path.dirname()

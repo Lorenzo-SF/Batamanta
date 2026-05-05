@@ -5,7 +5,6 @@ defmodule Batamanta.Packager do
   Packages the Elixir release and ERTS into a single Zstandard-compressed
   tarball that will be embedded in the final binary.
 
-  ## Portability Features
 
   - **Relativization**: Converts absolute paths in release scripts to relative
   - **Cleanup**: Removes non-essential files (src, docs, misc)
@@ -15,13 +14,11 @@ defmodule Batamanta.Packager do
   @doc """
   Packages the release and the ERTS into a single compressed tarball.
 
-  ## Parameters
     - `rel_path` - Path to the Mix release directory
     - `erts_path` - Path to the fetched ERTS directory
     - `out_path` - Path for the output compressed tarball
     - `compression_level` - Zstandard compression level (1-19)
 
-  ## Returns
     - `{:ok, path}` - Success with output path
     - `{:error, reason}` - Failure with error message
   """
@@ -35,19 +32,14 @@ defmodule Batamanta.Packager do
       File.mkdir_p!(temp)
       tar_path = Path.join(temp, "payload.tar")
 
-      # CRÍTICO: Preparar ERTS y release para portabilidad
       prepare_erts(erts_path)
       prepare_start_boot(rel_path, app_name)
       relativize_release_scripts(rel_path)
 
-      # Remove Mix's bundled ERTS (we'll use our own from fetched cache)
       remove_mix_bundled_erts(rel_path, erts_path)
 
-      # Update start_erl.data to use correct ERTS version
       update_start_erl_data(rel_path, erts_path)
 
-      # Crear tarball con release + ERTS
-      # ERTS goes inside release/ so it's at <extracted>/release/erts/
       files = collect_files(rel_path, erts_path, "release", "release/erts")
 
       case :erl_tar.create(String.to_charlist(tar_path), files) do
@@ -63,7 +55,6 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
-  # PREPARACIÓN DE ERTS
   # ============================================================================
 
   @spec prepare_erts(Path.t()) :: :ok
@@ -98,7 +89,6 @@ defmodule Batamanta.Packager do
 
   @spec cleanup_erts(Path.t()) :: :ok
   defp cleanup_erts(erts_path) do
-    # Eliminar archivos de fuente y documentación
     paths_to_remove = [
       Path.join(erts_path, "src"),
       Path.join(erts_path, "docs"),
@@ -108,7 +98,6 @@ defmodule Batamanta.Packager do
 
     Enum.each(paths_to_remove, &remove_if_exists/1)
 
-    # Limpiar src de librerías Erlang
     lib_path = Path.join(erts_path, "lib")
 
     if File.exists?(lib_path) do
@@ -130,7 +119,6 @@ defmodule Batamanta.Packager do
 
   @spec ensure_executable_permissions(Path.t()) :: :ok
   defp ensure_executable_permissions(erts_path) do
-    # Asegurar que los binarios tengan permisos de ejecución
     bin_dirs = [
       Path.join(erts_path, "bin"),
       Path.join(erts_path, Path.join("erts", Path.join("*", "bin")))
@@ -173,7 +161,6 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
-  # PREPARACIÓN DEL RELEASE
   # ============================================================================
 
   @spec prepare_start_boot(Path.t(), String.t()) :: :ok
@@ -238,12 +225,9 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
-  # MIX BUNDLED ERTS REMOVAL
   # ============================================================================
 
-  # Remove Mix's bundled ERTS and replace with our fetched ERTS
   defp remove_mix_bundled_erts(rel_path, erts_path) do
-    # Extract the ERTS version dynamically from the fetched ERTS
     erts_version = extract_erts_version(erts_path)
 
     if erts_version do
@@ -255,7 +239,6 @@ defmodule Batamanta.Packager do
     end
   end
 
-  # Update start_erl.data with the correct ERTS version
   defp update_start_erl_data(rel_path, erts_path) do
     start_erl_path = Path.join([rel_path, "releases", "start_erl.data"])
 
@@ -277,14 +260,12 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
-  # RELATIVIZACIÓN DE SCRIPTS
   # ============================================================================
 
   @spec relativize_release_scripts(Path.t()) :: :ok
   defp relativize_release_scripts(rel_path) do
     rel_path_abs = Path.absname(rel_path)
 
-    # Relativizar bin/<app> scripts
     bin_scripts =
       rel_path_abs
       |> Path.join("bin")
@@ -293,7 +274,6 @@ defmodule Batamanta.Packager do
 
     Enum.each(bin_scripts, &relativize_bin_script/1)
 
-    # Relativizar releases/<version>/*.script
     version_scripts =
       Path.wildcard(Path.join(rel_path_abs, "releases") <> "/*/*.script") ++
         Path.wildcard(Path.join(rel_path_abs, "releases") <> "/*/*.boot")
@@ -337,7 +317,6 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
-  # COLECCIÓN DE ARCHIVOS
   # ============================================================================
 
   @spec collect_files(Path.t(), Path.t(), String.t(), String.t()) :: [
@@ -347,7 +326,6 @@ defmodule Batamanta.Packager do
     rel_path_abs = Path.absname(rel_path)
     erts_path_abs = Path.absname(erts_path)
 
-    # Archivos del release
     rel_files =
       Path.wildcard(Path.join(rel_path_abs, "**/*"))
       |> Enum.reject(&File.dir?/1)
@@ -357,7 +335,6 @@ defmodule Batamanta.Packager do
         {String.to_charlist(archive_name), String.to_charlist(path)}
       end)
 
-    # Archivos de ERTS
     erts_files =
       Path.wildcard(Path.join(erts_path_abs, "**/*"))
       |> Enum.reject(&File.dir?/1)
@@ -371,13 +348,11 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
-  # COMPRESIÓN ZSTD
   # ============================================================================
 
   @spec compress_with_zstd(Path.t(), Path.t(), integer()) ::
           {:ok, Path.t()} | {:error, String.t()}
   defp compress_with_zstd(tar, zst, level) do
-    # Ensure zstd is available before attempting compression
     ensure_zstd_available!()
 
     case System.cmd("zstd", ["-z", "-f", "--rm", "-#{level}", tar, "-o", zst],
@@ -391,24 +366,18 @@ defmodule Batamanta.Packager do
     end
   end
 
-  # Verify zstd is installed
   defp ensure_zstd_available! do
     unless System.find_executable("zstd") do
       raise """
       zstd is required but not installed.
 
       Install with:
-        # Debian/Ubuntu
         sudo apt install zstd
 
-        # macOS
         brew install zstd
 
-        # Alpine
         apk add zstd
 
-        # Or build from source:
-        # https://facebook.github.io/zstd/
       """
     end
   end

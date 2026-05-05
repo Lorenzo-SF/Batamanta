@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-05-05
+
+### Changed
+- **Development versions upgraded**: Erlang 28.1 + Elixir 1.19.5 (OTP 28)
+  - Internal development now uses latest stable OTP/Elixir
+  - Minimum packagable OTP remains at 25 (ERTS repository unchanged)
+  - Minimum OTP to run `mix batamanta` remains at 25
+- **CI matrix updated**: Elixir 1.15.8/OTP 26.2.5 + Elixir 1.19.5/OTP 28.1
+
+### Fixed
+- **LibcDetector**: `ldd --version` detection now works on CachyOS and other
+  rolling-release distributions (OTP 28 handles edge cases gracefully)
+- **RustTemplate**: Removed stale P1 FIX markers; `build.rs` now panics with a
+  clear error if the payload is missing instead of silently skipping
+- **mix.exs**: Removed stale P2 FIX comment about `rust.test` alias
+  (implementation was already correct)
+- **ex_doc**: Updated from `~> 0.34` to `~> 0.40`
+
+### Quality
+- Format: ✅ clean
+- Credo --strict: ✅ 0 issues (338 mods/funs)
+- Compile --warnings-as-errors: ✅ 0 warnings
+- Tests: 199 passing, 3 excluded (integration)
+
 ## [1.3.0] - 2026-03-25
 
 ### Added

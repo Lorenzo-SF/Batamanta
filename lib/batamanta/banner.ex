@@ -80,9 +80,6 @@ defmodule Batamanta.Banner do
 
     move_up(ctx, current_dist)
     write_message(ctx, line_index, message)
-    # write_message moved cursor down by line_index rows from the banner top,
-    # so we only need to descend (current_dist - line_index) to return to the
-    # original cursor position below the banner.
     move_down(ctx, current_dist - line_index)
 
     new_ctx = %{ctx | messages: ctx.messages ++ [message]}
@@ -201,7 +198,6 @@ defmodule Batamanta.Banner do
         on_success_image: on_success_image,
         on_error_image: on_error_image,
         messages: [],
-        # ID 1 is default, 2 is success, 3 is error
         image_id: 1,
         show_banner: true
       }
@@ -272,16 +268,13 @@ defmodule Batamanta.Banner do
   end
 
   defp preload_kitty_images(base_path, success_name, error_name, cols, rows) do
-    # 1. Transfer and display base image (ID = 1)
     render_kitty(base_path, cols, rows, 1)
 
-    # 2. Transfer success image in background (ID = 2)
     case find_image_path(success_name) do
       nil -> nil
       path -> transfer_kitty(path, 2)
     end
 
-    # 3. Transfer error image in background (ID = 3)
     case find_image_path(error_name) do
       nil -> nil
       path -> transfer_kitty(path, 3)

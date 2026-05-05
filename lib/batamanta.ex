@@ -7,7 +7,6 @@ defmodule Batamanta do
   System (ERTS) into a single static binary, eliminating any dependency on
   Erlang or Elixir being installed on the target machine.
 
-  ## Features
 
   - **Self-contained binaries**: No Erlang/Elixir installation required on target
   - **Cross-compilation**: Build for Linux (glibc/musl), macOS, and Windows from any platform
@@ -16,7 +15,6 @@ defmodule Batamanta do
   - **Escript support**: Lightweight bundling for projects using `mix escript.build`
   - **Automatic Cleanup**: Wipes temporary build artifacts while preserving the ERTS cache
 
-  ## Quick Start
 
   Add Batamanta to your dependencies and configure it in `mix.exs`:
 
@@ -38,7 +36,6 @@ defmodule Batamanta do
 
       $ mix batamanta
 
-  ## Configuration Options
 
   - `target_os` - Operating system: `"linux"`, `"macos"`, `"windows"`
   - `target_arch` - Architecture: `"x86_64"`, `"aarch64"`
@@ -49,7 +46,6 @@ defmodule Batamanta do
 
       $ mix batamanta --target-os linux --target-arch aarch64 --compression 5
 
-  ## Version
 
       iex> Batamanta.version()
       "1.3.0"

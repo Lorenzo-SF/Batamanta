@@ -174,7 +174,8 @@ fn main() -> Result<ExitCode> {
     let exec_mode = get_exec_mode();
     let format = get_format();
 
-    // 🔴 FIX: Si es daemon, JAMÁS borramos la carpeta porque Erlang vive en background
+    // Daemon mode: NEVER cleanup temp dir because Erlang lives in background
+    // The spawned Erlang process outlives the Rust dispenser
     if exec_mode == "daemon" {
         _guard.cleanup = false;
     }
@@ -205,7 +206,7 @@ fn main() -> Result<ExitCode> {
         // ✅ Modo escript: ejecutar el escript directamente
         run_escript(&release_dir, &app_name, &exec_mode)?
     } else {
-        // 🔴 Modo release: usar erlexec con boot scripts
+        // Release mode: use erlexec with boot scripts (full OTP release)
         run_with_erlexec(&release_dir, &bin_dir, &release_lib, &app_name, &exec_mode)?
     };
 

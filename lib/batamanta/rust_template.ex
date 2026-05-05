@@ -5,7 +5,6 @@ defmodule Batamanta.RustTemplate do
   Handles copying the template, injecting the compressed payload,
   and invoking Cargo to build the final binary.
 
-  ## Supported Targets
   - Linux: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
   - Linux musl: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
   - macOS: x86_64-apple-darwin, aarch64-apple-darwin
@@ -31,14 +30,12 @@ defmodule Batamanta.RustTemplate do
   @doc """
   Injects the payload into the Rust template and builds the binary.
 
-  ## Parameters
     - `payload_path` - Path to the compressed payload tarball
     - `binary_name` - Name for the final executable
     - `target_triple` - Rust target triple (e.g., "x86_64-unknown-linux-musl")
     - `config` - Mix project configuration
     - `format` - Output format (`:release` or `:escript`)
 
-  ## Returns
     - `:ok` - Success
     - `{:error, reason}` - Failure
   """
@@ -54,8 +51,6 @@ defmodule Batamanta.RustTemplate do
     File.cp_r!(template_dir, build_dir)
     File.rm_rf!(Path.join(build_dir, "target"))
 
-    # P1 FIX: Copy payload to the Rust template source directory
-    # Rust will include it at compile time using CARGO_MANIFEST_DIR
     dest_payload = Path.join([build_dir, "src", "payload.tar.zst"])
 
     result =
@@ -75,8 +70,6 @@ defmodule Batamanta.RustTemplate do
     result
   end
 
-  # P1 FIX: Copy payload to src/ directory before compilation
-  # Rust will include it using CARGO_MANIFEST_DIR at compile time
   defp copy_payload(payload_path, dest_payload) do
     case File.cp(payload_path, dest_payload) do
       :ok -> :ok
@@ -92,7 +85,6 @@ defmodule Batamanta.RustTemplate do
     app_name_str = to_string(Keyword.get(config, :app, "app"))
     format_str = Atom.to_string(format)
 
-    # Merge with current environment
     current_env = System.get_env() |> Enum.map(fn {k, v} -> {k, v} end)
 
     additional_env = [

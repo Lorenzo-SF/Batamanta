@@ -33,11 +33,9 @@ defmodule Mix.Tasks.Batamanta.Clean do
     Mix.shell().info([:green, "✅ Batamanta cache successfully removed."])
   end
 
-  defp handle_rm_rf({:error, reason, failed_file}) do
+  defp handle_rm_rf({:error, _reason, _failed_file}) do
     Mix.shell().error("""
     ❌ Could not completely remove the cache.
-    Failed on file: #{failed_file}
-    Reason: #{inspect(reason)}
     """)
   end
 end

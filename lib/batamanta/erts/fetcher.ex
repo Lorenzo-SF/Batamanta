@@ -9,12 +9,10 @@ defmodule Batamanta.ERTS.Fetcher do
   4. Look up ERTS URL in MANIFEST for the OTP version and platform
   5. Download and extract ERTS
 
-  ## Version Resolution Modes
 
   - `:explicit` (user-specified) - Uses exact version match only. Fails if not found.
   - `:auto` (auto-detected) - Uses conservative fallback (28.0 → 28.1 → ...)
 
-  ## Platform Detection
 
   Auto-detects: OS (linux/macos/windows), Architecture (x86_64/aarch64), Libc (gnu/musl)
   """
@@ -25,7 +23,6 @@ defmodule Batamanta.ERTS.Fetcher do
   @cache_dir_name "batamanta"
   @manifest_cache_key {:batamanta_erts_manifest, :loaded}
 
-  # Retry configuration
   @max_download_retries 3
   @retry_base_delay_ms 1000
 
@@ -35,7 +32,6 @@ defmodule Batamanta.ERTS.Fetcher do
   @doc """
   Fetches ERTS for the specified OTP version.
 
-  ## Parameters
     - `otp_version` - OTP version string (e.g., "28.0", "27.3.4")
     - `target` - Optional target. Can be:
       - `nil` - Auto-detect platform
@@ -44,7 +40,6 @@ defmodule Batamanta.ERTS.Fetcher do
     - `opts` - Optional keyword list:
       - `:version_mode` - `:explicit` (exact match only) or `:auto` (fallback)
 
-  ## Examples
 
       {:ok, erts_path} = Batamanta.ERTS.Fetcher.fetch("28.0")
       {:ok, erts_path} = Batamanta.ERTS.Fetcher.fetch("28.0", os: "linux", arch: "x86_64", libc: "gnu")
@@ -71,7 +66,6 @@ defmodule Batamanta.ERTS.Fetcher do
     fetch_for_platform(otp_version, target, opts)
   end
 
-  # Core fetching logic with platform map
   defp fetch_for_platform(otp_version, target, opts) do
     version_mode = Keyword.get(opts, :version_mode, :auto)
     otp_vsn = normalize_otp_version(otp_version)
@@ -79,7 +73,6 @@ defmodule Batamanta.ERTS.Fetcher do
 
     log_info(">> Fetching ERTS for OTP #{otp_vsn} (#{platform_key})...")
 
-    # Check cache with lock to prevent race conditions
     with_lock(otp_vsn, platform_key, fn ->
       case check_erts_cache(otp_vsn, platform_key) do
         {:ok, cached_path} ->
@@ -92,23 +85,19 @@ defmodule Batamanta.ERTS.Fetcher do
     end)
   end
 
-  # Simple lock mechanism using file system
   defp with_lock(otp_version, platform_key, fun) do
     lock_dir = Path.join(get_cache_dir(), ".locks")
     File.mkdir_p!(lock_dir)
     lock_file = Path.join(lock_dir, "erts-#{otp_version}-#{platform_key}.lock")
 
-    # Try to acquire lock
     lock_acquired =
       case File.open(lock_file, [:exclusive, :raw]) do
         {:ok, pid} ->
-          # Write PID for debugging
           :file.write(pid, :erlang.term_to_binary(:erlang.system_time(:second)))
           File.close(pid)
           true
 
         {:error, _} ->
-          # Lock exists, wait briefly and retry
           :timer.sleep(100)
           false
       end
@@ -117,11 +106,9 @@ defmodule Batamanta.ERTS.Fetcher do
       try do
         fun.()
       after
-        # Release lock
         File.rm(lock_file)
       end
     else
-      # Another process is downloading, wait for cache
       wait_for_cache(otp_version, platform_key, 10)
     end
   end
@@ -160,15 +147,12 @@ defmodule Batamanta.ERTS.Fetcher do
     legacy_dir = Path.join(get_cache_dir(), platform_key)
 
     cond do
-      # Check primary cache location
       File.exists?(extract_dir) and erts_valid?(extract_dir, otp_version) ->
         {:ok, extract_dir}
 
-      # Check legacy cache location
       File.exists?(legacy_dir) and erts_valid?(legacy_dir, otp_version) ->
         {:ok, legacy_dir}
 
-      # Not in cache
       true ->
         :not_found
     end
@@ -219,7 +203,6 @@ defmodule Batamanta.ERTS.Fetcher do
   @spec target_atom_to_platform(atom()) :: map()
   def target_atom_to_platform(target), do: target_atom_to_platform_impl(target)
 
-  # Platform to target atom (for backwards compatibility with Target module)
   defp string_to_target_atom(%{os: "linux", arch: "x86_64", libc: libc})
        when libc in ["gnu", :gnu],
        do: :ubuntu_22_04_x86_64
@@ -240,7 +223,6 @@ defmodule Batamanta.ERTS.Fetcher do
   defp string_to_target_atom(%{os: "macos", arch: "aarch64", libc: _libc}), do: :macos_12_arm64
   defp string_to_target_atom(%{os: "windows", arch: "x86_64", libc: _libc}), do: :windows_x86_64
 
-  # Target atom to platform (for backwards compatibility)
   defp target_atom_to_platform_impl(:ubuntu_22_04_x86_64),
     do: %{os: "linux", arch: "x86_64", libc: "gnu"}
 
@@ -281,20 +263,16 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   # ============================================================================
-  # MANIFEST LOADING
   # ============================================================================
 
   defp load_manifest do
-    # Check in-memory cache first to avoid repeated downloads
     case Process.get(@manifest_cache_key) do
       nil ->
-        # Not cached, load from disk or remote
         manifest = load_manifest_from_source()
         Process.put(@manifest_cache_key, manifest)
         manifest
 
       cached ->
-        # Return cached manifest
         cached
     end
   end
@@ -303,32 +281,26 @@ defmodule Batamanta.ERTS.Fetcher do
     cached_path = Path.join(get_cache_dir(), "MANIFEST.json")
     local_path = local_manifest_path()
 
-    # First, try to download from remote
     log_info(">>    Downloading MANIFEST.json from remote...")
 
     case download_with_retry(&download_manifest/0) do
       {:ok, body} ->
-        # Save to cache for future use
         File.mkdir_p!(get_cache_dir())
         File.write!(cached_path, body)
         parse_json(body)
 
       {:error, _reason} ->
-        # Remote download failed, try fallbacks
         log_info(">>    Download failed, using local MANIFEST.json")
 
         cond do
-          # Try cached copy first
           File.exists?(cached_path) ->
             log_info(">>    Using cached MANIFEST.json from disk")
             File.read!(cached_path) |> parse_json()
 
-          # Try local priv/ fallback
           File.exists?(local_path) ->
             log_info(">>    Using priv/ fallback MANIFEST.json")
             File.read!(local_path) |> parse_json()
 
-          # No manifest available
           true ->
             log_info(">>    No MANIFEST.json available, using empty manifest")
             %{}
@@ -336,7 +308,6 @@ defmodule Batamanta.ERTS.Fetcher do
     end
   end
 
-  # Retry wrapper with exponential backoff
   defp download_with_retry(download_fun) do
     download_with_retry(download_fun, @max_download_retries, 0)
   end
@@ -347,11 +318,9 @@ defmodule Batamanta.ERTS.Fetcher do
 
   defp download_with_retry(download_fun, retries, attempt) do
     case download_fun.() do
-      # Handle {:ok, body} pattern (for manifest downloads)
       {:ok, _body} = result ->
         result
 
-      # Handle :ok pattern (for file downloads that save to disk)
       :ok ->
         :ok
 
@@ -367,10 +336,8 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   # ============================================================================
-  # JSON PARSING - Manual parser (Jason optional, not required)
   # ============================================================================
 
-  # Use simple manual JSON parser - no external dependency required
   defp parse_json(json_string) do
     json_string
     |> parse_json_object()
@@ -387,7 +354,6 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp extract_key_values(json) do
-    # Find all "KEY": "VALUE" or "KEY": { ... } patterns
     regex = ~r/"([^"]+)"\s*:\s*("(?:[^"\\]|\\.)*"|\{[^}]*\})/
 
     Regex.scan(regex, json)
@@ -397,7 +363,6 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp parse_json_value("{" <> rest) do
-    # Nested object
     ("{" <> rest)
     |> String.trim_trailing("}")
     |> extract_key_values()
@@ -405,7 +370,6 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp parse_json_value(value) do
-    # String value - remove quotes
     value
     |> String.trim("\"")
   end
@@ -445,7 +409,6 @@ defmodule Batamanta.ERTS.Fetcher do
   @doc """
   Finds the ERTS download URL for the specified OTP version and platform key.
 
-  ## Version Modes
   - `:explicit` - Returns exact match only, no fallbacks
   - `:auto` - Uses conservative fallback strategy
   """
@@ -455,12 +418,10 @@ defmodule Batamanta.ERTS.Fetcher do
 
     case version_mode do
       :explicit ->
-        # Exact match only - user specified, user owns
         exact_key = "OTP-#{otp_version}"
         find_erts_in_manifest(manifest, exact_key, platform_key)
 
       :auto ->
-        # Conservative fallback - try 28.0, 28.1, etc.
         version_variants = generate_version_variants(otp_version)
 
         Enum.find_value(version_variants, fn otp_key ->
@@ -485,7 +446,6 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   # ============================================================================
-  # VERSION RESOLUTION
   # ============================================================================
 
   defp generate_version_variants(version) do
@@ -504,14 +464,12 @@ defmodule Batamanta.ERTS.Fetcher do
     |> Enum.reject(&(&1 == ""))
   end
 
-  # "28" -> try 28.0, 28.1, 28.2, etc.
   defp generate_major_only_variants([major]) do
     Enum.flat_map(0..5, fn minor ->
       ["OTP-#{major}.#{minor}.0", "OTP-#{major}.#{minor}"]
     end)
   end
 
-  # "28.1" -> try exact, then 28.0
   defp generate_major_minor_variants([major, minor]) do
     minor_int = try_parse_integer(minor)
     base = ["OTP-#{major}.#{minor}", "OTP-#{major}.#{minor}.0"]
@@ -519,7 +477,6 @@ defmodule Batamanta.ERTS.Fetcher do
     Enum.concat([base, fallbacks])
   end
 
-  # "28.1.1" -> try exact, then 28.1.0, then 28.0.0
   defp generate_full_variants([major, minor, patch]) do
     minor_int = try_parse_integer(minor)
     patch_int = try_parse_integer(patch)
@@ -551,7 +508,6 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   # ============================================================================
-  # PLATFORM DETECTION
   # ============================================================================
 
   defp detect_os_type do
@@ -606,7 +562,6 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   # ============================================================================
-  # DOWNLOAD AND EXTRACTION
   # ============================================================================
 
   defp download_and_extract(url, otp_version, platform_key) do
@@ -616,7 +571,6 @@ defmodule Batamanta.ERTS.Fetcher do
 
     log_info(">>    Downloading ERTS...")
 
-    # Download with retry
     case download_with_retry(fn -> download_file(url, cache_path) end) do
       :ok ->
         extract_erts(cache_path, extract_dir, otp_version)
@@ -629,8 +583,6 @@ defmodule Batamanta.ERTS.Fetcher do
   defp extract_erts(cache_path, extract_dir, otp_version) do
     File.mkdir_p!(extract_dir)
 
-    # Use system tar instead of :erl_tar to avoid Ubuntu 24.04 symlink restrictions
-    # System tar with --no-same-owner works reliably across platforms
     {output, exit_code} =
       System.cmd(
         "tar",
@@ -670,7 +622,6 @@ defmodule Batamanta.ERTS.Fetcher do
       {:error, "Failed to extract: #{inspect(e)}"}
   end
 
-  # Parse tar error output to provide meaningful error messages
   defp parse_tar_error(output) do
     cond do
       matches_any?(output, ["Permission denied"]) ->
@@ -748,23 +699,16 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   # ============================================================================
-  # ERTS VALIDATION
   # ============================================================================
 
   defp erts_valid?(extract_dir, otp_version) do
-    # More robust validation - check multiple indicators
     checks = [
-      # 1. bin/erlexec exists (critical for starting VM)
       File.exists?(Path.join(extract_dir, "bin/erlexec")),
-      # 2. releases/<version>/OTP_VERSION exists
       File.exists?(Path.join(extract_dir, "releases/#{otp_version}/OTP_VERSION")),
-      # 3. releases/ directory with some version exists
       has_valid_release_dir?(extract_dir),
-      # 4. lib/ directory exists (BEAM libraries)
       File.dir?(Path.join(extract_dir, "lib"))
     ]
 
-    # Require at least bin/erlexec AND one other indicator
     Enum.member?(checks, true) and Enum.count(checks, & &1) >= 2
   end
 
@@ -773,7 +717,6 @@ defmodule Batamanta.ERTS.Fetcher do
 
     case File.ls(releases_path) do
       {:ok, versions} ->
-        # Check if any version directory has OTP_VERSION file
         Enum.any?(versions, fn version ->
           File.exists?(Path.join(releases_path, version <> "/OTP_VERSION"))
         end)
