@@ -1,5 +1,5 @@
 defmodule Batamanta.RunnerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Batamanta.Runner
 
@@ -11,8 +11,8 @@ defmodule Batamanta.RunnerTest do
     end
 
     test "handles command failures" do
-      {_output, exit_code} = Runner.sys_cmd("false", [])
-      assert exit_code != 0
+      {_output, exit_code} = Runner.sys_cmd("sh", ["-c", "exit 42"])
+      assert exit_code == 42
     end
   end
 
