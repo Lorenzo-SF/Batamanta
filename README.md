@@ -220,11 +220,13 @@ In auto mode, if the exact version is not available:
 
 ## Execution Modes
 
-| Mode | Description | Platform |
-|------|-------------|----------|
-| `:cli` | Standard CLI with inherited stdin/stdout/stderr | All |
-| `:tui` | Text UI with raw terminal mode, arrow key navigation | Unix only |
-| `:daemon` | Runs in background, no terminal I/O | Unix only |
+| Mode | Description | Terminal Mode | Platform |
+|------|-------------|---------------|----------|
+| `:cli` | Standard CLI with inherited stdin/stdout/stderr | **Cooked** (canonical mode, line-buffered input) | All |
+| `:tui` | Text UI with raw terminal mode, arrow key navigation | **Raw** (direct character input, no line buffering) | Unix only |
+| `:daemon` | Runs in background, no terminal I/O | N/A (detached) | Unix only |
+
+> **Note:** In `:cli` mode (cooked), the terminal processes input line-by-line - Enter sends the line, backspace works normally, and special keys like arrow keys are not directly captured. In `:tui` mode (raw), the app has direct control over the terminal and can capture individual keypresses including arrow keys, function keys, etc.
 
 ---
 

@@ -306,6 +306,17 @@ fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8
             c
         };
 
+        // Configurar raw mode ANTES de iniciar el escript si es modo TUI
+        if exec_mode == "tui" {
+            Command::new("stty")
+                .args(["-icanon", "-echo"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .ok();
+        }
+
         // Pasar argumentos de usuario
         cmd.args(env::args().skip(1));
 
@@ -543,6 +554,20 @@ fn run_with_erlexec(
         return Ok(0);
     } else {
         // Modo normal: ejecutar directamente
+
+        // Configurar raw mode ANTES de iniciar el VM si es modo TUI
+        // El wrapper Rust tiene acceso al terminal real, a diferencia
+        // de los procesos spawnheados por el VM de Erlang.
+        if exec_mode == "tui" {
+            Command::new("stty")
+                .args(["-icanon", "-echo"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .ok();
+        }
+
         let mut cmd = Command::new(&erlexec);
         cmd.env("ROOTDIR", release_dir)
             .env("BINDIR", bin_path)

@@ -258,11 +258,13 @@ En modo auto, si la versión exacta no está disponible:
 
 ## Modos de Ejecución
 
-| Modo | Descripción | Plataforma |
-|------|-------------|-------------|
-| `:cli` | CLI estándar con stdin/stdout/stderr heredados | Todos |
-| `:tui` | UI de texto con modo terminal raw, navegación con teclas de flechas | Unix only |
-| `:daemon` | Ejecuta en segundo plano, sin E/S de terminal | Unix only |
+| Modo | Descripción | Modo de Terminal | Plataforma |
+|------|-------------|------------------|------------|
+| `:cli` | CLI estándar con stdin/stdout/stderr heredados | **Cooked** (modo canónico, entrada por líneas) | Todos |
+| `:tui` | UI de texto con modo terminal raw, navegación con teclas de flechas | **Raw** (entrada directa, sin buffering de línea) | Unix only |
+| `:daemon` | Ejecuta en segundo plano, sin E/S de terminal | N/A (desacoplado) | Unix only |
+
+> **Nota:** En modo `:cli` (cooked), la terminal procesa la entrada línea por línea - Enter envía la línea, backspace funciona normalmente, y teclas especiales como flechas no se capturan directamente. En modo `:tui` (raw), la app tiene control directo de la terminal y puede capturar pulsaciones individuales incluyendo teclas de flecha, teclas de función, etc.
 
 ---
 
