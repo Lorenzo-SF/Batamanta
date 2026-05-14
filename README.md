@@ -5,6 +5,22 @@
 > Package your Elixir applications as 100% self-contained executables. No Erlang/Elixir installation required on the target machine.
 
 ---
+  
+<p align="center">
+  <a href="https://hex.pm/packages/batamanta">
+    <img src="https://img.shields.io/hexpm/v/batamanta.svg" alt="Hex Version">
+  </a>
+  <a href="https://hexdocs.pm/batamanta">
+    <img src="https://img.shields.io/badge/docs-hexdocs-blue" alt="HexDocs">
+  </a>
+  <a href="https://github.com/Lorenzo-SF/Batamanta/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/Lorenzo-SF/Batamanta/ci.yml" alt="CI Status">
+  </a>
+  <img src="https://img.shields.io/badge/self--contained-binaries-success" alt="Self-contained">
+  <img src="https://img.shields.io/badge/ERTS-embedded-critical" alt="ERTS Embedded">
+</p>
+
+---
 
 ## Features
 
@@ -15,6 +31,7 @@
 - **Multiple execution modes**: CLI, TUI, Daemon, and Escript support
 - **Relativized releases**: Portable binaries with no absolute paths
 - **Automatic build cleanup**: Intermediate artifacts are wiped after build, leaving the system pristine while preserving ERTS cache
+- **Build Environment Isolation**: Automatically isolates the build from version managers (`asdf`, `mise`, `kerl`) to prevent ERTS mismatches
 - **Robust downloads**: Automatic retry with exponential backoff on network failures
 - **Concurrent-safe caching**: File-based locking prevents race conditions in multi-process builds
 - **Clear error messages**: Specific error codes for disk full, permission denied, corrupted archives
@@ -478,6 +495,28 @@ Don't forget `System.halt/1` when your CLI finishes!
 4. **Package**: Bundles your release + ERTS into a single compressed tarball
 
 5. **Compile**: Rust dispenser embeds the payload and handles extraction at runtime
+
+---
+
+## Build Environment Isolation
+
+Batamanta version 1.4.0+ includes `Batamanta.EnvCleaner`, which automatically handles environment isolation during binary generation.
+
+### Why this matters
+
+When using version managers like `asdf`, `mise`, or `kerl`, your shell's `PATH` points to shimmed versions of Erlang and Elixir. If these versions differ from the ERTS being embedded, you may encounter:
+- "Corrupt atom table" crashes
+- Inconsistent behavior between build-time and runtime
+- Compilation failures in CI environments
+
+### How it works
+
+When you run `mix batamanta`, the tool:
+1. Detects and filters out version manager paths from the `PATH`.
+2. Sanitizes the environment to include only essential system variables.
+3. (In Escript mode) Prepends the downloaded ERTS bin directory to the `PATH` during compilation, ensuring 100% version parity.
+
+This mechanism ensures that the binary you build is exactly matched to the runtime environment it will use.
 
 ---
 

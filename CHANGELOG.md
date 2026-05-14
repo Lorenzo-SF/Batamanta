@@ -29,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compile --warnings-as-errors: ✅ 0 warnings
 - Tests: 199 passing, 3 excluded (integration)
 
+## [1.4.0] - 2026-04-07
+
+### Added
+- **Build Environment Isolation**: Introduced `Batamanta.EnvCleaner` to isolate the build process from version managers (`asdf`, `mise`, `kerl`, etc.). This ensures that the Erlang/Elixir version used for compilation matches the target ERTS, preventing "corrupt atom table" errors.
+- **Shared Environment Logic**: Both Escript and Release pipelines now share a sanitized environment containing only essential system variables (`HOME`, `USER`, `TMPDIR`, `LANG`, `SHELL`, `TERM`, `SSH_AUTH_SOCK`).
+- **Detailed Build Logs**: Improved error reporting for `mix release` failures by capturing and displaying the full compiler output in case of status non-zero.
+
+### Fixed
+- **Version Manager Interference**: Fixed a critical bug where `asdf` shims in the `PATH` would cause `mix` to use a different ERTS version than the one intended for packaging.
+- **Legacy Elixir Compatibility**: Replaced `File.executable?/1` (introduced in Elixir 1.16) with `File.regular?/1` to maintain compatibility with Elixir 1.15.x.
+- **Typo cleanup**: Corrected multiple instances of `BatmanManta` namespace typos to `Batamanta`.
+- **Credo & Code Quality**: Refactored `system_paths/0` in `EnvCleaner` to reduce cyclomatic complexity and flattened nested logic in `clean_mix_build_artifacts`.
+
 ## [1.3.0] - 2026-03-25
 
 ### Added

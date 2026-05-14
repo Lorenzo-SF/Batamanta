@@ -5,8 +5,8 @@ defmodule Batamanta.EscriptBuilder do
   This module handles the generation of escripts using `mix escript.build`
   and provides utilities for locating and validating the generated output.
 
-
-      escript_path = EscriptBuilder.build(config, banner_ctx)
+escript_path
+   = EscriptBuilder.build(config, banner_ctx)
 
 
   Escripts are lightweight executables that embed the Elixir runtime
@@ -31,6 +31,8 @@ defmodule Batamanta.EscriptBuilder do
   - Need distributed Erlang
   """
 
+  alias Batamanta.EnvCleaner
+
   alias Batamanta.Logger
 
   @doc """
@@ -39,6 +41,7 @@ defmodule Batamanta.EscriptBuilder do
 
   - `config` - Mix project config (from `Mix.Project.config()`)
   - `banner_ctx` - Banner context for logging
+  - `erts_path` - Path to the ERTS that will be embedded (for build consistency)
 
 
   Path to the generated escript binary.
@@ -47,13 +50,13 @@ defmodule Batamanta.EscriptBuilder do
   - `Mix.Error` if escript build fails
   - `Mix.Error` if escript file is not found after build
   """
-  @spec build(keyword(), any()) :: Path.t()
-  def build(config, banner_ctx) do
+  @spec build(keyword(), any(), Path.t()) :: Path.t()
+  def build(config, banner_ctx, erts_path) do
     Logger.info(banner_ctx, ">> 📦 Running mix escript.build...")
 
     {output, status} =
       System.cmd("mix", ["escript.build"],
-        env: [{"MIX_ENV", "prod"}],
+        env: env_with_mix,
         stderr_to_stdout: true
       )
 
