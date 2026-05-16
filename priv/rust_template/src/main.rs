@@ -409,12 +409,17 @@ PROGNAME="{app_name}"
 export PATH="$BINDIR:$PATH"
 
 # Variables de entorno para el escript
-export ROOTDIR="$ERL_ROOTDIR"
-export BINDIR="$BINDIR"
-export ERL_LIBS="$ERL_LIBS"
-export EMULATOR="beam"
-export PROGNAME="$PROGNAME"
-export RELEASE_ROOT="$ERL_ROOTDIR"
+    export ROOTDIR="$ERL_ROOTDIR"
+    export ERL_HOME="$ERL_ROOTDIR"
+    export BINDIR="$BINDIR"
+    export ERL_LIBS="$ERL_LIBS"
+    export EMULATOR="beam"
+    export PROGNAME="$PROGNAME"
+    export RELEASE_ROOT="$ERL_ROOTDIR"
+
+
+export LD_LIBRARY_PATH="$ERL_LIBS:$LD_LIBRARY_PATH"
+export DYLD_LIBRARY_PATH="$ERL_LIBS:$DYLD_LIBRARY_PATH"
 
 # Filtrar el flag -daemon de los argumentos si está presente
 # (lo añade setsid, no el usuario)
@@ -546,8 +551,13 @@ fn run_with_erlexec(
             ("RELEASE_SYS_CONFIG", sys_config_str.as_str()),
             ("RELEASE_VM_ARGS", vm_args_str.as_str()),
             ("EMU", "beam"),
-            ("PROGNAME", "erl"),
-        ];
+        ("PROGNAME", "erl"),
+        ("ERL_HOME", rootdir_str.as_str()),
+     ];
+        let ld_path_val = format!("{}:{}", erl_libs_str, std::env::var("LD_LIBRARY_PATH").unwrap_or_default());
+        let dyld_path_val = format!("{}:{}", erl_libs_str, std::env::var("DYLD_LIBRARY_PATH").unwrap_or_default());
+        env.push(("LD_LIBRARY_PATH", ld_path_val.as_str()));
+        env.push(("DYLD_LIBRARY_PATH", dyld_path_val.as_str()));
         let path_val = format!("{}:{}", bindir_str, env::var("PATH").unwrap_or_default());
         env.push(("PATH", path_val.as_str()));
         spawn_detached(&erlexec_str, &args_refs, &env)?;

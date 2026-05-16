@@ -144,7 +144,7 @@ defmodule Mix.Tasks.Batamanta do
   @doc """
   Resolves the output format from options, config, or auto-detection.
 
-  Priority:
+  Priority:\
   1. CLI option `--format`
   2. Config `format:` key
   3. Auto-detect: if project has `:escript` config, use `:escript`, else `:release`
@@ -387,7 +387,7 @@ defmodule Mix.Tasks.Batamanta do
       |> Path.dirname()
 
     Path.join([project_root, "_build", "prod", "rel", Atom.to_string(app)])
-    |> Path.absname()
+      |> Path.absname()
   end
 
   defp compile_wrapper(
@@ -440,8 +440,10 @@ defmodule Mix.Tasks.Batamanta do
 
   @doc "Validates required system tools"
   def validate_toolchain! do
-    if System.find_executable("cargo") == nil, do: Mix.raise("Rust (cargo) not found.")
-    if System.find_executable("zstd") == nil, do: Mix.raise("zstd not found.")
+    if System.find_executable("cargo") == nil,
+      do: Mix.raise("Rust (cargo) not found.")
+    if System.find_executable("zstd") == nil,
+      do: Mix.raise("zstd not found.")
     :ok
   end
 

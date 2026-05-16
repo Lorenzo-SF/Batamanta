@@ -81,3 +81,12 @@ Thumbs.db
 /smoke_tests/*/test_escript-0.1.0*
 daemon*.txt
 test_escript-*
+.code-intel/embeddings/
+.code-intel/ast/
+.code-intel/rag/
+.code-intel-backup*/
+# generate-context (no versionar)
+../.code-intel/embeddings/
+../.code-intel/ast/
+../.code-intel/rag/
+../.code-intel-backup*/

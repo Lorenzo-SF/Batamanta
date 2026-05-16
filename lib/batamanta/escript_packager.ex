@@ -52,13 +52,20 @@ defmodule Batamanta.EscriptPackager do
       when is_integer(compression_level) and compression_level >= 1 and
              compression_level <= 19 do
     temp_dir = create_temp_directory()
-    app_name = Path.basename(escript_path)
+    app_name = Path.basename(escript_path, ".escript")
 
     try do
       release_dir = Path.join([temp_dir, "release"])
 
       File.mkdir_p!(Path.join([release_dir, "bin"]))
-      File.cp!(escript_path, Path.join([release_dir, "bin", app_name]))
+      escript_file =
+        if File.exists?(escript_path) do
+          escript_path
+        else
+          # fallback: try without .escript extension
+          Path.join(Path.dirname(escript_path), Path.basename(escript_path, ".escript"))
+        end
+      File.cp!(escript_file, Path.join([release_dir, "bin", app_name]))
 
       minimal_erts_path = Path.join([release_dir, "erts"])
       prepare_minimal_erts(erts_path, minimal_erts_path)
