@@ -104,6 +104,69 @@ defmodule Batamanta.EnvCleaner do
   end
 
   @doc """
+  Returns the environment for running `mix release` / `mix escript.build`
+  during the batamanta build phase.
+
+  ## Why not `erts_env/1`?
+
+  `System.cmd` with the `env:` option uses `Port.open` underneath, which
+  **replaces** the child process environment entirely with the given list —
+  it does not merge. `erts_env/1` starts from `base_environment/0`, a
+  whitelist of only 7 variables (HOME, USER, LANG, …). That strips
+  `elixir`, `mix`, `MIX_HOME`, `HEX_HOME`, `MIX_REBAR3`, etc., making
+  `mix release` fail with "elixir: No such file or directory".
+
+  ## What this function does
+
+  Starts from the **full** current process environment (`System.get_env()`),
+  then applies surgical overrides:
+
+  1. Prepends the downloaded ERTS `bin/` to `PATH` so `erlexec` / `erl`
+     from the bundled ERTS win over any asdf/mise/kerl shim.
+  2. Sets `ROOTDIR`, `BINDIR`, `ERL_ROOTDIR` to the bundled ERTS so OTP
+     locates its own libs from the right place.
+  3. Clears `ERL_FLAGS`, `ERL_AFLAGS`, `ERL_ZFLAGS` so no stale shell
+     flags bleed into the compilation BEAM.
+  4. Clears `ASDF_ERLANG_VERSION` and `MISE_ERLANG_VERSION` so that even
+     if asdf/mise shims are still on PATH (needed for `elixir`/`mix`),
+     they forward `erl` calls to whichever `erl` is first on PATH — which
+     is our bundled one.
+
+  `elixir`, `mix`, `MIX_HOME`, `HEX_HOME`, hex cache, rebar, and every
+  other build tool remain accessible because the full env is inherited.
+  """
+  @spec build_env(Path.t()) :: [{binary(), binary()}]
+  def build_env(erts_path) do
+    erts_bin = Path.join(erts_path, "bin") |> to_string()
+
+    current_path = System.get_env("PATH") || ""
+
+    # Prepend bundled ERTS bin. We intentionally keep asdf/mise paths so
+    # that `elixir` and `mix` (which live there) remain findable. The
+    # downloaded ERTS bin comes first, so erlexec/erl from the bundled ERTS
+    # wins over any shim that would delegate to the wrong OTP version.
+    new_path = "#{erts_bin}:#{current_path}"
+
+    # Inherit everything, then override only the ERTS-related keys.
+    System.get_env()
+    |> Map.put("PATH", new_path)
+    |> Map.put("ROOTDIR", erts_path |> to_string())
+    |> Map.put("BINDIR", erts_bin)
+    |> Map.put("ERL_ROOTDIR", erts_path |> to_string())
+    # Clear any shell-level Erlang flags that could alter BEAM startup
+    # or cause it to load libs from the wrong ERTS.
+    |> Map.put("ERL_FLAGS", "")
+    |> Map.put("ERL_AFLAGS", "")
+    |> Map.put("ERL_ZFLAGS", "")
+    # Clear version-manager version pins so their shims (if still on PATH
+    # for elixir/mix) forward `erl` to whatever is first on PATH — ours.
+    |> Map.delete("ASDF_ERLANG_VERSION")
+    |> Map.delete("MISE_ERLANG_VERSION")
+    |> Map.delete("KERL_ENABLE_PROMPT")
+    |> Map.to_list()
+  end
+
+  @doc """
   Returns a clean environment as a map.
   """
   @spec clean_env_map() :: %{optional(binary()) => binary() | nil}
