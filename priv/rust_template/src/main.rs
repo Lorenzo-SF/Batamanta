@@ -290,19 +290,55 @@ fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
+            // FIX: include PATH with bundled erts bin prepended, and clear ERL_FLAGS/ERL_AFLAGS
+            // to prevent the system environment from injecting flags that could alter BEAM startup
+            // or cause it to locate the wrong ERTS libraries.
+            let path_val = format!("{}:{}", bindir_str, env::var("PATH").unwrap_or_default());
             let env: Vec<(&str, &str)> = vec![
                 ("BINDIR", &bindir_str),
                 ("ERL_LIBS", &erl_libs_str),
                 ("ROOTDIR", &rootdir_str),
                 ("EMULATOR", "beam"),
+                ("PATH", &path_val),
+                // FIX: neutralize any ERL_FLAGS/ERL_AFLAGS from the shell environment
+                // that could interfere with BEAM startup or override our ERTS configuration.
+                ("ERL_FLAGS", ""),
+                ("ERL_AFLAGS", ""),
+                ("ERL_ZFLAGS", ""),
             ];
             spawn_detached(&wrapper_script_str, &args, &env)?;
             return Ok(0);
         } else {
             let mut c = Command::new(&wrapper_script_str);
-            c.stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
+            // FIX: explicitly set env vars on the wrapper subprocess so that
+            // the bundled ERTS bin is first in PATH regardless of what the parent
+            // shell has configured (asdf/mise/kerl shims etc.), and neutralize
+            // any Erlang env vars that could alter BEAM startup.
+            let bindir_str = erts_bin_dir.to_string_lossy().into_owned();
+            let erl_libs_str = erts_dir.join("lib").to_string_lossy().into_owned();
+            let rootdir_str = escript_path
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            c.env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    bindir_str,
+                    env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .env("BINDIR", &bindir_str)
+            .env("ERL_LIBS", &erl_libs_str)
+            .env("ROOTDIR", &rootdir_str)
+            .env("EMULATOR", "beam")
+            // FIX: neutralize any ERL_FLAGS/ERL_AFLAGS from the shell environment
+            .env("ERL_FLAGS", "")
+            .env("ERL_AFLAGS", "")
+            .env("ERL_ZFLAGS", "")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
             c
         };
 
@@ -350,7 +386,11 @@ fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8
         cmd.arg(&escript_path)
             .args(env::args().skip(1))
             .env("BINDIR", &erts_bin_dir)
-            .env("EMULATOR", "beam");
+            .env("EMULATOR", "beam")
+            // FIX: neutralize any ERL_FLAGS/ERL_AFLAGS from the shell environment
+            .env("ERL_FLAGS", "")
+            .env("ERL_AFLAGS", "")
+            .env("ERL_ZFLAGS", "");
 
         if exec_mode == "daemon" {
             cmd.arg("-detached")
@@ -406,6 +446,8 @@ ERL_LIBS="{erts_lib_dir}"
 PROGNAME="{app_name}"
 
 # Configurar PATH para que erl/beam sean encontrables
+# El ERTS bundled debe tener prioridad absoluta sobre cualquier
+# version manager (asdf, mise, kerl, etc.) en el entorno del sistema.
 export PATH="$BINDIR:$PATH"
 
 # Variables de entorno para el escript
@@ -415,6 +457,13 @@ export ERL_LIBS="$ERL_LIBS"
 export EMULATOR="beam"
 export PROGNAME="$PROGNAME"
 export RELEASE_ROOT="$ERL_ROOTDIR"
+
+# FIX: neutralizar ERL_FLAGS/ERL_AFLAGS/ERL_ZFLAGS del entorno del sistema.
+# Estas variables pueden inyectar flags que alteren el arranque del BEAM
+# o hagan que resuelva librerías del ERTS del sistema en lugar del bundled.
+export ERL_FLAGS=""
+export ERL_AFLAGS=""
+export ERL_ZFLAGS=""
 
 # Filtrar el flag -daemon de los argumentos si está presente
 # (lo añade setsid, no el usuario)
@@ -547,6 +596,11 @@ fn run_with_erlexec(
             ("RELEASE_VM_ARGS", vm_args_str.as_str()),
             ("EMU", "beam"),
             ("PROGNAME", "erl"),
+            // FIX: neutralize any ERL_FLAGS/ERL_AFLAGS/ERL_ZFLAGS from the shell environment
+            // to prevent interference with BEAM startup from asdf/mise/kerl or manual installs.
+            ("ERL_FLAGS", ""),
+            ("ERL_AFLAGS", ""),
+            ("ERL_ZFLAGS", ""),
         ];
         let path_val = format!("{}:{}", bindir_str, env::var("PATH").unwrap_or_default());
         env.push(("PATH", path_val.as_str()));
@@ -581,6 +635,11 @@ fn run_with_erlexec(
             .env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"))
             .env("EMU", "beam")
             .env("PROGNAME", "erl")
+            // FIX: neutralize any ERL_FLAGS/ERL_AFLAGS/ERL_ZFLAGS from the shell environment
+            // to prevent interference with BEAM startup from asdf/mise/kerl or manual installs.
+            .env("ERL_FLAGS", "")
+            .env("ERL_AFLAGS", "")
+            .env("ERL_ZFLAGS", "")
             // Boot variables
             .arg("-boot")
             .arg(&boot_arg)
