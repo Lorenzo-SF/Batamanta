@@ -305,16 +305,19 @@ defmodule Mix.Tasks.Batamanta do
        ) do
     Logger.info(banner_ctx, ">> 📦 Creating Release...")
 
-    # FIX: use EnvCleaner.erts_env/1 (was: undefined `env_with_mix`)
-    # This ensures `mix release` compiles against the exact ERTS that will be
-    # bundled in the final binary, preventing version mismatches at runtime.
+    # FIX 1: was `env: env_with_mix` (undefined). Now uses EnvCleaner.build_env/1
+    # which inherits the full process env (elixir, mix, MIX_HOME etc. stay
+    # available) and only overrides ERTS-related variables so `mix release`
+    # compiles against the exact downloaded ERTS that will be bundled.
+    #
+    # FIX 2: was `{_out, status}` (out discarded) then `out` referenced below.
+    # Now bound as `{out, status}`.
     {out, status} =
       System.cmd("mix", ["release", "--overwrite", "--quiet"],
-        env: EnvCleaner.erts_env(erts_path),
+        env: EnvCleaner.build_env(erts_path),
         stderr_to_stdout: true
       )
 
-    # FIX: variable was named `_out` (discarded) but referenced below as `out`
     if status != 0 do
       Logger.error(banner_ctx, "Mix release compilation failed:")
       Logger.error(banner_ctx, out)
@@ -360,7 +363,8 @@ defmodule Mix.Tasks.Batamanta do
        ) do
     Logger.info(banner_ctx, ">> 📦 Creating Escript...")
 
-    # FIX: pass erts_path as third argument (was: EscriptBuilder.build/2, function is /3)
+    # FIX: was EscriptBuilder.build(config, banner_ctx) — /2 does not exist.
+    # The function is defined as /3 and requires erts_path.
     escript_path = EscriptBuilder.build(config, banner_ctx, erts_path)
 
     payload_path =
