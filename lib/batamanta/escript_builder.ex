@@ -5,15 +5,14 @@ defmodule Batamanta.EscriptBuilder do
   This module handles the generation of escripts using `mix escript.build`
   and provides utilities for locating and validating the generated output.
 
-escript_path
-   = EscriptBuilder.build(config, banner_ctx)
+  escript_path = EscriptBuilder.build(config, banner_ctx, erts_path)
 
 
   Escripts are lightweight executables that embed the Elixir runtime
   directly, unlike releases which include the full OTP system.
 
   | Aspect | Escript | Release |
-  |--------|---------|---------|
+  |--------|---------|---------| 
   | Size | ~15-30 MB | ~80-150 MB |
   | Startup | Fast | Slower |
   | Supervisor Tree | No | Yes |
@@ -32,7 +31,6 @@ escript_path
   """
 
   alias Batamanta.EnvCleaner
-
   alias Batamanta.Logger
 
   @doc """
@@ -54,9 +52,13 @@ escript_path
   def build(config, banner_ctx, erts_path) do
     Logger.info(banner_ctx, ">> 📦 Running mix escript.build...")
 
+    # FIX: use EnvCleaner.erts_env/1 (was: undefined `env_with_mix`)
+    # This ensures `mix escript.build` compiles against the exact ERTS that will
+    # be bundled, preventing version mismatches at runtime when the binary is
+    # executed from a directory with a different ERTS configured via asdf/mise/kerl.
     {output, status} =
       System.cmd("mix", ["escript.build"],
-        env: env_with_mix,
+        env: EnvCleaner.erts_env(erts_path),
         stderr_to_stdout: true
       )
 
