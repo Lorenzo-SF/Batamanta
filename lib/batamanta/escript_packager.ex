@@ -203,19 +203,15 @@ defmodule Batamanta.EscriptPackager do
     lib_dest = Path.join(erts_dest, "lib")
     File.mkdir_p!(lib_dest)
 
-    essential_libs = [
-      "kernel",
-      "stdlib",
-      "compiler"
-    ]
-
-    for lib <- essential_libs do
-      # The lib dir may have a version suffix, e.g. kernel-9.2.3
-      src_lib = find_lib_dir(lib_source, lib)
-
-      if src_lib do
-        dest_lib = Path.join(lib_dest, Path.basename(src_lib))
-        copy_minimal_lib(src_lib, dest_lib)
+    # Copy all OTP libs except Elixir ones to allow runtime dependencies like :crypto, :runtime_tools.
+    for lib_src <- Path.wildcard(Path.join(lib_source, "*")) do
+      lib_name = Path.basename(lib_src)
+      # Skip Elixir-related libs to avoid duplicate Elixir runtime
+      if lib_name == "elixir" or String.starts_with?(lib_name, "elixir_") do
+        :ok
+      else
+        dest_lib = Path.join(lib_dest, lib_name)
+        copy_minimal_lib(lib_src, dest_lib)
       end
     end
 
