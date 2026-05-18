@@ -605,13 +605,19 @@ fn run_with_erlexec(
     }
 
     // Spawn el proceso hijo
+    let erts_lib = release_dir.join("erts").join("lib");
+
     let mut child: std::process::Child = if exec_mode == "daemon" {
         // Usar spawn_detached para crear una nueva sesión (portable: Linux y macOS)
         let erlexec_str = erlexec.to_string_lossy().into_owned();
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let rootdir_str = release_dir.to_string_lossy().into_owned();
         let bindir_str = bin_path.to_string_lossy().into_owned();
-        let erl_libs_str = release_lib.to_string_lossy().into_owned();
+        let erl_libs_str = format!(
+            "{}:{}",
+            release_lib.display(),
+            erts_lib.display()
+        );
         let sys_config_str = releases_version_dir
             .join("sys.config")
             .to_string_lossy()
@@ -663,7 +669,7 @@ fn run_with_erlexec(
         let mut cmd = Command::new(&erlexec);
         cmd.env("ROOTDIR", release_dir)
             .env("BINDIR", bin_path)
-            .env("ERL_LIBS", release_lib)
+            .env("ERL_LIBS", format!("{}:{}", release_lib.display(), erts_lib.display()))
             .env("ERL_ROOTDIR", release_dir)
             .env("RELEASE_ROOT", release_dir)
             .env("RELEASE_PROG", app_name)
