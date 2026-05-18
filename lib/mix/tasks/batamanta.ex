@@ -312,9 +312,14 @@ defmodule Mix.Tasks.Batamanta do
     #
     # FIX 2: was `{_out, status}` (out discarded) then `out` referenced below.
     # Now bound as `{out, status}`.
+    build_env =
+      EnvCleaner.build_env(erts_path)
+      |> Map.new()
+      |> Map.put("MIX_ENV", "prod")
+
     {out, status} =
       System.cmd("mix", ["release", "--overwrite", "--quiet"],
-        env: EnvCleaner.build_env(erts_path),
+        env: build_env,
         stderr_to_stdout: true
       )
 
