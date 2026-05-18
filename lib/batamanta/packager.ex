@@ -348,8 +348,9 @@ defmodule Batamanta.Packager do
       app_vsn =
         releases_dir
         |> File.ls!()
-        |> Enum.filter(&(&1 != "COOKIE" && &1 != "start_erl.data"))
-        |> Enum.filter(&File.dir?(Path.join(releases_dir, &1)))
+        |> Enum.filter(
+          &(&1 != "COOKIE" && &1 != "start_erl.data" && File.dir?(Path.join(releases_dir, &1)))
+        )
         |> List.first()
 
       if erts_version && app_vsn do

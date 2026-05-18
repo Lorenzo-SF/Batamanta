@@ -149,78 +149,110 @@ defmodule Batamanta.EscriptPackager do
     File.mkdir_p!(erts_dest)
 
     bin_source = Path.join(erts_source, "bin")
-    # The real erlexec/beam.smp may live under erts-X.Y/bin/ in the OTP tarball.
     erts_bin_source = find_erts_bin_dir(erts_source)
     bin_dest = Path.join(erts_dest, "bin")
     File.mkdir_p!(bin_dest)
 
-    # Copy ALL binaries from erts-X.Y/bin/ (the real ERTS binaries) into the
-    # flat bin/ directory.  This matches what the release packager does via
-    # flatten_nested_erts/1 and avoids fragile whack-a-mole of individual
-    # files (inet_gethost, erl_child_setup, epmd, heart, etc.).
-    if File.exists?(erts_bin_source) do
+    copy_erts_binaries(erts_bin_source, bin_dest)
+    copy_boot_files(bin_source, bin_dest)
+    patch_erl_script(bin_dest)
+    copy_erts_libs(erts_source, erts_dest)
+    copy_releases_metadata(erts_source, erts_dest)
+
+    :ok
+  end
+
+  # Copy binaries from the ERTS bin directory (may be nested under erts-X.Y/bin/).
+  defp copy_erts_binaries(erts_bin_source, bin_dest) do
+    unless File.exists?(erts_bin_source) do
+      :ok
+    else
       for entry <- File.ls!(erts_bin_source) do
         src = Path.join(erts_bin_source, entry)
         dest = Path.join(bin_dest, entry)
-        if File.dir?(src) do
-          File.cp_r!(src, dest)
-        else
-          File.cp!(src, dest)
-          make_executable(dest)
-        end
+        copy_erts_entry(src, dest)
       end
-    end
 
-    # Also copy boot files from the top-level bin/ (no_dot_erlang.boot,
-    # start.boot, etc.) — these are NOT in erts-X.Y/bin/ but are needed
-    # by escript/erlexec to start the BEAM VM.
+      :ok
+    end
+  end
+
+  defp copy_erts_entry(src, dest) do
+    if File.dir?(src) do
+      File.cp_r!(src, dest)
+    else
+      File.cp!(src, dest)
+      make_executable(dest)
+    end
+  end
+
+  # Copy boot files from the top-level bin/ directory.
+  defp copy_boot_files(bin_source, bin_dest) do
     for boot_file <- ~w(no_dot_erlang.boot start.boot start_clean.boot) do
       src = Path.join(bin_source, boot_file)
+
       if File.exists?(src) do
         File.cp!(src, Path.join(bin_dest, boot_file))
       end
     end
 
-    # Patch the erl script: its BINDIR line hardcodes $ROOTDIR/erts-X.Y/bin/
-    # but batamanta flattens the ERTS directory structure (no erts-X.Y/
-    # subdirectory).  Replace it so BINDIR points to the flat bin/ instead.
+    :ok
+  end
+
+  # Patch the erl script: replace hardcoded BINDIR with flat bin/ path.
+  defp patch_erl_script(bin_dest) do
     erl_script = Path.join(bin_dest, "erl")
-    if File.exists?(erl_script) do
+
+    unless File.exists?(erl_script) do
+      :ok
+    else
       content = File.read!(erl_script)
-      patched = String.replace(content, ~r/^BINDIR="\$ROOTDIR\/erts-[^"]+\/bin"$/m,
-                               ~s(BINDIR="$ROOTDIR/bin"))
+
+      patched =
+        String.replace(
+          content,
+          ~r/^BINDIR="\$ROOTDIR\/erts-[^"]+\/bin"$/m,
+          ~s(BINDIR="$ROOTDIR/bin")
+        )
+
       if patched != content do
         File.write!(erl_script, patched)
       end
-    end
 
-    # Copy minimal OTP libs needed to boot the BEAM and run the escript.
-    # NOTE: do NOT include "elixir" here. The escript already bundles its own
-    # Elixir runtime; bundling another copy from the ERTS cache (which may be
-    # a different Elixir version) causes "module already loaded" errors and
-    # corrupt atom table crashes.
+      :ok
+    end
+  end
+
+  # Copy minimal OTP libs needed to boot the BEAM and run the escript.
+  defp copy_erts_libs(erts_source, erts_dest) do
     lib_source = Path.join(erts_source, "lib")
     lib_dest = Path.join(erts_dest, "lib")
     File.mkdir_p!(lib_dest)
 
-    # Copy all OTP libs except Elixir ones to allow runtime dependencies like :crypto, :runtime_tools.
     for lib_src <- Path.wildcard(Path.join(lib_source, "*")) do
       lib_name = Path.basename(lib_src)
-      # Skip Elixir-related libs to avoid duplicate Elixir runtime
-      if lib_name == "elixir" or String.starts_with?(lib_name, "elixir_") do
-        :ok
-      else
+
+      unless skip_elixir_lib?(lib_name) do
         dest_lib = Path.join(lib_dest, lib_name)
         copy_minimal_lib(lib_src, dest_lib)
       end
     end
 
-    # Copy releases/ metadata so get_release_version() in Rust can read
-    # the ERTS version from releases/start_erl.data if present.
+    :ok
+  end
+
+  defp skip_elixir_lib?(lib_name) do
+    lib_name == "elixir" or String.starts_with?(lib_name, "elixir_")
+  end
+
+  # Copy releases/ metadata for ERTS version detection.
+  defp copy_releases_metadata(erts_source, erts_dest) do
     releases_source = Path.join(erts_source, "releases")
     releases_dest = Path.join(erts_dest, "releases")
 
-    if File.exists?(releases_source) do
+    unless File.exists?(releases_source) do
+      :ok
+    else
       File.mkdir_p!(releases_dest)
 
       start_erl = Path.join(releases_source, "start_erl.data")
@@ -228,32 +260,32 @@ defmodule Batamanta.EscriptPackager do
       if File.exists?(start_erl) do
         File.cp!(start_erl, Path.join(releases_dest, "start_erl.data"))
       end
-    end
 
-    :ok
-  end
-
-  # Find a lib directory by prefix (libs may have version suffixes like kernel-9.2)
-  defp find_lib_dir(lib_source, lib_name) do
-    exact = Path.join(lib_source, lib_name)
-
-    if File.exists?(exact) do
-      exact
-    else
-      case File.ls(lib_source) do
-        {:ok, entries} ->
-          match =
-            Enum.find(entries, fn entry ->
-              entry == lib_name or String.starts_with?(entry, lib_name <> "-")
-            end)
-
-          if match, do: Path.join(lib_source, match), else: nil
-
-        _ ->
-          nil
-      end
+      :ok
     end
   end
+
+  # # Find a lib directory by prefix (libs may have version suffixes like kernel-9.2)
+  # defp find_lib_dir(lib_source, lib_name) do
+  #   exact = Path.join(lib_source, lib_name)
+
+  #   if File.exists?(exact) do
+  #     exact
+  #   else
+  #     case File.ls(lib_source) do
+  #       {:ok, entries} ->
+  #         match =
+  #           Enum.find(entries, fn entry ->
+  #             entry == lib_name or String.starts_with?(entry, lib_name <> "-")
+  #           end)
+
+  #         if match, do: Path.join(lib_source, match), else: nil
+
+  #       _ ->
+  #         nil
+  #     end
+  #   end
+  # end
 
   defp copy_minimal_lib(src, dest) do
     File.mkdir_p!(dest)

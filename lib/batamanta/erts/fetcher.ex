@@ -460,7 +460,7 @@ defmodule Batamanta.ERTS.Fetcher do
 
     # Bare major version (e.g. OTP-28) goes last as a fallback;
     # explicit OTP-MINOR entries are tried first, preferring higher minors.
-    variants ++ ["OTP-#{version}"]
+    (variants ++ ["OTP-#{version}"])
     |> List.flatten()
     |> Enum.uniq()
     |> Enum.reject(&(&1 == ""))

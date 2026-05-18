@@ -90,3 +90,6 @@ test_escript-*
 ../.code-intel/ast/
 ../.code-intel/rag/
 ../.code-intel-backup*/
+# generate-context artefactos
+../.code-intel/churn/
+../.code-intel/static/

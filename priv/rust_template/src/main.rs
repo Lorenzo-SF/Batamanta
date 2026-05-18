@@ -23,54 +23,39 @@ static TERMINAL_RESTORED: AtomicBool = AtomicBool::new(false);
 /// so we must pass the full merged environment.
 #[cfg(unix)]
 fn spawn_detached(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<()> {
-    unsafe {
-        let pid = libc::fork();
-        if pid < 0 {
-            return Err(anyhow!("fork failed"));
-        }
-        if pid > 0 {
-            // Parent: give child time to start and return
+    use std::ffi::{CStr, CString};
+    use nix::unistd::{fork, setsid, execve, ForkResult};
+
+    match unsafe { fork()? } {
+        ForkResult::Parent { child: _ } => {
             std::thread::sleep(std::time::Duration::from_millis(500));
-            return Ok(());
+            Ok(())
         }
-        // Child: create new session (detaches from terminal)
-        libc::setsid();
-        // Close stdin, redirect stdout/stderr to /dev/null IF needed
-        libc::close(0);
-        libc::open("/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR);
-        // We let stdout and stderr connected to current terminal so testing/logs output correctly.
-        // If we strictly dup2 to /dev/null, everything printed directly to shell is silenced.
+        ForkResult::Child => {
+            setsid().context("setsid failed")?;
 
-        // Build full environment: inherit parent env + merge additional vars
-        let mut full_env: std::collections::HashMap<String, String> = std::env::vars().collect();
-        for (k, v) in env {
-            full_env.insert(k.to_string(), v.to_string());
+            // Build full environment: inherit parent env + merge additional vars
+            let mut full_env: std::collections::HashMap<String, String> = std::env::vars().collect();
+            for (k, v) in env {
+                full_env.insert(k.to_string(), v.to_string());
+            }
+
+            let env_vec: Vec<CString> = full_env
+                .iter()
+                .map(|(k, v)| CString::new(format!("{}={}", k, v)).unwrap())
+                .collect();
+            let env_refs: Vec<&CStr> = env_vec.iter().map(CString::as_c_str).collect();
+
+            let args_vec: Vec<CString> = std::iter::once(program)
+                .chain(args.iter().copied())
+                .map(|s| CString::new(s).unwrap())
+                .collect();
+            let args_refs: Vec<&CStr> = args_vec.iter().map(CString::as_c_str).collect();
+    let app_bin_maybe = CString::new(program).context("Failed to convert program")?;
+    let app_bin = app_bin_maybe.as_c_str();
+
+    execve(&app_bin, &args_refs, &env_refs)?; Ok(())
         }
-
-        let env_cstrings: Vec<std::ffi::CString> = full_env
-            .iter()
-            .map(|(k, v)| std::ffi::CString::new(format!("{}={}", k, v)).unwrap())
-            .collect();
-        let mut env_ptrs: Vec<*const libc::c_char> =
-            env_cstrings.iter().map(|s| s.as_ptr()).collect();
-        env_ptrs.push(std::ptr::null()); // null-terminate
-
-        // Build argv: argv[0] must be program name (POSIX requirement)
-        let program_cstr = std::ffi::CString::new(program).unwrap();
-        let arg_cstrings: Vec<std::ffi::CString> = args
-            .iter()
-            .map(|s| std::ffi::CString::new(*s).unwrap())
-            .collect();
-        let mut arg_ptrs: Vec<*const libc::c_char> = Vec::with_capacity(args.len() + 2);
-        arg_ptrs.push(program_cstr.as_ptr()); // argv[0] = program
-        for cs in &arg_cstrings {
-            arg_ptrs.push(cs.as_ptr());
-        }
-        arg_ptrs.push(std::ptr::null()); // null-terminate
-
-        libc::execve(program_cstr.as_ptr(), arg_ptrs.as_ptr(), env_ptrs.as_ptr());
-        // If execve returns, it failed
-        libc::_exit(1);
     }
 }
 
@@ -429,10 +414,10 @@ fn create_escript_wrapper(
     app_name: &str,
     exec_mode: &str,
 ) -> Result<PathBuf> {
-    use std::io::Write;
+    use std::io::Write; use uuid::Uuid;
 
     let wrapper_path =
-        env::temp_dir().join(format!("batamanta_escript_wrapper_{}", std::process::id()));
+        env::temp_dir().join(format!("batamanta_escript_wrapper_{}", Uuid::new_v4()));
 
     // El escript ya tiene el shebang, solo necesitamos configurar el PATH y vars
     let erts_lib_dir = erts_dir.join("lib");

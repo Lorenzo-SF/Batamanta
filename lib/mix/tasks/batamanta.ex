@@ -529,10 +529,16 @@ defmodule Mix.Tasks.Batamanta do
           # Only clean if it's older than 1 hour (in case current build is running)
           case File.stat(dir) do
             {:ok, %{mtime: mtime}} ->
-              age_seconds = NaiveDateTime.diff(NaiveDateTime.utc_now(), mtime, :second)
+              age_seconds = :erlang.system_time(:second) - mtime
 
               if age_seconds > 3600 do
-                File.rm_rf(dir)
+                lock_path = Path.join(dir, ".batamanta_lock")
+
+                if File.exists?(lock_path) do
+                  :skip
+                else
+                  File.rm_rf(dir)
+                end
               end
 
             _ ->
@@ -569,7 +575,9 @@ defmodule Mix.Tasks.Batamanta do
   defp clean_if_stale(dir) do
     case File.stat(dir) do
       {:ok, %{mtime: mtime}} ->
-        age_seconds = NaiveDateTime.diff(NaiveDateTime.utc_now(), mtime, :second)
+        age_seconds =
+          :calendar.datetime_to_gregorian_seconds(:calendar.universal_time()) -
+            :calendar.datetime_to_gregorian_seconds(mtime)
 
         # Only clean if older than 24 hours
         if age_seconds > 86_400 do

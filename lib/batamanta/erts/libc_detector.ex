@@ -70,6 +70,8 @@ defmodule Batamanta.ERTS.LibcDetector do
       _ ->
         :unknown
     end
+  rescue
+    _e in ErlangError -> :unknown
   end
 
   defp detect_libc_in_string(output) do
