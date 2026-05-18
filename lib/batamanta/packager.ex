@@ -32,15 +32,29 @@ defmodule Batamanta.Packager do
       File.mkdir_p!(temp)
       tar_path = Path.join(temp, "payload.tar")
 
-      prepare_erts(erts_path)
-      prepare_start_boot(rel_path, app_name)
+      # FIX (Bug 1): copy the ERTS cache to a temp dir BEFORE any modification.
+      # Previously, prepare_erts() operated directly on erts_path (the user's
+      # ~/.cache/batamanta/... directory), destroying it permanently by deleting
+      # erts-<version>/, misc/, src/ etc. from the cache. Every subsequent
+      # batamanta build or binary execution would then fail because those
+      # directories were gone. We now work on a private copy inside temp/.
+      erts_work_path = Path.join(temp, "erts_work")
+      File.mkdir_p!(erts_work_path)
+      File.cp_r!(erts_path, erts_work_path)
+      # cp_r! copies the *contents* of erts_path into erts_work_path, so the
+      # working copy is at erts_work_path itself.
+      erts_work = erts_work_path
+
+      prepare_erts(erts_work)
+
+      app_name
+      |> then(&prepare_start_boot(rel_path, &1, erts_work))
+
       relativize_release_scripts(rel_path)
+      remove_mix_bundled_erts(rel_path, erts_work)
+      update_start_erl_data(rel_path, erts_work)
 
-      remove_mix_bundled_erts(rel_path, erts_path)
-
-      update_start_erl_data(rel_path, erts_path)
-
-      files = collect_files(rel_path, erts_path, "release", "release/erts")
+      files = collect_files(rel_path, erts_work, "release", "release/erts")
 
       case :erl_tar.create(String.to_charlist(tar_path), files) do
         :ok ->
@@ -55,6 +69,7 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
+  # ERTS PREPARATION (operates on the working copy, never on the cache)
   # ============================================================================
 
   @spec prepare_erts(Path.t()) :: :ok
@@ -64,6 +79,8 @@ defmodule Batamanta.Packager do
     ensure_executable_permissions(erts_path)
   end
 
+  # Some OTP tarballs nest the real erlexec/beam.smp inside an erts-X.Y/ subdir.
+  # Flatten it so that erts_path/bin/ always contains erlexec directly.
   defp flatten_nested_erts(erts_path) do
     nested_erts = Path.wildcard(Path.join(erts_path, "erts-*"))
 
@@ -161,34 +178,85 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
+  # BOOT FILE PREPARATION
   # ============================================================================
 
-  @spec prepare_start_boot(Path.t(), String.t()) :: :ok
-  defp prepare_start_boot(rel_path, app_name) do
+  # FIX (Bug 2): guarantee that releases/<version>/start.boot exists in the
+  # packaged release so that the Rust launcher can always find it via
+  # releases_version_dir/start.boot without falling back to a glob search that
+  # might pick the wrong .boot file (e.g. start_clean.boot).
+  # We also keep the bin/start.boot copy as a secondary fallback.
+  @spec prepare_start_boot(Path.t(), String.t(), Path.t()) :: :ok
+  defp prepare_start_boot(rel_path, app_name, erts_work) do
     rel_path_abs = Path.absname(rel_path)
     bin_path = Path.join(rel_path_abs, "bin")
-    start_boot = Path.join(bin_path, "start.boot")
 
-    if File.exists?(start_boot) do
-      :ok
+    # Determine the release version from start_erl.data (already available
+    # from the mix release before update_start_erl_data rewrites it).
+    version = read_release_version(rel_path_abs)
+    version_dir = Path.join([rel_path_abs, "releases", version])
+
+    primary_dst = Path.join(version_dir, "start.boot")
+    secondary_dst = Path.join(bin_path, "start.boot")
+
+    # Try to find the best .boot source using the same priority logic as before.
+    boot_source = find_best_boot(rel_path_abs, bin_path, app_name)
+
+    case boot_source do
+      nil ->
+        :ok
+
+      src ->
+        # Write to releases/<version>/start.boot (primary location Rust looks for)
+        unless File.exists?(primary_dst) do
+          File.mkdir_p!(version_dir)
+          File.cp!(src, primary_dst)
+        end
+
+        # Write to bin/start.boot (secondary/fallback location)
+        unless File.exists?(secondary_dst) do
+          File.mkdir_p!(bin_path)
+          File.cp!(src, secondary_dst)
+        end
+
+        # Also ensure sys.config and vm.args exist in version_dir so erlexec
+        # can use -config and -args_file (required for a correct Elixir release boot).
+        ensure_sys_config(rel_path_abs, version_dir, erts_work)
+        ensure_vm_args(rel_path_abs, version_dir)
+    end
+
+    :ok
+  end
+
+  defp read_release_version(rel_path_abs) do
+    start_erl = Path.join([rel_path_abs, "releases", "start_erl.data"])
+
+    if File.exists?(start_erl) do
+      case String.split(File.read!(start_erl), " ", trim: true) do
+        [_erts, version | _] -> String.trim(version)
+        _ -> fallback_release_version(rel_path_abs)
+      end
     else
-      prepare_boot_from_app(rel_path_abs, bin_path, app_name, start_boot)
+      fallback_release_version(rel_path_abs)
     end
   end
 
-  @spec prepare_boot_from_app(Path.t(), Path.t(), String.t(), Path.t()) :: :ok
-  defp prepare_boot_from_app(rel_path_abs, bin_path, app_name, start_boot) do
-    app_boot = Path.join(bin_path, "#{app_name}.boot")
+  defp fallback_release_version(rel_path_abs) do
+    releases_dir = Path.join(rel_path_abs, "releases")
 
-    if File.exists?(app_boot) do
-      File.cp!(app_boot, start_boot)
-    else
-      find_and_copy_boot(rel_path_abs, bin_path, app_name, start_boot)
+    case File.ls(releases_dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.reject(&(&1 in ["COOKIE", "start_erl.data"]))
+        |> Enum.filter(&File.dir?(Path.join(releases_dir, &1)))
+        |> List.first("0.1.0")
+
+      _ ->
+        "0.1.0"
     end
   end
 
-  @spec find_and_copy_boot(Path.t(), Path.t(), String.t(), Path.t()) :: :ok
-  defp find_and_copy_boot(rel_path_abs, bin_path, app_name, start_boot) do
+  defp find_best_boot(rel_path_abs, bin_path, app_name) do
     releases_path = Path.join(rel_path_abs, "releases")
 
     boot_files =
@@ -197,13 +265,7 @@ defmodule Batamanta.Packager do
       |> Enum.reject(&String.contains?(&1, "start_clean"))
       |> Enum.sort_by(&boot_priority(&1, app_name))
 
-    case boot_files do
-      [first | _] ->
-        File.cp!(first, start_boot)
-
-      [] ->
-        copy_default_boot(releases_path, start_boot)
-    end
+    List.first(boot_files)
   end
 
   @spec boot_priority(String.t(), String.t()) :: integer()
@@ -215,20 +277,50 @@ defmodule Batamanta.Packager do
     end
   end
 
-  @spec copy_default_boot(Path.t(), Path.t()) :: :ok
-  defp copy_default_boot(releases_path, start_boot) do
-    default_boot = Path.join([releases_path, "0.1.0", "start.boot"])
+  # Ensure sys.config exists in the version dir. If not, create a minimal one.
+  defp ensure_sys_config(rel_path_abs, version_dir, _erts_work) do
+    dst = Path.join(version_dir, "sys.config")
 
-    if File.exists?(default_boot) do
-      File.cp!(default_boot, start_boot)
+    unless File.exists?(dst) do
+      # Search for any sys.config in the release
+      found =
+        Path.wildcard(Path.join([rel_path_abs, "releases", "**", "sys.config"]))
+        |> List.first()
+
+      if found do
+        File.cp!(found, dst)
+      else
+        # Write a minimal no-op sys.config
+        File.mkdir_p!(version_dir)
+        File.write!(dst, "[].\\n")
+      end
+    end
+  end
+
+  # Ensure vm.args exists in the version dir. If not, create a minimal one.
+  defp ensure_vm_args(rel_path_abs, version_dir) do
+    dst = Path.join(version_dir, "vm.args")
+
+    unless File.exists?(dst) do
+      found =
+        Path.wildcard(Path.join([rel_path_abs, "releases", "**", "vm.args"]))
+        |> List.first()
+
+      if found do
+        File.cp!(found, dst)
+      else
+        File.mkdir_p!(version_dir)
+        File.write!(dst, "-noshell\n")
+      end
     end
   end
 
   # ============================================================================
+  # MIX BUNDLED ERTS REMOVAL
   # ============================================================================
 
-  defp remove_mix_bundled_erts(rel_path, erts_path) do
-    erts_version = extract_erts_version(erts_path)
+  defp remove_mix_bundled_erts(rel_path, erts_work) do
+    erts_version = extract_erts_version(erts_work)
 
     if erts_version do
       mix_erts_path = Path.join(rel_path, "erts-#{erts_version}")
@@ -236,20 +328,28 @@ defmodule Batamanta.Packager do
       if File.exists?(mix_erts_path) do
         File.rm_rf!(mix_erts_path)
       end
+    else
+      # If we can't determine the downloaded ERTS version, fall back to
+      # removing any erts-* directory that mix may have bundled.
+      rel_path
+      |> Path.join("erts-*")
+      |> Path.wildcard()
+      |> Enum.each(&File.rm_rf!/1)
     end
   end
 
-  defp update_start_erl_data(rel_path, erts_path) do
+  defp update_start_erl_data(rel_path, erts_work) do
     start_erl_path = Path.join([rel_path, "releases", "start_erl.data"])
 
     if File.exists?(start_erl_path) do
-      erts_version = extract_erts_version(erts_path)
+      erts_version = extract_erts_version(erts_work)
       releases_dir = Path.join(rel_path, "releases")
 
       app_vsn =
         releases_dir
         |> File.ls!()
         |> Enum.filter(&(&1 != "COOKIE" && &1 != "start_erl.data"))
+        |> Enum.filter(&File.dir?(Path.join(releases_dir, &1)))
         |> List.first()
 
       if erts_version && app_vsn do
@@ -260,6 +360,7 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
+  # SCRIPT RELATIVIZATION
   # ============================================================================
 
   @spec relativize_release_scripts(Path.t()) :: :ok
@@ -317,6 +418,7 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
+  # FILE COLLECTION
   # ============================================================================
 
   @spec collect_files(Path.t(), Path.t(), String.t(), String.t()) :: [
@@ -348,6 +450,7 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
+  # COMPRESSION
   # ============================================================================
 
   @spec compress_with_zstd(Path.t(), Path.t(), integer()) ::

@@ -108,6 +108,7 @@ def project do
     app: :my_app,
     version: "0.1.0",
     batamanta: [
+      format: :escript,       # :escript | :release
       erts_target: :auto,        # Auto-detect host platform (RECOMMENDED)
       execution_mode: :cli,      # :cli | :tui | :daemon
       compression: 3,            # 1-19 (zstd level)
@@ -124,6 +125,7 @@ end
 |--------|------|---------|-------------|
 | `erts_target` | atom | `:auto` | Target platform (see below) |
 | `otp_version` | string | `:auto` | OTP version (e.g., "28.1") |
+| `format` | atom | `:escript` | `:escript` o `:release` |
 | `execution_mode` | atom | `:cli` | `:cli`, `:tui`, or `:daemon` |
 | `compression` | integer | `3` | Zstd compression level (1-19) |
 | `binary_name` | string | app name | Custom binary name |

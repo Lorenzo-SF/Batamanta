@@ -12,13 +12,16 @@ defmodule Batamanta.EscriptPackager do
   ```
   payload.tar.zst
       ├── bin/
+      │   └── <app_name>      # the compiled escript
+      └── erts/
           ├── bin/
           │   ├── erlexec
           │   ├── erl
+          │   ├── escript
           │   ├── beam.smp
           │   └── heart
           └── lib/
-              └── (minimal runtime libs: kernel, stdlib, compiler, elixir)
+              └── (minimal runtime libs: kernel, stdlib, compiler)
   ```
 
 
@@ -38,7 +41,7 @@ defmodule Batamanta.EscriptPackager do
 
 
   - `escript_path` - Path to the compiled escript
-  - `erts_path` - Path to the fetched ERTS directory
+  - `erts_path` - Path to the fetched ERTS directory (cache — never modified)
   - `output_path` - Path for the output .tar.zst file
   - `compression_level` - Zstd compression level (1-19, default: 3)
 
@@ -58,6 +61,7 @@ defmodule Batamanta.EscriptPackager do
       release_dir = Path.join([temp_dir, "release"])
 
       File.mkdir_p!(Path.join([release_dir, "bin"]))
+
       escript_file =
         if File.exists?(escript_path) do
           escript_path
@@ -65,8 +69,13 @@ defmodule Batamanta.EscriptPackager do
           # fallback: try without .escript extension
           Path.join(Path.dirname(escript_path), Path.basename(escript_path, ".escript"))
         end
+
       File.cp!(escript_file, Path.join([release_dir, "bin", app_name]))
 
+      # FIX (Bug 1 equivalent for escript): prepare_minimal_erts previously
+      # operated on erts_path directly, which could mutate the user's ERTS
+      # cache. We now copy only what we need from the cache into the temp
+      # release dir, never touching the cached source.
       minimal_erts_path = Path.join([release_dir, "erts"])
       prepare_minimal_erts(erts_path, minimal_erts_path)
 
@@ -99,6 +108,8 @@ defmodule Batamanta.EscriptPackager do
     |> Integer.to_string(16)
   end
 
+  # Locate the bin directory containing erlexec/beam.smp within an OTP root.
+  # OTP tarballs may nest these under an erts-X.Y/ subdirectory.
   defp find_erts_bin_dir(erts_root) do
     case File.ls(erts_root) do
       {:ok, entries} ->
@@ -119,49 +130,75 @@ defmodule Batamanta.EscriptPackager do
   end
 
   @doc """
-  Prepares a minimal ERTS for escript execution.
+  Prepares a minimal ERTS for escript execution by copying the necessary
+  files from `erts_source` (the ERTS cache) to `erts_dest` (a temp dir).
 
-  For escripts, we only need:
+  The cache is never modified.
+
+  For escripts we only need:
   - The beam emulator (beam.smp or erl)
-  - erlexec (for escript handling)
-  - Essential runtime libraries (kernel, stdlib, elixir)
+  - erlexec and escript (for escript handling)
+  - Essential runtime libraries (kernel, stdlib, compiler)
 
-  We exclude:
-  - Documentation
-  - Source files
-  - Unused libraries
-  - Development tools
+  We exclude Elixir libs from the ERTS bundle because the escript file already
+  embeds all Elixir code; having a stale or mismatched Elixir in the bundled
+  ERTS lib/ would cause module-redefinition conflicts.
   """
   @spec prepare_minimal_erts(Path.t(), Path.t()) :: :ok
   def prepare_minimal_erts(erts_source, erts_dest) do
     File.mkdir_p!(erts_dest)
 
     bin_source = Path.join(erts_source, "bin")
+    # The real erlexec/beam.smp may live under erts-X.Y/bin/ in the OTP tarball.
     erts_bin_source = find_erts_bin_dir(erts_source)
     bin_dest = Path.join(erts_dest, "bin")
     File.mkdir_p!(bin_dest)
 
-    essential_bins = [
-      "erlexec",
-      "erl",
-      "start",
-      "heart",
-      "beam.smp"
-    ]
-
-    for bin <- essential_bins do
-      src = Path.join(bin_source, bin)
-      src_erts_bin = Path.join(erts_bin_source, bin)
-
-      src_path = if File.exists?(src), do: src, else: src_erts_bin
-
-      if File.exists?(src_path) do
-        dest = Path.join(bin_dest, bin)
-        File.cp!(src_path, dest)
-        make_executable(dest)
+    # Copy ALL binaries from erts-X.Y/bin/ (the real ERTS binaries) into the
+    # flat bin/ directory.  This matches what the release packager does via
+    # flatten_nested_erts/1 and avoids fragile whack-a-mole of individual
+    # files (inet_gethost, erl_child_setup, epmd, heart, etc.).
+    if File.exists?(erts_bin_source) do
+      for entry <- File.ls!(erts_bin_source) do
+        src = Path.join(erts_bin_source, entry)
+        dest = Path.join(bin_dest, entry)
+        if File.dir?(src) do
+          File.cp_r!(src, dest)
+        else
+          File.cp!(src, dest)
+          make_executable(dest)
+        end
       end
     end
 
+    # Also copy boot files from the top-level bin/ (no_dot_erlang.boot,
+    # start.boot, etc.) — these are NOT in erts-X.Y/bin/ but are needed
+    # by escript/erlexec to start the BEAM VM.
+    for boot_file <- ~w(no_dot_erlang.boot start.boot start_clean.boot) do
+      src = Path.join(bin_source, boot_file)
+      if File.exists?(src) do
+        File.cp!(src, Path.join(bin_dest, boot_file))
+      end
+    end
+
+    # Patch the erl script: its BINDIR line hardcodes $ROOTDIR/erts-X.Y/bin/
+    # but batamanta flattens the ERTS directory structure (no erts-X.Y/
+    # subdirectory).  Replace it so BINDIR points to the flat bin/ instead.
+    erl_script = Path.join(bin_dest, "erl")
+    if File.exists?(erl_script) do
+      content = File.read!(erl_script)
+      patched = String.replace(content, ~r/^BINDIR="\$ROOTDIR\/erts-[^"]+\/bin"$/m,
+                               ~s(BINDIR="$ROOTDIR/bin"))
+      if patched != content do
+        File.write!(erl_script, patched)
+      end
+    end
+
+    # Copy minimal OTP libs needed to boot the BEAM and run the escript.
+    # NOTE: do NOT include "elixir" here. The escript already bundles its own
+    # Elixir runtime; bundling another copy from the ERTS cache (which may be
+    # a different Elixir version) causes "module already loaded" errors and
+    # corrupt atom table crashes.
     lib_source = Path.join(erts_source, "lib")
     lib_dest = Path.join(erts_dest, "lib")
     File.mkdir_p!(lib_dest)
@@ -169,19 +206,21 @@ defmodule Batamanta.EscriptPackager do
     essential_libs = [
       "kernel",
       "stdlib",
-      "compiler",
-      "elixir"
+      "compiler"
     ]
 
     for lib <- essential_libs do
-      src_lib = Path.join(lib_source, lib)
+      # The lib dir may have a version suffix, e.g. kernel-9.2.3
+      src_lib = find_lib_dir(lib_source, lib)
 
-      if File.exists?(src_lib) do
-        dest_lib = Path.join(lib_dest, lib)
+      if src_lib do
+        dest_lib = Path.join(lib_dest, Path.basename(src_lib))
         copy_minimal_lib(src_lib, dest_lib)
       end
     end
 
+    # Copy releases/ metadata so get_release_version() in Rust can read
+    # the ERTS version from releases/start_erl.data if present.
     releases_source = Path.join(erts_source, "releases")
     releases_dest = Path.join(erts_dest, "releases")
 
@@ -198,6 +237,28 @@ defmodule Batamanta.EscriptPackager do
     :ok
   end
 
+  # Find a lib directory by prefix (libs may have version suffixes like kernel-9.2)
+  defp find_lib_dir(lib_source, lib_name) do
+    exact = Path.join(lib_source, lib_name)
+
+    if File.exists?(exact) do
+      exact
+    else
+      case File.ls(lib_source) do
+        {:ok, entries} ->
+          match =
+            Enum.find(entries, fn entry ->
+              entry == lib_name or String.starts_with?(entry, lib_name <> "-")
+            end)
+
+          if match, do: Path.join(lib_source, match), else: nil
+
+        _ ->
+          nil
+      end
+    end
+  end
+
   defp copy_minimal_lib(src, dest) do
     File.mkdir_p!(dest)
 
@@ -209,6 +270,11 @@ defmodule Batamanta.EscriptPackager do
 
       for beam <- Path.wildcard(Path.join(src_ebin, "*.beam")) do
         File.cp!(beam, Path.join(dest_ebin, Path.basename(beam)))
+      end
+
+      # Also copy .app files
+      for app <- Path.wildcard(Path.join(src_ebin, "*.app")) do
+        File.cp!(app, Path.join(dest_ebin, Path.basename(app)))
       end
     end
 
@@ -264,9 +330,7 @@ defmodule Batamanta.EscriptPackager do
   defp compress_zstd(tar_path, output_path, level) do
     File.rm(output_path)
 
-    opts = if level > 9, do: ["-#{level}"], else: ["-#{level}"]
-
-    case System.cmd("zstd", opts ++ ["-f", "-o", output_path, tar_path]) do
+    case System.cmd("zstd", ["-#{level}", "-f", "-o", output_path, tar_path]) do
       {_, 0} -> :ok
       {error, _} -> {:error, "zstd compression failed: #{error}"}
     end
@@ -305,7 +369,7 @@ defmodule Batamanta.EscriptPackager do
   end
 
   defp estimate_minimal_erts_size(erts_path) do
-    essential_libs = ["kernel", "stdlib", "compiler", "elixir"]
+    essential_libs = ["kernel", "stdlib", "compiler"]
 
     Enum.reduce(essential_libs, 0, fn lib, acc ->
       lib_path = Path.join([erts_path, "lib", lib])
