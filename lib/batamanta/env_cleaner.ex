@@ -77,7 +77,6 @@ defmodule Batamanta.EnvCleaner do
   def erts_env(erts_path, include_mix \\ true) do
     erts_bin = Path.join(erts_path, "bin")
 
-    # Find mix if available (might be in a separate location)
     mix_bin =
       if include_mix do
         find_mix_in_erts_or_system(erts_path)
@@ -85,11 +84,9 @@ defmodule Batamanta.EnvCleaner do
         nil
       end
 
-    # Build path with ERTS bin at the front (highest priority)
     current_path = System.get_env("PATH") || ""
     cleaned_path = clean_path(current_path)
 
-    # Prepend ERTS bin (and mix if found)
     new_path =
       case mix_bin do
         nil -> "#{erts_bin}:#{cleaned_path}"
@@ -141,25 +138,16 @@ defmodule Batamanta.EnvCleaner do
 
     current_path = System.get_env("PATH") || ""
 
-    # Prepend bundled ERTS bin. We intentionally keep asdf/mise paths so
-    # that `elixir` and `mix` (which live there) remain findable. The
-    # downloaded ERTS bin comes first, so erlexec/erl from the bundled ERTS
-    # wins over any shim that would delegate to the wrong OTP version.
     new_path = "#{erts_bin}:#{current_path}"
 
-    # Inherit everything, then override only the ERTS-related keys.
     System.get_env()
     |> Map.put("PATH", new_path)
     |> Map.put("ROOTDIR", erts_path |> to_string())
     |> Map.put("BINDIR", erts_bin)
     |> Map.put("ERL_ROOTDIR", erts_path |> to_string())
-    # Clear any shell-level Erlang flags that could alter BEAM startup
-    # or cause it to load libs from the wrong ERTS.
     |> Map.put("ERL_FLAGS", "")
     |> Map.put("ERL_AFLAGS", "")
     |> Map.put("ERL_ZFLAGS", "")
-    # Clear version-manager version pins so their shims (if still on PATH
-    # for elixir/mix) forward `erl` to whatever is first on PATH — ours.
     |> Map.delete("ASDF_ERLANG_VERSION")
     |> Map.delete("MISE_ERLANG_VERSION")
     |> Map.delete("KERL_ENABLE_PROMPT")
@@ -239,29 +227,20 @@ defmodule Batamanta.EnvCleaner do
     path_lower = String.downcase(path)
 
     Enum.any?([
-      # asdf (all versions)
       String.contains?(path_lower, ".asdf"),
       String.contains?(path_lower, "asdf/shims"),
-      # mise
       String.contains?(path_lower, ".mise"),
       String.contains?(path_lower, "mise/shims"),
-      # kerl
       String.contains?(path_lower, "kerl"),
-      # evm (Erlang version manager)
       String.contains?(path_lower, ".evm"),
-      # goenv (for completeness)
       String.contains?(path_lower, "goenv"),
-      # rbenv, pyenv, etc.
       String.contains?(path_lower, ".rbenv"),
       String.contains?(path_lower, "pyenv"),
-      # nvm (Node)
       String.contains?(path_lower, "nvm"),
-      # rvenv (Rust)
       String.contains?(path_lower, "rvenv")
     ])
   end
 
-  # Common system Erlang/Elixir installation paths (platform-aware)
   defp system_paths do
     erlang_root = :code.root_dir() |> to_string()
 
@@ -326,13 +305,10 @@ defmodule Batamanta.EnvCleaner do
     ]
   end
 
-  # Detect libc type on Linux
   defp detect_libc do
     case :os.type() do
       {:unix, :linux} ->
-        # Try to detect using the batamanta module if available
         try do
-          # Try calling via code module for lazy loading
           case Code.ensure_loaded(Batamanta.ERTS.LibcDetector) do
             {:module, _} ->
               case Batamanta.ERTS.LibcDetector.detect() do
@@ -341,7 +317,6 @@ defmodule Batamanta.EnvCleaner do
               end
 
             {:error, _} ->
-              # Fallback: use ldd
               detect_libc_fallback()
           end
         rescue
@@ -353,7 +328,6 @@ defmodule Batamanta.EnvCleaner do
     end
   end
 
-  # Fallback libc detection using ldd
   defp detect_libc_fallback do
     case System.cmd("ldd", ["--version"]) do
       {output, 0} ->
@@ -368,9 +342,7 @@ defmodule Batamanta.EnvCleaner do
     end
   end
 
-  # Try to find mix in the downloaded ERTS, fall back to system
   defp find_mix_in_erts_or_system(erts_path) do
-    # First try in ERTS bin
     mix_in_erts = Path.join(erts_path, "bin/mix")
     if File.regular?(mix_in_erts), do: mix_in_erts, else: nil
   end

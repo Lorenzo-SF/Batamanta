@@ -32,17 +32,9 @@ defmodule Batamanta.Packager do
       File.mkdir_p!(temp)
       tar_path = Path.join(temp, "payload.tar")
 
-      # FIX (Bug 1): copy the ERTS cache to a temp dir BEFORE any modification.
-      # Previously, prepare_erts() operated directly on erts_path (the user's
-      # ~/.cache/batamanta/... directory), destroying it permanently by deleting
-      # erts-<version>/, misc/, src/ etc. from the cache. Every subsequent
-      # batamanta build or binary execution would then fail because those
-      # directories were gone. We now work on a private copy inside temp/.
       erts_work_path = Path.join(temp, "erts_work")
       File.mkdir_p!(erts_work_path)
       File.cp_r!(erts_path, erts_work_path)
-      # cp_r! copies the *contents* of erts_path into erts_work_path, so the
-      # working copy is at erts_work_path itself.
       erts_work = erts_work_path
 
       prepare_erts(erts_work)
@@ -79,8 +71,6 @@ defmodule Batamanta.Packager do
     ensure_executable_permissions(erts_path)
   end
 
-  # Some OTP tarballs nest the real erlexec/beam.smp inside an erts-X.Y/ subdir.
-  # Flatten it so that erts_path/bin/ always contains erlexec directly.
   defp flatten_nested_erts(erts_path) do
     nested_erts = Path.wildcard(Path.join(erts_path, "erts-*"))
 
@@ -181,25 +171,17 @@ defmodule Batamanta.Packager do
   # BOOT FILE PREPARATION
   # ============================================================================
 
-  # FIX (Bug 2): guarantee that releases/<version>/start.boot exists in the
-  # packaged release so that the Rust launcher can always find it via
-  # releases_version_dir/start.boot without falling back to a glob search that
-  # might pick the wrong .boot file (e.g. start_clean.boot).
-  # We also keep the bin/start.boot copy as a secondary fallback.
   @spec prepare_start_boot(Path.t(), String.t(), Path.t()) :: :ok
   defp prepare_start_boot(rel_path, app_name, erts_work) do
     rel_path_abs = Path.absname(rel_path)
     bin_path = Path.join(rel_path_abs, "bin")
 
-    # Determine the release version from start_erl.data (already available
-    # from the mix release before update_start_erl_data rewrites it).
     version = read_release_version(rel_path_abs)
     version_dir = Path.join([rel_path_abs, "releases", version])
 
     primary_dst = Path.join(version_dir, "start.boot")
     secondary_dst = Path.join(bin_path, "start.boot")
 
-    # Try to find the best .boot source using the same priority logic as before.
     boot_source = find_best_boot(rel_path_abs, bin_path, app_name)
 
     case boot_source do
@@ -207,20 +189,15 @@ defmodule Batamanta.Packager do
         :ok
 
       src ->
-        # Write to releases/<version>/start.boot (primary location Rust looks for)
         unless File.exists?(primary_dst) do
           File.mkdir_p!(version_dir)
           File.cp!(src, primary_dst)
         end
 
-        # Write to bin/start.boot (secondary/fallback location)
         unless File.exists?(secondary_dst) do
           File.mkdir_p!(bin_path)
           File.cp!(src, secondary_dst)
         end
-
-        # Also ensure sys.config and vm.args exist in version_dir so erlexec
-        # can use -config and -args_file (required for a correct Elixir release boot).
         ensure_sys_config(rel_path_abs, version_dir, erts_work)
         ensure_vm_args(rel_path_abs, version_dir)
     end
@@ -277,12 +254,10 @@ defmodule Batamanta.Packager do
     end
   end
 
-  # Ensure sys.config exists in the version dir. If not, create a minimal one.
   defp ensure_sys_config(rel_path_abs, version_dir, _erts_work) do
     dst = Path.join(version_dir, "sys.config")
 
     unless File.exists?(dst) do
-      # Search for any sys.config in the release
       found =
         Path.wildcard(Path.join([rel_path_abs, "releases", "**", "sys.config"]))
         |> List.first()
@@ -290,14 +265,12 @@ defmodule Batamanta.Packager do
       if found do
         File.cp!(found, dst)
       else
-        # Write a minimal no-op sys.config
         File.mkdir_p!(version_dir)
         File.write!(dst, "[].\\n")
       end
     end
   end
 
-  # Ensure vm.args exists in the version dir. If not, create a minimal one.
   defp ensure_vm_args(rel_path_abs, version_dir) do
     dst = Path.join(version_dir, "vm.args")
 
@@ -329,8 +302,6 @@ defmodule Batamanta.Packager do
         File.rm_rf!(mix_erts_path)
       end
     else
-      # If we can't determine the downloaded ERTS version, fall back to
-      # removing any erts-* directory that mix may have bundled.
       rel_path
       |> Path.join("erts-*")
       |> Path.wildcard()

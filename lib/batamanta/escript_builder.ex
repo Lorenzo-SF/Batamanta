@@ -52,12 +52,6 @@ defmodule Batamanta.EscriptBuilder do
   def build(config, banner_ctx, erts_path) do
     Logger.info(banner_ctx, ">> 📦 Running mix escript.build...")
 
-    # FIX: was `env: env_with_mix` (undefined). Now uses EnvCleaner.build_env/1
-    # which inherits the full process env (elixir, mix, MIX_HOME etc. stay
-    # available) and only overrides ERTS-related variables so `mix escript.build`
-    # compiles against the exact downloaded ERTS that will be bundled, preventing
-    # version mismatches at runtime when the binary is executed from a directory
-    # with a different ERTS configured via asdf/mise/kerl.
     {output, status} =
       System.cmd("mix", ["escript.build"],
         env: EnvCleaner.build_env(erts_path),

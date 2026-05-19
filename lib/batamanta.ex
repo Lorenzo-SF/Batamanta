@@ -7,14 +7,17 @@ defmodule Batamanta do
   System (ERTS) into a single static binary, eliminating any dependency on
   Erlang or Elixir being installed on the target machine.
 
+  ## Features
 
   - **Self-contained binaries**: No Erlang/Elixir installation required on target
   - **Cross-compilation**: Build for Linux (glibc/musl), macOS, and Windows from any platform
   - **Compression**: Uses Zstandard for optimal size/performance balance
   - **Multiple execution modes**: CLI, TUI, and Daemon support
-  - **Escript support**: Lightweight bundling for projects using `mix escript.build`
+  - **Escript format**: Lightweight bundling for projects using `mix escript.build`
+  - **Release format**: Full OTP release with supervisor tree
   - **Automatic Cleanup**: Wipes temporary build artifacts while preserving the ERTS cache
 
+  ## Configuration
 
   Add Batamanta to your dependencies and configure it in `mix.exs`:
 
@@ -22,10 +25,10 @@ defmodule Batamanta do
         [
           app: :my_app,
           version: "0.1.0",
-          deps: [{:batamanta, path: "...", runtime: false}],
+          deps: [{:batamanta, "~> 1.0", runtime: false}],
           batamanta: [
-            target_os: "linux",
-            target_arch: "x86_64",
+            format: :escript,
+            erts_target: :auto,
             execution_mode: :cli,
             compression: 3
           ]
@@ -36,23 +39,10 @@ defmodule Batamanta do
 
       $ mix batamanta
 
-
-  - `target_os` - Operating system: `"linux"`, `"macos"`, `"windows"`
-  - `target_arch` - Architecture: `"x86_64"`, `"aarch64"`
-  - `execution_mode` - Execution type: `:cli`, `:tui`, `:daemon`
-  - `compression` - Zstd compression level (1-19, default: 3)
-
-  Override configuration via CLI:
-
-      $ mix batamanta --target-os linux --target-arch aarch64 --compression 5
-
-
-      iex> Batamanta.version()
-      "1.3.0"
-
+  See `mix help batamanta` for all available options.
   """
 
-  @version "1.3.0"
+  @version "1.5.0"
 
   @doc """
   Returns the current version of Batamanta.
