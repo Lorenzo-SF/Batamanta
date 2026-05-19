@@ -6,7 +6,6 @@ defmodule Batamanta.ERTS.LibcDetector do
   uses glibc or musl libc. This is critical for selecting the correct ERTS
   build for cross-platform compatibility.
 
-  ## Detection Methods
 
   The detector uses these methods in order:
 
@@ -15,7 +14,6 @@ defmodule Batamanta.ERTS.LibcDetector do
   3. **/etc/os-release** - Fallback for known distributions
   4. **/proc/self/maps** - Advanced fallback
 
-  ## Examples
 
       iex> Batamanta.ERTS.LibcDetector.detect()
       :gnu
@@ -27,7 +25,6 @@ defmodule Batamanta.ERTS.LibcDetector do
 
   @type libc_type :: :gnu | :musl | :unknown
 
-  # Known musl-based distributions
   @musl_distros ~w(alpine void postmarketos)
 
   @doc """
@@ -38,7 +35,6 @@ defmodule Batamanta.ERTS.LibcDetector do
 
   Always returns either `:gnu` or `:musl` - never `:unknown` (uses fallback).
 
-  ## Examples
 
       iex> Batamanta.ERTS.LibcDetector.detect()
       :gnu
@@ -74,16 +70,15 @@ defmodule Batamanta.ERTS.LibcDetector do
       _ ->
         :unknown
     end
+  rescue
+    _e in ErlangError -> :unknown
   end
 
-  # Detect libc type from string output (shared logic)
   defp detect_libc_in_string(output) do
     cond do
-      # musl se identifica claramente
       String.match?(output, ~r/musl/i) ->
         :musl
 
-      # glibc tiene múltiples formatos
       String.match?(output, ~r/(?:glibc|GNU.*libc|GNU C Library)/i) ->
         :gnu
 
@@ -100,7 +95,6 @@ defmodule Batamanta.ERTS.LibcDetector do
   """
   @spec detect_by_loader() :: libc_type()
   def detect_by_loader do
-    # Loaders específicos de musl (más confiables)
     musl_loaders = [
       "/lib/ld-musl-x86_64.so.1",
       "/lib/ld-musl-aarch64.so.1",
@@ -109,7 +103,6 @@ defmodule Batamanta.ERTS.LibcDetector do
       "/lib/ld-musl-i386.so.1"
     ]
 
-    # Loaders de glibc
     gnu_loaders = [
       "/lib64/ld-linux-x86-64.so.2",
       "/lib/ld-linux-aarch64.so.1",
@@ -136,14 +129,12 @@ defmodule Batamanta.ERTS.LibcDetector do
         detect_by_os_release_content(content)
 
       _ ->
-        # Fallback final: asumir glibc (más común)
         :gnu
     end
   end
 
   @spec detect_by_os_release_content(String.t()) :: libc_type()
   defp detect_by_os_release_content(content) do
-    # Extraer ID y ID_LIKE para detección
     os_id = extract_os_id(content)
     os_like = extract_os_id_like(content)
 
@@ -154,7 +145,6 @@ defmodule Batamanta.ERTS.LibcDetector do
     end
   end
 
-  # Extract ID from os-release content
   defp extract_os_id(content) do
     case Regex.run(~r/^ID="?([^"\n]+)"?/im, content) do
       [_, id] -> String.downcase(id)
@@ -162,7 +152,6 @@ defmodule Batamanta.ERTS.LibcDetector do
     end
   end
 
-  # Extract ID_LIKE from os-release content
   defp extract_os_id_like(content) do
     case Regex.run(~r/^ID_LIKE="?([^"\n]+)"?/im, content) do
       [_, like] -> String.downcase(like)
@@ -170,13 +159,10 @@ defmodule Batamanta.ERTS.LibcDetector do
     end
   end
 
-  # Check if distribution is musl-based
   defp musl_distro?(os_id, os_like) do
-    # Check ID directly
     if os_id in @musl_distros do
       true
     else
-      # Check ID_LIKE (space-separated list)
       os_like
       |> String.split(~r/\s+/)
       |> Enum.any?(&(&1 in @musl_distros))
@@ -201,15 +187,12 @@ defmodule Batamanta.ERTS.LibcDetector do
 
   defp detect_by_proc_maps_content(content) do
     cond do
-      # Buscar referencias explícitas a musl
       String.match?(content, ~r/(?:libc\.musl|ld-musl)/) ->
         :musl
 
-      # Referencias a glibc
       String.match?(content, ~r/libc-(?:2|6)\./) ->
         :gnu
 
-      # libc.so genérico - verificar path
       String.match?(content, ~r/libc\.so/) ->
         if String.match?(content, ~r/libc-musl/), do: :musl, else: :gnu
 

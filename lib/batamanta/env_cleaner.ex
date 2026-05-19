@@ -77,7 +77,6 @@ defmodule Batamanta.EnvCleaner do
   def erts_env(erts_path, include_mix \\ true) do
     erts_bin = Path.join(erts_path, "bin")
 
-    # Find mix if available (might be in a separate location)
     mix_bin =
       if include_mix do
         find_mix_in_erts_or_system(erts_path)
@@ -85,11 +84,9 @@ defmodule Batamanta.EnvCleaner do
         nil
       end
 
-    # Build path with ERTS bin at the front (highest priority)
     current_path = System.get_env("PATH") || ""
     cleaned_path = clean_path(current_path)
 
-    # Prepend ERTS bin (and mix if found)
     new_path =
       case mix_bin do
         nil -> "#{erts_bin}:#{cleaned_path}"
@@ -101,6 +98,60 @@ defmodule Batamanta.EnvCleaner do
     |> Map.put("ERL_AFLAGS", "-kernel shell_history enabled")
     |> Map.to_list()
     |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+  end
+
+  @doc """
+  Returns the environment for running `mix release` / `mix escript.build`
+  during the batamanta build phase.
+
+  ## Why not `erts_env/1`?
+
+  `System.cmd` with the `env:` option uses `Port.open` underneath, which
+  **replaces** the child process environment entirely with the given list —
+  it does not merge. `erts_env/1` starts from `base_environment/0`, a
+  whitelist of only 7 variables (HOME, USER, LANG, …). That strips
+  `elixir`, `mix`, `MIX_HOME`, `HEX_HOME`, `MIX_REBAR3`, etc., making
+  `mix release` fail with "elixir: No such file or directory".
+
+  ## What this function does
+
+  Starts from the **full** current process environment (`System.get_env()`),
+  then applies surgical overrides:
+
+  1. Prepends the downloaded ERTS `bin/` to `PATH` so `erlexec` / `erl`
+     from the bundled ERTS win over any asdf/mise/kerl shim.
+  2. Sets `ROOTDIR`, `BINDIR`, `ERL_ROOTDIR` to the bundled ERTS so OTP
+     locates its own libs from the right place.
+  3. Clears `ERL_FLAGS`, `ERL_AFLAGS`, `ERL_ZFLAGS` so no stale shell
+     flags bleed into the compilation BEAM.
+  4. Clears `ASDF_ERLANG_VERSION` and `MISE_ERLANG_VERSION` so that even
+     if asdf/mise shims are still on PATH (needed for `elixir`/`mix`),
+     they forward `erl` calls to whichever `erl` is first on PATH — which
+     is our bundled one.
+
+  `elixir`, `mix`, `MIX_HOME`, `HEX_HOME`, hex cache, rebar, and every
+  other build tool remain accessible because the full env is inherited.
+  """
+  @spec build_env(Path.t()) :: [{binary(), binary()}]
+  def build_env(erts_path) do
+    erts_bin = Path.join(erts_path, "bin") |> to_string()
+
+    current_path = System.get_env("PATH") || ""
+
+    new_path = "#{erts_bin}:#{current_path}"
+
+    System.get_env()
+    |> Map.put("PATH", new_path)
+    |> Map.put("ROOTDIR", erts_path |> to_string())
+    |> Map.put("BINDIR", erts_bin)
+    |> Map.put("ERL_ROOTDIR", erts_path |> to_string())
+    |> Map.put("ERL_FLAGS", "")
+    |> Map.put("ERL_AFLAGS", "")
+    |> Map.put("ERL_ZFLAGS", "")
+    |> Map.delete("ASDF_ERLANG_VERSION")
+    |> Map.delete("MISE_ERLANG_VERSION")
+    |> Map.delete("KERL_ENABLE_PROMPT")
+    |> Map.to_list()
   end
 
   @doc """
@@ -176,29 +227,20 @@ defmodule Batamanta.EnvCleaner do
     path_lower = String.downcase(path)
 
     Enum.any?([
-      # asdf (all versions)
       String.contains?(path_lower, ".asdf"),
       String.contains?(path_lower, "asdf/shims"),
-      # mise
       String.contains?(path_lower, ".mise"),
       String.contains?(path_lower, "mise/shims"),
-      # kerl
       String.contains?(path_lower, "kerl"),
-      # evm (Erlang version manager)
       String.contains?(path_lower, ".evm"),
-      # goenv (for completeness)
       String.contains?(path_lower, "goenv"),
-      # rbenv, pyenv, etc.
       String.contains?(path_lower, ".rbenv"),
       String.contains?(path_lower, "pyenv"),
-      # nvm (Node)
       String.contains?(path_lower, "nvm"),
-      # rvenv (Rust)
       String.contains?(path_lower, "rvenv")
     ])
   end
 
-  # Common system Erlang/Elixir installation paths (platform-aware)
   defp system_paths do
     erlang_root = :code.root_dir() |> to_string()
 
@@ -263,13 +305,10 @@ defmodule Batamanta.EnvCleaner do
     ]
   end
 
-  # Detect libc type on Linux
   defp detect_libc do
     case :os.type() do
       {:unix, :linux} ->
-        # Try to detect using the batamanta module if available
         try do
-          # Try calling via code module for lazy loading
           case Code.ensure_loaded(Batamanta.ERTS.LibcDetector) do
             {:module, _} ->
               case Batamanta.ERTS.LibcDetector.detect() do
@@ -278,7 +317,6 @@ defmodule Batamanta.EnvCleaner do
               end
 
             {:error, _} ->
-              # Fallback: use ldd
               detect_libc_fallback()
           end
         rescue
@@ -290,7 +328,6 @@ defmodule Batamanta.EnvCleaner do
     end
   end
 
-  # Fallback libc detection using ldd
   defp detect_libc_fallback do
     case System.cmd("ldd", ["--version"]) do
       {output, 0} ->
@@ -305,9 +342,7 @@ defmodule Batamanta.EnvCleaner do
     end
   end
 
-  # Try to find mix in the downloaded ERTS, fall back to system
   defp find_mix_in_erts_or_system(erts_path) do
-    # First try in ERTS bin
     mix_in_erts = Path.join(erts_path, "bin/mix")
     if File.regular?(mix_in_erts), do: mix_in_erts, else: nil
   end

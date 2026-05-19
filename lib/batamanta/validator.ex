@@ -5,32 +5,25 @@ defmodule Batamanta.Validator do
   This module ensures that the combination of OS, architecture, OTP version,
   Elixir version, and execution mode is valid and supported.
 
-  ## Compatibility Matrix
 
-  ### Supported OS
   - `:macos` - macOS 11+ (Big Sur and later)
   - `:linux` - Linux with glibc (Debian, Ubuntu, Arch, Fedora, etc.)
   - `:linux_musl` - Linux with musl (Alpine)
   - `:windows` - Windows 10+ (limited support)
 
-  ### Supported Architectures
   - `:x86_64` - Intel/AMD 64-bit
   - `:aarch64` - ARM 64-bit (Apple Silicon, ARM servers)
 
-  ### Supported OTP Versions
   - OTP 25+ (minimum supported)
   - OTP 26, 27, 28+ (recommended)
 
-  ### Supported Elixir Versions
   - Elixir 1.15+ (minimum supported)
   - Elixir 1.16, 1.17, 1.18+ (recommended)
 
-  ### Supported Execution Modes
   - `:cli` - Command-line interface (all platforms)
   - `:tui` - Text user interface (Unix only)
   - `:daemon` - Background daemon (Unix only)
 
-  ## Examples
 
       iex> Batamanta.Validator.validate!(os: "linux", arch: "x86_64", mode: :cli)
       :ok
@@ -57,10 +50,8 @@ defmodule Batamanta.Validator do
   @doc """
   Validates the configuration and returns `:ok` or raises an error.
 
-  ## Parameters
     - `config` - Keyword list with validation parameters
 
-  ## Examples
 
       iex> validate!(os: "linux", arch: "x86_64", mode: :cli)
       :ok
@@ -96,7 +87,6 @@ defmodule Batamanta.Validator do
   """
   @spec valid_combination?(map()) :: boolean()
   def valid_combination?(%{os: os, mode: mode}) do
-    # TUI and daemon are not supported on Windows
     if os == "windows" and mode in [:tui, :daemon] do
       false
     else
@@ -105,8 +95,6 @@ defmodule Batamanta.Validator do
   end
 
   def valid_combination?(_), do: false
-
-  # Private validation functions
 
   defp validate_os(config) do
     case Keyword.get(config, :os) do
@@ -183,7 +171,6 @@ defmodule Batamanta.Validator do
         config
 
       version ->
-        # Normalize version to semver format (X.Y.Z)
         normalized_version = normalize_version(version)
 
         if Version.compare(normalized_version, @min_elixir_version) == :lt do
@@ -195,7 +182,6 @@ defmodule Batamanta.Validator do
     end
   end
 
-  # Normalize version strings to semver format
   defp normalize_version(version) when is_binary(version) do
     parts = String.split(version, ".")
 

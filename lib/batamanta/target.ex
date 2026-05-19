@@ -5,14 +5,12 @@ defmodule Batamanta.Target do
   Provides functions to resolve ERTS targets into Rust target triples
   and platform-specific configuration.
 
-  ## New Unified Configuration
 
   Use `:erts_target` atoms for unified platform specification:
 
       iex> Batamanta.Target.erts_target_to_rust(:ubuntu_22_04_x86_64)
       "x86_64-unknown-linux-gnu"
 
-  ## Supported ERTS Targets
 
   | Target Atom | OS | Arch | Libc | Rust Target |
   |-------------|-----|------|------|-------------|
@@ -37,11 +35,9 @@ defmodule Batamanta.Target do
         }
 
   # ============================================================================
-  # MATRIZ UNIFICADA DE TARGETS
   # ============================================================================
 
   @target_matrix %{
-    # Linux glibc (Ubuntu 22.04 para máxima compatibilidad)
     ubuntu_22_04_x86_64: %{
       os: "linux",
       arch: "x86_64",
@@ -60,8 +56,6 @@ defmodule Batamanta.Target do
       erts_arch: "aarch64",
       display: "Linux aarch64 (glibc)"
     },
-
-    # Linux musl (Alpine)
     alpine_3_19_x86_64: %{
       os: "linux",
       arch: "x86_64",
@@ -80,8 +74,6 @@ defmodule Batamanta.Target do
       erts_arch: "aarch64",
       display: "Linux aarch64 (musl)"
     },
-
-    # macOS
     macos_12_x86_64: %{
       os: "macos",
       arch: "x86_64",
@@ -100,8 +92,6 @@ defmodule Batamanta.Target do
       erts_arch: "aarch64",
       display: "macOS aarch64 (Apple Silicon)"
     },
-
-    # Windows
     windows_x86_64: %{
       os: "windows",
       arch: "x86_64",
@@ -116,13 +106,10 @@ defmodule Batamanta.Target do
   @doc """
   Resolves an ERTS target atom to comprehensive target information.
 
-  ## Parameters
     - `erts_target` - Target atom (e.g., `:ubuntu_22_04_x86_64`)
 
-  ## Returns
     `{:ok, target_info_map}` or `{:error, reason}`
 
-  ## Examples
 
       iex> Batamanta.Target.resolve(:ubuntu_22_04_x86_64)
       {:ok, %{os: "linux", arch: "x86_64", libc: "gnu", ...}}
@@ -143,7 +130,6 @@ defmodule Batamanta.Target do
   @doc """
   Converts an ERTS target atom to a Rust target triple.
 
-  ## Examples
 
       iex> Batamanta.Target.erts_target_to_rust(:ubuntu_22_04_x86_64)
       "x86_64-unknown-linux-gnu"
@@ -163,7 +149,6 @@ defmodule Batamanta.Target do
   @doc """
   Converts an ERTS target atom to a user-friendly binary name.
 
-  ## Examples
 
       iex> Batamanta.Target.erts_target_to_display(:ubuntu_22_04_x86_64)
       "Linux x86_64 (glibc)"
@@ -180,7 +165,6 @@ defmodule Batamanta.Target do
   @doc """
   Gets the target info map for a given target atom.
 
-  ## Examples
 
       iex> Batamanta.Target.get_target_info(:ubuntu_22_04_x86_64)
       %{os: "linux", arch: "x86_64", libc: "gnu", ...}
@@ -214,7 +198,6 @@ defmodule Batamanta.Target do
 
   Delegates to `Batamanta.ERTS.Fetcher.detect_host_target/0`.
 
-  ## Examples
 
       iex> Batamanta.Target.detect_host()
       {:ok, :ubuntu_22_04_x86_64}
@@ -230,7 +213,6 @@ defmodule Batamanta.Target do
 
   Delegates to `Batamanta.ERTS.LibcDetector.detect/0`.
 
-  ## Examples
 
       iex> Batamanta.Target.detect_libc()
       :gnu
@@ -255,7 +237,6 @@ defmodule Batamanta.Target do
 
   Shows a warning if there's a mismatch but doesn't fail.
 
-  ## Examples
 
       iex> Batamanta.Target.validate_libc!(:ubuntu_22_04_x86_64)
       :ok
@@ -319,14 +300,11 @@ defmodule Batamanta.Target do
   @doc """
   Resolves `:auto` or string/atom target to a concrete ERTS target atom.
 
-  ## Parameters
     - `target` - `:auto`, atom, or string
     - `config` - Optional config map with `:force_os`, `:force_arch`, `:force_libc`
 
-  ## Returns
     `{:ok, erts_target_atom}` or `{:error, reason}`
 
-  ## Examples
 
       iex> Batamanta.Target.resolve_auto(:auto, %{})
       {:ok, :ubuntu_22_04_x86_64}
@@ -380,7 +358,6 @@ defmodule Batamanta.Target do
   end
 
   # ============================================================================
-  # FUNCIONES AUXILIARES
   # ============================================================================
 
   @spec build_target_from_overrides(map()) :: {:ok, erts_target()} | {:error, String.t()}
@@ -409,7 +386,6 @@ defmodule Batamanta.Target do
   @doc """
   Legacy compatibility: converts old target_os/target_arch to new erts_target.
 
-  ## Examples
 
       iex> Batamanta.Target.from_legacy("linux", "x86_64")
       :ubuntu_22_04_x86_64

@@ -5,7 +5,6 @@ defmodule Mix.Tasks.Batamanta do
   This task orchestrates the fetching of ERTS, packaging of the release/escript,
   and compilation of the Rust wrapper.
 
-  ## Output Formats
 
   Batamanta supports two output formats:
   - `:release` (default) - Full OTP release with supervisor tree
@@ -17,19 +16,16 @@ defmodule Mix.Tasks.Batamanta do
         format: :escript
       ]
 
-  ## OTP Version Control
 
   **User specifies, user owns.** If you specify `otp_version`, that exact version
   is used. If not specified (auto mode), a conservative fallback is used.
 
       batamanta: [
-        otp_version: "28.1"  # Uses exact version, fails if not available
       ]
 
   In auto mode (no version specified), the system tries:
   - 28.0 → 28.1 → 28.2 → ... (fallback to first available)
 
-  ## Automatic Cleanup and Cache
 
   Batamanta handles its own garbage. After each successful compilation, it:
   - **Removes** `bat_cargo_cache` from the system temp directory
@@ -38,25 +34,13 @@ defmodule Mix.Tasks.Batamanta do
 
   To manually wipe the entire cache (including downloaded ERTS), use `mix batamanta.clean`.
 
-  ## Environment Isolation
-
-  Batamanta isolates the build environment to ensure that Erlang/Elixir versions
-  from managers like `asdf`, `mise`, or `kerl` do not interfere. It sanitizes the
-  `PATH` and keeps only essential system variables (`HOME`, `USER`, `TMPDIR`,
-  `LANG`, `SHELL`, `TERM`, `SSH_AUTH_SOCK`) to guarantee build consistency.
-
-  ## ERTS Target Configuration
-
   Use `:erts_target` for unified platform specification:
 
       batamanta: [
-        erts_target: :auto,              # Auto-detect or specific atom
         execution_mode: :cli,
         compression: 3,
-        format: :escript                 # or :release
       ]
 
-  ## Supported ERTS Targets
 
   | Target Atom | Description |
   |-------------|-------------|
@@ -69,19 +53,14 @@ defmodule Mix.Tasks.Batamanta do
   | `:macos_12_arm64` | macOS Apple Silicon |
    | `:windows_x86_64` | Windows x86_64 |
 
-  ## Manual Overrides
 
   Force specific platform regardless of host:
 
       batamanta: [
-        erts_target: :alpine_3_19_x86_64,  # Force Alpine musl
-        force_os: "linux",                  # Or use individual overrides
         force_arch: "x86_64",
         force_libc: "musl",
-        binary_name: "my_app"               # Force binary name
       ]
 
-  ## Binary Name
 
   You can force the binary name by setting `:binary_name` in the config:
 
@@ -89,10 +68,8 @@ defmodule Mix.Tasks.Batamanta do
         binary_name: "my_custom_binary"
       ]
 
-  ## Usage
       mix batamanta
 
-  ## CLI Options
   - `--erts-target` - Override ERTS target atom
   - `--otp-version` - Specify exact OTP version (e.g., "28.1")
   - `--force-os` - Force OS (linux, macos, windows)
@@ -120,46 +97,37 @@ defmodule Mix.Tasks.Batamanta do
   def run(args) do
     validate_toolchain!()
 
-    # Clean up any stale temp directories from previous runs before starting
     cleanup_stale_temporaries()
 
     opts = parse_options(args)
     config = Mix.Project.config()
     bata_config = Keyword.get(config, :batamanta, [])
 
-    # Resolve format: CLI option > config > auto-detect
     format = resolve_format(opts, bata_config, config)
 
-    # Resolve ERTS configuration
     erts_target = resolve_erts_target(opts, bata_config)
     override_config = build_override_config(opts, bata_config)
     binary_name = override_config.binary_name
 
-    # Resolve target and get info
     {:ok, resolved_target} = Target.resolve_auto(erts_target, override_config)
     target_info = Target.get_target_info(resolved_target)
 
-    # Get OTP version
     {otp_version, version_mode} = resolve_otp_version(opts, bata_config)
 
-    # Build banner (if enabled) - returns context for streaming logs
     show_banner = Keyword.get(bata_config, :show_banner, true)
 
     banner_ctx =
       build_banner(otp_version, target_info, resolved_target, show_banner, version_mode, format)
 
-    # Validate configuration
     execution_mode = Keyword.get(bata_config, :execution_mode, :cli)
     Validator.validate!(os: target_info.os, arch: target_info.arch, mode: execution_mode)
 
-    # 🔴 CRÍTICO: Validar libc para Linux
     if target_info.os == "linux" do
       Target.validate_libc!(resolved_target)
     end
 
     compression = opts[:compression] || bata_config[:compression] || 3
 
-    # Fetch ERTS and execute appropriate pipeline
     with {:ok, erts_path} <-
            fetch_erts({otp_version, version_mode}, resolved_target, target_info, banner_ctx) do
       execute_pipeline(
@@ -184,29 +152,24 @@ defmodule Mix.Tasks.Batamanta do
   3. Auto-detect: if project has `:escript` config, use `:escript`, else `:release`
   """
   def resolve_format(opts, bata_config, project_config) do
-    # 1. Check CLI option
     if format = Keyword.get(opts, :format) do
       normalized = normalize_format(format)
       validate_format!(normalized)
       normalized
     else
-      # 2. Check config
       if format = Keyword.get(bata_config, :format) do
         validate_format!(format)
         format
       else
-        # 3. Auto-detect from project config
         auto_detected_format(project_config)
       end
     end
   end
 
-  # Normalize format to atom (CLI passes strings)
   defp normalize_format(format) when is_binary(format), do: String.to_atom(format)
   defp normalize_format(format) when is_atom(format), do: format
 
   defp auto_detected_format(config) do
-    # If project has :escript config, it's designed for escript
     if Keyword.has_key?(config, :escript) do
       :escript
     else
@@ -269,7 +232,6 @@ defmodule Mix.Tasks.Batamanta do
   - version string
   - mode: :explicit (user specified) or :auto (detected from system)
 
-  ## User Control
   - If user specifies `otp_version` in config or CLI, that exact version is used
   - If no version specified (auto mode), uses conservative fallback (tries 28.0, 28.1, etc.)
   """
@@ -285,11 +247,7 @@ defmodule Mix.Tasks.Batamanta do
     end
   end
 
-  # Fetches ERTS based on version and mode.
   defp fetch_erts({otp_version, mode}, resolved_target, _target_info, banner_ctx) do
-    # Note: The fetcher already handles all logging (URL, fetching, cached, etc.)
-    # to avoid duplicate messages. The caller should not print additional messages.
-
     case ERTS.Fetcher.fetch(otp_version, resolved_target, version_mode: mode) do
       {:ok, erts_path} ->
         {:ok, erts_path}
@@ -335,7 +293,6 @@ defmodule Mix.Tasks.Batamanta do
     end
   end
 
-  # Release pipeline (original behavior)
   defp execute_release_pipeline(
          config,
          erts_target,
@@ -347,14 +304,14 @@ defmodule Mix.Tasks.Batamanta do
        ) do
     Logger.info(banner_ctx, ">> 📦 Creating Release...")
 
-    # Get clean environment (without asdf/mise/kerl paths)
-    clean_env = EnvCleaner.clean_env_tuples()
-    env_with_mix = [{"MIX_ENV", "prod"} | clean_env]
+    build_env =
+      EnvCleaner.build_env(erts_path)
+      |> Map.new()
+      |> Map.put("MIX_ENV", "prod")
 
-    # Run release isolated in a subprocess to ensure compiler/mix stdout is totally silenced
     {out, status} =
       System.cmd("mix", ["release", "--overwrite", "--quiet"],
-        env: env_with_mix,
+        env: build_env,
         stderr_to_stdout: true
       )
 
@@ -392,7 +349,6 @@ defmodule Mix.Tasks.Batamanta do
     end
   end
 
-  # Escript pipeline (new behavior)
   defp execute_escript_pipeline(
          config,
          erts_target,
@@ -404,7 +360,6 @@ defmodule Mix.Tasks.Batamanta do
        ) do
     Logger.info(banner_ctx, ">> 📦 Creating Escript...")
 
-    # Build the escript (pass erts_path to ensure build uses same ERTS as runtime)
     escript_path = EscriptBuilder.build(config, banner_ctx, erts_path)
 
     payload_path =
@@ -433,20 +388,13 @@ defmodule Mix.Tasks.Batamanta do
   end
 
   defp get_release_path(app) do
-    # The release is built with MIX_ENV=prod, so we need to construct the prod path
-    # Mix.Project.build_path() returns _build/<current_env>/<app>.beam
-    # We need to go up and change to prod
     current_build = Mix.Project.build_path()
 
-    # Extract project root by going up from _build/<env>/<app>.beam
     project_root =
       current_build
-      # _build/<env>
       |> Path.dirname()
-      # project root
       |> Path.dirname()
 
-    # Construct prod release path
     Path.join([project_root, "_build", "prod", "rel", Atom.to_string(app)])
     |> Path.absname()
   end
@@ -517,7 +465,6 @@ defmodule Mix.Tasks.Batamanta do
       ">> 🔢 ERTS: #{otp_version}#{mode_str}#{format_str}"
     ]
 
-    # Show banner with context to allow streaming logs and image update
     Banner.show_with_context(messages,
       show_banner: show_banner,
       on_success_image: "batamantaman_happy.png",
@@ -526,38 +473,31 @@ defmodule Mix.Tasks.Batamanta do
   end
 
   defp cleanup_temporaries(_ctx) do
-    # 1. Clean Rust cargo cache target dir
     cargo_target_dir = Path.join(System.tmp_dir!(), "bat_cargo_cache")
 
     if File.exists?(cargo_target_dir) do
       File.rm_rf(cargo_target_dir)
     end
 
-    # 2. Clean packaging / payload directories
     System.tmp_dir!()
     |> Path.join("bat_pkg_*")
     |> Path.wildcard()
     |> Enum.each(&File.rm_rf/1)
 
-    # 3. Clean rust build directories
     System.tmp_dir!()
     |> Path.join("bat_build_*")
     |> Path.wildcard()
     |> Enum.each(&File.rm_rf/1)
 
-    # 4. Clean batamanta extraction directories
     System.tmp_dir!()
     |> Path.join("batamanta_*")
     |> Path.wildcard()
     |> Enum.each(&File.rm_rf/1)
   end
 
-  # Cleans stale temp directories from previous runs on startup
-  # This ensures a clean state and prevents accumulation of old builds
   defp cleanup_stale_temporaries do
     temp_base = System.tmp_dir!()
 
-    # List of patterns to clean (old style - should cover most cases)
     patterns = [
       "bat_pkg_*",
       "bat_build_*",
@@ -572,13 +512,18 @@ defmodule Mix.Tasks.Batamanta do
       |> Path.wildcard()
       |> Enum.each(fn dir ->
         try do
-          # Only clean if it's older than 1 hour (in case current build is running)
           case File.stat(dir) do
             {:ok, %{mtime: mtime}} ->
-              age_seconds = NaiveDateTime.diff(NaiveDateTime.utc_now(), mtime, :second)
+              age_seconds = :erlang.system_time(:second) - mtime
 
               if age_seconds > 3600 do
-                File.rm_rf(dir)
+                lock_path = Path.join(dir, ".batamanta_lock")
+
+                if File.exists?(lock_path) do
+                  :skip
+                else
+                  File.rm_rf(dir)
+                end
               end
 
             _ ->
@@ -590,12 +535,9 @@ defmodule Mix.Tasks.Batamanta do
       end)
     end)
 
-    # Also clean Mix build artifacts in _build that might be stale
-    # but preserve the prod release if it exists (needed for packaging)
     clean_mix_build_artifacts()
   end
 
-  # Clean stale Mix build artifacts while preserving current release/escript
   defp clean_mix_build_artifacts do
     project_root =
       Mix.Project.build_path()
@@ -615,9 +557,10 @@ defmodule Mix.Tasks.Batamanta do
   defp clean_if_stale(dir) do
     case File.stat(dir) do
       {:ok, %{mtime: mtime}} ->
-        age_seconds = NaiveDateTime.diff(NaiveDateTime.utc_now(), mtime, :second)
+        age_seconds =
+          :calendar.datetime_to_gregorian_seconds(:calendar.universal_time()) -
+            :calendar.datetime_to_gregorian_seconds(mtime)
 
-        # Only clean if older than 24 hours
         if age_seconds > 86_400 do
           File.rm_rf(dir)
         end
