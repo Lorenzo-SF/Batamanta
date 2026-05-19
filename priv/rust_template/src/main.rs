@@ -478,12 +478,12 @@ export ERL_ZFLAGS=""
 unset ASDF_ERLANG_VERSION
 unset MISE_ERLANG_VERSION
 
-# Strip the internal -daemon sentinel from user-visible arguments.
-args=""
+# Strip the internal -daemon sentinel from user-visible arguments,
+# preserving each argument as a separate word (no quoting artifacts).
 for arg in "$@"; do
-    if [ "$arg" != "-daemon" ]; then
-        args="$args \"$arg\""
-    fi
+    shift
+    [ "$arg" = "-daemon" ] && continue
+    set -- "$@" "$arg"
 done
 
 # Invoke the bundled escript tool directly, passing the escript file as the
@@ -492,13 +492,13 @@ ESCRIPT_BIN="$BINDIR/escript"
 if [ ! -x "$ESCRIPT_BIN" ]; then
     # Fallback: some minimal ERTS builds only ship erlexec; use erl -run escript.
     ESCRIPT_BIN="$BINDIR/erl"
-    exec "$ESCRIPT_BIN" -noshell -run escript start "$ESCRIPT_FILE" $args
+    exec "$ESCRIPT_BIN" -noshell -run escript start "$ESCRIPT_FILE" "$@"
 fi
 
 if [ -n "{daemon_flag}" ]; then
-    exec "$ESCRIPT_BIN" "$ESCRIPT_FILE" -noshell $args
+    exec "$ESCRIPT_BIN" "$ESCRIPT_FILE" -noshell "$@"
 else
-    exec "$ESCRIPT_BIN" "$ESCRIPT_FILE" $args
+    exec "$ESCRIPT_BIN" "$ESCRIPT_FILE" "$@"
 fi
 "#,
         bindir = erts_bin_dir.display(),
@@ -584,7 +584,9 @@ fn run_with_erlexec(
         "-noshell".to_string(),
     ];
 
-    // Agregar argumentos del usuario
+    // Agregar argumentos del usuario (después de -extra -- para erlexec)
+    args.push("-extra".to_string());
+    args.push("--".to_string());
     for arg in env::args().skip(1) {
         args.push(arg);
     }
