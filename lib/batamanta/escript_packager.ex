@@ -164,15 +164,15 @@ defmodule Batamanta.EscriptPackager do
 
   # Copy binaries from the ERTS bin directory (may be nested under erts-X.Y/bin/).
   defp copy_erts_binaries(erts_bin_source, bin_dest) do
-    unless File.exists?(erts_bin_source) do
-      :ok
-    else
+    if File.exists?(erts_bin_source) do
       for entry <- File.ls!(erts_bin_source) do
         src = Path.join(erts_bin_source, entry)
         dest = Path.join(bin_dest, entry)
         copy_erts_entry(src, dest)
       end
 
+      :ok
+    else
       :ok
     end
   end
@@ -203,9 +203,7 @@ defmodule Batamanta.EscriptPackager do
   defp patch_erl_script(bin_dest) do
     erl_script = Path.join(bin_dest, "erl")
 
-    unless File.exists?(erl_script) do
-      :ok
-    else
+    if File.exists?(erl_script) do
       content = File.read!(erl_script)
 
       patched =
@@ -219,6 +217,8 @@ defmodule Batamanta.EscriptPackager do
         File.write!(erl_script, patched)
       end
 
+      :ok
+    else
       :ok
     end
   end
@@ -250,9 +250,7 @@ defmodule Batamanta.EscriptPackager do
     releases_source = Path.join(erts_source, "releases")
     releases_dest = Path.join(erts_dest, "releases")
 
-    unless File.exists?(releases_source) do
-      :ok
-    else
+    if File.exists?(releases_source) do
       File.mkdir_p!(releases_dest)
 
       start_erl = Path.join(releases_source, "start_erl.data")
@@ -261,6 +259,8 @@ defmodule Batamanta.EscriptPackager do
         File.cp!(start_erl, Path.join(releases_dest, "start_erl.data"))
       end
 
+      :ok
+    else
       :ok
     end
   end
