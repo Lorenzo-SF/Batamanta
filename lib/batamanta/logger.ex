@@ -8,19 +8,15 @@ defmodule Batamanta.Logger do
 
   alias Batamanta.Banner
 
-  # Banner context type - either a Banner.Context struct or nil
   @type banner_ctx :: map() | nil
 
   @doc """
   Logs a message through the banner or standard shell.
 
-  ## Examples
 
-      # With banner context (streaming mode)
       ctx = Batamanta.Banner.show_with_context(["initial"])
       Batamanta.Logger.info(ctx, "Processing...")
 
-      # Without banner (text mode)
       Batamanta.Logger.info(nil, "Processing...")
   """
   def info(nil, message) do
@@ -47,7 +43,6 @@ defmodule Batamanta.Logger do
   @doc """
   Creates a logger function that can be passed around.
 
-  ## Examples
 
       log = Batamanta.Logger.create_logger(ctx)
       log.("Message here")

@@ -1,7 +1,7 @@
 defmodule Batamanta.MixProject do
   use Mix.Project
 
-  @version "1.4.0"
+  @version "1.5.0"
   @source_url "https://github.com/Lorenzo-SF/Batamanta"
   @elixir_vsn "~> 1.15"
 
@@ -65,19 +65,16 @@ defmodule Batamanta.MixProject do
     [
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
-      {:excoveralls, "~> 0.18", only: :test, runtime: false}
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false},
+      {:excoveralls, "~> 0.18", only: :test, runtime: false},
+      {:xref_runner, "~> 1.2"}
     ]
   end
 
-  # P2 FIX: Eliminar rust.test del alias de test.
-  # Los tests unitarios de Elixir no necesitan compilar el Rust wrapper.
-  # El wrapper solo se compila cuando se ejecuta `mix batamanta`.
   defp aliases do
     [
       check: ["format", "credo --strict", "dialyzer"],
       "rust.test": ["cmd cargo test --manifest-path priv/rust_template/Cargo.toml"]
-      # Nota: No incluir "rust.test" en el alias de test porque requiere el payload
     ]
   end
 end
