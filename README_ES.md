@@ -13,8 +13,8 @@
   <a href="https://hexdocs.pm/batamanta">
     <img src="https://img.shields.io/badge/docs-hexdocs-blue" alt="HexDocs">
   </a>
-  <a href="https://github.com/Lorenzo-SF/Batamanta/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/Lorenzo-SF/Batamanta/ci.yml" alt="CI Status">
+  <a href="https://github.com/Lorenzo-SF/Batamanta/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/Lorenzo-SF/Batamanta/ci.yml?branch=main" alt="CI Status">
   </a>
   <img src="https://img.shields.io/badge/self--contained-binaries-success" alt="Self-contained">
   <img src="https://img.shields.io/badge/ERTS-embedded-critical" alt="ERTS Embedded">
@@ -104,6 +104,7 @@ def project do
     app: :mi_app,
     version: "0.1.0",
     batamanta: [
+      format: :escript,       # :escript | :release
       erts_target: :auto,        # Auto-detectar plataforma (RECOMENDADO)
       execution_mode: :cli,      # :cli | :tui | :daemon
       compression: 3,           # 1-19 (nivel zstd)
@@ -120,6 +121,7 @@ end
 |--------|------|---------|-------------|
 | `erts_target` | atom | `:auto` | Plataforma objetivo (ver abajo) |
 | `otp_version` | string | `:auto` | Versión OTP (ej: "28.1") |
+| `format` | atom | `:release`¹ | `:escript` o `:release` |
 | `execution_mode` | atom | `:cli` | `:cli`, `:tui`, o `:daemon` |
 | `compression` | integer | `3` | Nivel de compresión zstd (1-19) |
 | `binary_name` | string | nombre de app | Nombre personalizado del binario |
@@ -127,6 +129,8 @@ end
 | `force_os` | string | nil | Forzar SO: `"linux"`, `"macos"`, `"windows"` |
 | `force_arch` | string | nil | Forzar arquitectura: `"x86_64"`, `"aarch64"` |
 | `force_libc` | string | nil | Forzar libc: `"gnu"`, `"musl"` (solo Linux) |
+
+> ¹ Auto-detectado como `:escript` cuando el proyecto define `escript: [main_module: ...]` en `mix.exs`.
 
 **Nota para Linux**: El objetivo (glibc vs musl) se detecta automáticamente según tu distribución:
 - Debian, Ubuntu, Arch, Fedora, CachyOS → usa `linux-gnu`
@@ -224,6 +228,7 @@ mix batamanta --erts-target ubuntu_22_04_arm64 --compression 5
 
 | Flag | Descripción |
 |------|-------------|
+| `--format` | Formato de salida: `release` o `escript` |
 | `--erts-target` | Sobrescribir objetivo ERTS |
 | `--otp-version` | Versión OTP exacta (ej: "28.1") |
 | `--force-os` | Forzar SO: `linux`, `macos`, `windows` |
@@ -275,11 +280,13 @@ En modo auto, si la versión exacta no está disponible:
 
 ## Modos de Ejecución
 
-| Modo | Descripción | Plataforma |
-|------|-------------|-------------|
-| `:cli` | CLI estándar con stdin/stdout/stderr heredados | Todos |
-| `:tui` | UI de texto con modo terminal raw, navegación con teclas de flechas | Unix only |
-| `:daemon` | Ejecuta en segundo plano, sin E/S de terminal | Unix only |
+| Modo | Descripción | Modo de Terminal | Plataforma |
+|------|-------------|------------------|------------|
+| `:cli` | CLI estándar con stdin/stdout/stderr heredados | **Cooked** (modo canónico, entrada por líneas) | Todos |
+| `:tui` | UI de texto con modo terminal raw, navegación con teclas de flechas | **Raw** (entrada directa, sin buffering de línea) | Unix only |
+| `:daemon` | Ejecuta en segundo plano, sin E/S de terminal | N/A (desacoplado) | Unix only |
+
+> **Nota:** En modo `:cli` (cooked), la terminal procesa la entrada línea por línea - Enter envía la línea, backspace funciona normalmente, y teclas especiales como flechas no se capturan directamente. En modo `:tui` (raw), la app tiene control directo de la terminal y puede capturar pulsaciones individuales incluyendo teclas de flecha, teclas de función, etc.
 
 ---
 

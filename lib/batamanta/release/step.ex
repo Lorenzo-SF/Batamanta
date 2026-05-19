@@ -11,7 +11,6 @@ defmodule Batamanta.Release.Step do
   """
   @spec call(Mix.Release.t()) :: Mix.Release.t()
   def call(%Mix.Release{} = release) do
-    # For now, the base structure simply returns the struct intact.
     release
   end
 end

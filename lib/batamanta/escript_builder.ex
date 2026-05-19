@@ -5,18 +5,14 @@ defmodule Batamanta.EscriptBuilder do
   This module handles the generation of escripts using `mix escript.build`
   and provides utilities for locating and validating the generated output.
 
-  ## Usage
+  escript_path = EscriptBuilder.build(config, banner_ctx, erts_path)
 
-      escript_path = EscriptBuilder.build(config, banner_ctx, erts_path)
-      # Returns: "/path/to/project/_build/prod/lib/app_name/ebin/app_name"
-
-  ## Escript vs Release
 
   Escripts are lightweight executables that embed the Elixir runtime
   directly, unlike releases which include the full OTP system.
 
   | Aspect | Escript | Release |
-  |--------|---------|---------|
+  |--------|---------|---------| 
   | Size | ~15-30 MB | ~80-150 MB |
   | Startup | Fast | Slower |
   | Supervisor Tree | No | Yes |
@@ -35,23 +31,19 @@ defmodule Batamanta.EscriptBuilder do
   """
 
   alias Batamanta.EnvCleaner
-
   alias Batamanta.Logger
 
   @doc """
   Builds an escript using `mix escript.build`.
 
-  ## Parameters
 
   - `config` - Mix project config (from `Mix.Project.config()`)
   - `banner_ctx` - Banner context for logging
   - `erts_path` - Path to the ERTS that will be embedded (for build consistency)
 
-  ## Returns
 
   Path to the generated escript binary.
 
-  ## Raises
 
   - `Mix.Error` if escript build fails
   - `Mix.Error` if escript file is not found after build
@@ -60,52 +52,9 @@ defmodule Batamanta.EscriptBuilder do
   def build(config, banner_ctx, erts_path) do
     Logger.info(banner_ctx, ">> 📦 Running mix escript.build...")
 
-    # CRITICAL: Use the ERTS that will be embedded to ensure build-time
-    # and runtime ERTS are exactly the same (fixes asdf/version manager issue)
-    build_env = EnvCleaner.erts_env(erts_path, true)
-    env_with_mix = [{"MIX_ENV", "prod"} | build_env]
-
-    # Ensure dependencies are compiled first
-    Logger.info(banner_ctx, ">> 📦 Compiling dependencies...")
-
-    {_out, _status} =
-      System.cmd("mix", ["do", "deps.get", "--force"],
-        env: env_with_mix,
-        stderr_to_stdout: true
-      )
-
-    # Compile the project (without --warnings-as-errors to avoid false positives)
-    Logger.info(banner_ctx, ">> 📦 Compiling project...")
-
-    {compile_output, compile_status} =
-      System.cmd("mix", ["compile"],
-        env: env_with_mix,
-        stderr_to_stdout: true
-      )
-
-    # Log warnings but don't fail the build unless there are actual errors
-    if String.contains?(compile_output, "warning:") do
-      Logger.info(banner_ctx, ">> ⚠️  Compiler warnings detected:")
-
-      compile_output
-      |> String.split("\n")
-      |> Enum.filter(&String.contains?(&1, "warning:"))
-      |> Enum.take(5)
-      |> Enum.each(fn line -> Logger.info(banner_ctx, ">>    #{line}") end)
-    end
-
-    if compile_status != 0 do
-      Logger.error(banner_ctx, "Escript build failed during compilation:")
-      Logger.error(banner_ctx, compile_output)
-      Mix.raise("Mix compile failed. Check output above for details.")
-    end
-
-    # Build the escript
-    Logger.info(banner_ctx, ">> 📦 Building escript...")
-
     {output, status} =
       System.cmd("mix", ["escript.build"],
-        env: env_with_mix,
+        env: EnvCleaner.build_env(erts_path),
         stderr_to_stdout: true
       )
 
@@ -115,14 +64,12 @@ defmodule Batamanta.EscriptBuilder do
       Mix.raise("Mix escript.build failed. Check output above for details.")
     end
 
-    # Find the generated escript
     escript_path = find_escript_path(config)
 
     unless File.exists?(escript_path) do
       Mix.raise("Escript not found at expected path: #{escript_path}")
     end
 
-    # Validate escript
     validate_escript!(escript_path)
 
     Logger.info(banner_ctx, ">> ✅ Escript built: #{escript_path}")
@@ -143,11 +90,9 @@ defmodule Batamanta.EscriptBuilder do
     app_name = config[:app]
     escript_config = config[:escript] || []
 
-    # Check for custom path in escript config
     if custom_path = Keyword.get(escript_config, :path) do
       Path.join(project_root, custom_path)
     else
-      # Standard path: in project root (mix escript.build default)
       Path.join(project_root, Atom.to_string(app_name))
     end
   end
@@ -155,7 +100,6 @@ defmodule Batamanta.EscriptBuilder do
   @doc """
   Validates that the escript is a valid executable.
 
-  ## Checks
 
   1. File exists
   2. File is executable
@@ -168,7 +112,6 @@ defmodule Batamanta.EscriptBuilder do
       Mix.raise("Escript not found: #{escript_path}")
     end
 
-    # Check file size
     case File.stat(escript_path) do
       {:ok, %{size: size}} when size > 0 ->
         :ok
@@ -180,7 +123,6 @@ defmodule Batamanta.EscriptBuilder do
         Mix.raise("Cannot stat escript: #{reason}")
     end
 
-    # Validate magic bytes (shebang or ELF)
     validate_magic_bytes!(escript_path)
 
     :ok
@@ -213,7 +155,6 @@ defmodule Batamanta.EscriptBuilder do
     Keyword.get(escript_config, :main_module)
   end
 
-  # Gets the project root directory
   defp project_root do
     Mix.Project.build_path()
     |> Path.dirname()

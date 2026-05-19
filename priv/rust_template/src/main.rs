@@ -23,54 +23,39 @@ static TERMINAL_RESTORED: AtomicBool = AtomicBool::new(false);
 /// so we must pass the full merged environment.
 #[cfg(unix)]
 fn spawn_detached(program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<()> {
-    unsafe {
-        let pid = libc::fork();
-        if pid < 0 {
-            return Err(anyhow!("fork failed"));
-        }
-        if pid > 0 {
-            // Parent: give child time to start and return
+    use std::ffi::{CStr, CString};
+    use nix::unistd::{fork, setsid, execve, ForkResult};
+
+    match unsafe { fork()? } {
+        ForkResult::Parent { child: _ } => {
             std::thread::sleep(std::time::Duration::from_millis(500));
-            return Ok(());
+            Ok(())
         }
-        // Child: create new session (detaches from terminal)
-        libc::setsid();
-        // Close stdin, redirect stdout/stderr to /dev/null IF needed
-        libc::close(0);
-        libc::open("/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR);
-        // We let stdout and stderr connected to current terminal so testing/logs output correctly.
-        // If we strictly dup2 to /dev/null, everything printed directly to shell is silenced.
+        ForkResult::Child => {
+            setsid().context("setsid failed")?;
 
-        // Build full environment: inherit parent env + merge additional vars
-        let mut full_env: std::collections::HashMap<String, String> = std::env::vars().collect();
-        for (k, v) in env {
-            full_env.insert(k.to_string(), v.to_string());
+            // Build full environment: inherit parent env + merge additional vars
+            let mut full_env: std::collections::HashMap<String, String> = std::env::vars().collect();
+            for (k, v) in env {
+                full_env.insert(k.to_string(), v.to_string());
+            }
+
+            let env_vec: Vec<CString> = full_env
+                .iter()
+                .map(|(k, v)| CString::new(format!("{}={}", k, v)).unwrap())
+                .collect();
+            let env_refs: Vec<&CStr> = env_vec.iter().map(CString::as_c_str).collect();
+
+            let args_vec: Vec<CString> = std::iter::once(program)
+                .chain(args.iter().copied())
+                .map(|s| CString::new(s).unwrap())
+                .collect();
+            let args_refs: Vec<&CStr> = args_vec.iter().map(CString::as_c_str).collect();
+    let app_bin_maybe = CString::new(program).context("Failed to convert program")?;
+    let app_bin = app_bin_maybe.as_c_str();
+
+    execve(&app_bin, &args_refs, &env_refs)?; Ok(())
         }
-
-        let env_cstrings: Vec<std::ffi::CString> = full_env
-            .iter()
-            .map(|(k, v)| std::ffi::CString::new(format!("{}={}", k, v)).unwrap())
-            .collect();
-        let mut env_ptrs: Vec<*const libc::c_char> =
-            env_cstrings.iter().map(|s| s.as_ptr()).collect();
-        env_ptrs.push(std::ptr::null()); // null-terminate
-
-        // Build argv: argv[0] must be program name (POSIX requirement)
-        let program_cstr = std::ffi::CString::new(program).unwrap();
-        let arg_cstrings: Vec<std::ffi::CString> = args
-            .iter()
-            .map(|s| std::ffi::CString::new(*s).unwrap())
-            .collect();
-        let mut arg_ptrs: Vec<*const libc::c_char> = Vec::with_capacity(args.len() + 2);
-        arg_ptrs.push(program_cstr.as_ptr()); // argv[0] = program
-        for cs in &arg_cstrings {
-            arg_ptrs.push(cs.as_ptr());
-        }
-        arg_ptrs.push(std::ptr::null()); // null-terminate
-
-        libc::execve(program_cstr.as_ptr(), arg_ptrs.as_ptr(), env_ptrs.as_ptr());
-        // If execve returns, it failed
-        libc::_exit(1);
     }
 }
 
@@ -174,7 +159,8 @@ fn main() -> Result<ExitCode> {
     let exec_mode = get_exec_mode();
     let format = get_format();
 
-    // 🔴 FIX: Si es daemon, JAMÁS borramos la carpeta porque Erlang vive en background
+    // Daemon mode: NEVER cleanup temp dir because Erlang lives in background
+    // The spawned Erlang process outlives the Rust dispenser
     if exec_mode == "daemon" {
         _guard.cleanup = false;
     }
@@ -205,7 +191,7 @@ fn main() -> Result<ExitCode> {
         // ✅ Modo escript: ejecutar el escript directamente
         run_escript(&release_dir, &app_name, &exec_mode)?
     } else {
-        // 🔴 Modo release: usar erlexec con boot scripts
+        // Release mode: use erlexec with boot scripts (full OTP release)
         run_with_erlexec(&release_dir, &bin_dir, &release_lib, &app_name, &exec_mode)?
     };
 
@@ -289,21 +275,72 @@ fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
+            let path_val = format!("{}:{}", bindir_str, env::var("PATH").unwrap_or_default());
+            let erts_dir_str = erts_dir.to_string_lossy().into_owned();
             let env: Vec<(&str, &str)> = vec![
                 ("BINDIR", &bindir_str),
                 ("ERL_LIBS", &erl_libs_str),
+                ("ERL_ROOTDIR", &erts_dir_str),
                 ("ROOTDIR", &rootdir_str),
                 ("EMULATOR", "beam"),
+                // FIX: bundled ERTS bin first in PATH; neutralize any Erlang env vars
+                // from the shell (asdf/mise/kerl/manual install) that could cause
+                // BEAM startup to locate the wrong ERTS libraries.
+                ("PATH", &path_val),
+                ("ERL_FLAGS", ""),
+                ("ERL_AFLAGS", ""),
+                ("ERL_ZFLAGS", ""),
+                // ESCRIPT_EMULATOR avoids escript calling the erl shell script
+                // which has a hard-coded erts-X.Y/ BINDIR path baked in.
+                ("ESCRIPT_EMULATOR", "erlexec"),
             ];
             spawn_detached(&wrapper_script_str, &args, &env)?;
             return Ok(0);
         } else {
             let mut c = Command::new(&wrapper_script_str);
-            c.stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
+            // FIX: set env on the wrapper subprocess explicitly.
+            // System.cmd(env:) in Elixir replaces the env entirely (Port behaviour),
+            // but here in Rust, Command::new inherits the parent env unless we
+            // override. We prepend the bundled ERTS bin to PATH and neutralize
+            // any Erlang env vars from the shell so the wrapper's `exec escript`
+            // uses only the bundled ERTS, ignoring asdf/mise/kerl/manual installs.
+            let bindir_str = erts_bin_dir.to_string_lossy().into_owned();
+            let erl_libs_str = erts_dir.join("lib").to_string_lossy().into_owned();
+            let rootdir_str = escript_path
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            c.env(
+                "PATH",
+                format!("{}:{}", bindir_str, env::var("PATH").unwrap_or_default()),
+            )
+            .env("BINDIR", &bindir_str)
+            .env("ERL_LIBS", &erl_libs_str)
+            .env("ERL_ROOTDIR", erts_dir.to_string_lossy().as_ref())
+            .env("ROOTDIR", &rootdir_str)
+            .env("EMULATOR", "beam")
+            .env("ERL_FLAGS", "")
+            .env("ERL_AFLAGS", "")
+            .env("ERL_ZFLAGS", "")
+            // ESCRIPT_EMULATOR avoids escript calling the erl shell script
+            // which has a hard-coded erts-X.Y/ BINDIR path baked in.
+            .env("ESCRIPT_EMULATOR", "erlexec")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
             c
         };
+
+        // Configurar raw mode ANTES de iniciar el escript si es modo TUI
+        if exec_mode == "tui" {
+            Command::new("stty")
+                .args(["-icanon", "-echo"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .ok();
+        }
 
         // Pasar argumentos de usuario
         cmd.args(env::args().skip(1));
@@ -338,7 +375,12 @@ fn run_escript(release_dir: &Path, app_name: &str, exec_mode: &str) -> Result<u8
         cmd.arg(&escript_path)
             .args(env::args().skip(1))
             .env("BINDIR", &erts_bin_dir)
-            .env("EMULATOR", "beam");
+            .env("ERL_ROOTDIR", erts_dir.to_string_lossy().as_ref())
+            .env("EMULATOR", "beam")
+            // FIX: neutralize Erlang env vars from the shell on Windows too.
+            .env("ERL_FLAGS", "")
+            .env("ERL_AFLAGS", "")
+            .env("ERL_ZFLAGS", "");
 
         if exec_mode == "daemon" {
             cmd.arg("-detached")
@@ -372,10 +414,10 @@ fn create_escript_wrapper(
     app_name: &str,
     exec_mode: &str,
 ) -> Result<PathBuf> {
-    use std::io::Write;
+    use std::io::Write; use uuid::Uuid;
 
     let wrapper_path =
-        env::temp_dir().join(format!("batamanta_escript_wrapper_{}", std::process::id()));
+        env::temp_dir().join(format!("batamanta_escript_wrapper_{}", Uuid::new_v4()));
 
     // El escript ya tiene el shebang, solo necesitamos configurar el PATH y vars
     let erts_lib_dir = erts_dir.join("lib");
@@ -385,40 +427,78 @@ fn create_escript_wrapper(
 
     let wrapper_content = format!(
         r#"#!/bin/sh
-# Batamanta escript wrapper
-# Generated automatically
+# Batamanta escript wrapper — generated automatically.
+#
+# We invoke the bundled OTP escript(1) tool DIRECTLY with the escript file
+# as its argument instead of exec-ing the escript file by path.  Exec-by-path
+# would trigger shebang (#!/usr/bin/env escript) resolution, which resolves
+# "escript" from the *inherited* PATH — possibly landing on the system OTP
+# and not the bundled one.  Direct invocation bypasses that entirely.
 
 BINDIR="{bindir}"
 ERL_ROOTDIR="{erts_dir}"
 ERL_LIBS="{erts_lib_dir}"
+ESCRIPT_FILE="{escript}"
 PROGNAME="{app_name}"
 
-# Configurar PATH para que erl/beam sean encontrables
+# Bundled ERTS bin must come first so every OTP tool (erl, escript, erlexec,
+# beam.smp) resolves to the bundled version, never to a system/asdf/mise shim.
 export PATH="$BINDIR:$PATH"
 
-# Variables de entorno para el escript
 export ROOTDIR="$ERL_ROOTDIR"
 export BINDIR="$BINDIR"
 export ERL_LIBS="$ERL_LIBS"
+export EMU="beam"
 export EMULATOR="beam"
 export PROGNAME="$PROGNAME"
 export RELEASE_ROOT="$ERL_ROOTDIR"
+# ERL_ROOTDIR must be exported too — the bundled `erl` script checks this
+# variable first.  Without it, `erl` falls back to the hard-coded path that
+# was baked in when the OTP tarball was built (typically something like
+# /opt/erlang/lib/erlang), which does not exist on the target machine.
+export ERL_ROOTDIR="$ERL_ROOTDIR"
 
-# Filtrar el flag -daemon de los argumentos si está presente
-# (lo añade setsid, no el usuario)
-args=""
+# ESCRIPT_EMULATOR tells escript(1) which binary to use as the Erlang
+# emulator.  The default is "erl" (a shell script that hardcodes the
+# ERTS version into BINDIR and calls erlexec).  Because batamanta
+# flattens the ERTS directory structure — there is no erts-X.Y/
+# subdirectory — the erl script's hard-coded path points at nothing.
+# Using "erlexec" directly avoids that: erlexec uses environment
+# variables (BINDIR, ROOTDIR, EMU, PROGNAME) dynamically and has no
+# baked-in version directory.
+export ESCRIPT_EMULATOR="erlexec"
+
+# Neutralize any Erlang env vars inherited from the shell.  These can alter
+# BEAM startup flags or point to the wrong OTP installation.
+export ERL_FLAGS=""
+export ERL_AFLAGS=""
+export ERL_ZFLAGS=""
+# Clear version-manager pins so their shims (if still in PATH for elixir/mix)
+# forward erl lookups to whichever erl is first — ours.
+unset ASDF_ERLANG_VERSION
+unset MISE_ERLANG_VERSION
+
+# Strip the internal -daemon sentinel from user-visible arguments,
+# preserving each argument as a separate word (no quoting artifacts).
 for arg in "$@"; do
-    if [ "$arg" != "-daemon" ]; then
-        args="$args $arg"
-    fi
+    shift
+    [ "$arg" = "-daemon" ] && continue
+    set -- "$@" "$arg"
 done
 
-# Ejecutar el escript con -noshell si es modo daemon
+# Invoke the bundled escript tool directly, passing the escript file as the
+# first argument.  This avoids any shebang/PATH ambiguity.
+ESCRIPT_BIN="$BINDIR/escript"
+if [ ! -x "$ESCRIPT_BIN" ]; then
+    # Fallback: some minimal ERTS builds only ship erlexec; use erl -run escript.
+    ESCRIPT_BIN="$BINDIR/erl"
+    exec "$ESCRIPT_BIN" -noshell -run escript start "$ESCRIPT_FILE" "$@"
+fi
+
 if [ -n "{daemon_flag}" ]; then
-    # Ejecutar con -noshell para que erl no intente abrir una terminal
-    exec "{escript}" -noshell $args
+    exec "$ESCRIPT_BIN" "$ESCRIPT_FILE" -noshell "$@"
 else
-    exec "{escript}" $args
+    exec "$ESCRIPT_BIN" "$ESCRIPT_FILE" "$@"
 fi
 "#,
         bindir = erts_bin_dir.display(),
@@ -504,19 +584,27 @@ fn run_with_erlexec(
         "-noshell".to_string(),
     ];
 
-    // Agregar argumentos del usuario
+    // Agregar argumentos del usuario (después de -extra -- para erlexec)
+    args.push("-extra".to_string());
+    args.push("--".to_string());
     for arg in env::args().skip(1) {
         args.push(arg);
     }
 
     // Spawn el proceso hijo
+    let erts_lib = release_dir.join("erts").join("lib");
+
     let mut child: std::process::Child = if exec_mode == "daemon" {
         // Usar spawn_detached para crear una nueva sesión (portable: Linux y macOS)
         let erlexec_str = erlexec.to_string_lossy().into_owned();
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let rootdir_str = release_dir.to_string_lossy().into_owned();
         let bindir_str = bin_path.to_string_lossy().into_owned();
-        let erl_libs_str = release_lib.to_string_lossy().into_owned();
+        let erl_libs_str = format!(
+            "{}:{}",
+            release_lib.display(),
+            erts_lib.display()
+        );
         let sys_config_str = releases_version_dir
             .join("sys.config")
             .to_string_lossy()
@@ -525,48 +613,99 @@ fn run_with_erlexec(
             .join("vm.args")
             .to_string_lossy()
             .into_owned();
-        let env: Vec<(&str, &str)> = vec![
-            ("ROOTDIR", &rootdir_str),
-            ("BINDIR", &bindir_str),
-            ("ERL_LIBS", &erl_libs_str),
-            ("RELEASE_ROOT", &rootdir_str),
+        let mut env = vec![
+            ("ROOTDIR", rootdir_str.as_str()),
+            ("BINDIR", bindir_str.as_str()),
+            ("ERL_LIBS", erl_libs_str.as_str()),
+            ("ERL_ROOTDIR", rootdir_str.as_str()),
+            ("RELEASE_ROOT", rootdir_str.as_str()),
             ("RELEASE_PROG", app_name),
-            ("RELEASE_SYS_CONFIG", &sys_config_str),
-            ("RELEASE_VM_ARGS", &vm_args_str),
+            ("RELEASE_SYS_CONFIG", sys_config_str.as_str()),
+            ("RELEASE_VM_ARGS", vm_args_str.as_str()),
             ("EMU", "beam"),
             ("PROGNAME", "erl"),
+            // FIX: neutralize Erlang env vars from the shell so the daemon BEAM
+            // uses only the bundled ERTS, ignoring asdf/mise/kerl/manual installs.
+            ("ERL_FLAGS", ""),
+            ("ERL_AFLAGS", ""),
+            ("ERL_ZFLAGS", ""),
         ];
+        let path_val = format!("{}:{}", bindir_str, env::var("PATH").unwrap_or_default());
+        env.push(("PATH", path_val.as_str()));
         spawn_detached(&erlexec_str, &args_refs, &env)?;
         return Ok(0);
     } else {
         // Modo normal: ejecutar directamente
+
+        // Configurar raw mode ANTES de iniciar el VM si es modo TUI
+        // El wrapper Rust tiene acceso al terminal real, a diferencia
+        // de los procesos spawnheados por el VM de Erlang.
+        if exec_mode == "tui" {
+            Command::new("stty")
+                .args(["-icanon", "-echo"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .ok();
+        }
+
+        let sys_config_path = releases_version_dir.join("sys.config");
+        let vm_args_path = releases_version_dir.join("vm.args");
+
         let mut cmd = Command::new(&erlexec);
         cmd.env("ROOTDIR", release_dir)
             .env("BINDIR", bin_path)
-            .env("ERL_LIBS", release_lib)
+            .env("ERL_LIBS", format!("{}:{}", release_lib.display(), erts_lib.display()))
+            .env("ERL_ROOTDIR", release_dir)
             .env("RELEASE_ROOT", release_dir)
             .env("RELEASE_PROG", app_name)
-            .env(
-                "RELEASE_SYS_CONFIG",
-                releases_version_dir.join("sys.config"),
-            )
-            .env("RELEASE_VM_ARGS", releases_version_dir.join("vm.args"))
+            .env("RELEASE_SYS_CONFIG", &sys_config_path)
+            .env("RELEASE_VM_ARGS", &vm_args_path)
             .env("EMU", "beam")
             .env("PROGNAME", "erl")
-            // Boot variables
+            // Neutralize Erlang env vars from the shell so the BEAM uses
+            // only the bundled ERTS, ignoring asdf/mise/kerl/manual installs.
+            .env("ERL_FLAGS", "")
+            .env("ERL_AFLAGS", "")
+            .env("ERL_ZFLAGS", "")
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    bin_path.display(),
+                    env::var("PATH").unwrap_or_default()
+                ),
+            )
+            // Boot script (without .boot extension — erlexec adds it)
             .arg("-boot")
             .arg(&boot_arg)
+            // Boot variables expected by Elixir releases
             .arg("-boot_var")
             .arg("RELEASE_LIB")
             .arg(release_lib)
             .arg("-boot_var")
             .arg("RELEASE_ROOT")
             .arg(release_dir)
-            // Desactivar EPMD para evitar cuelgues
+            // FIX: pass sys.config so application env is loaded correctly.
+            // Without this, Config.Reader/Mix.Config values are ignored.
+            .arg("-config")
+            .arg(sys_config_path.with_extension(""))
+            // FIX: pass vm.args so VM flags (node name, cookie, etc.) are applied.
+            // Use -args_file which erlexec reads before its own argv processing.
+            .args(if vm_args_path.exists() {
+                vec![
+                    "-args_file".to_string(),
+                    vm_args_path.to_string_lossy().into_owned(),
+                ]
+            } else {
+                vec![]
+            })
+            // Disable EPMD to avoid startup hangs in non-distributed mode
             .arg("-start_epmd")
             .arg("false")
             .arg("-noshell")
-            // Pasar argumentos a la aplicación
+            // Forward user arguments to the application
             .arg("-extra")
             .arg("--")
             .args(env::args().skip(1))

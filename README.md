@@ -13,8 +13,8 @@
   <a href="https://hexdocs.pm/batamanta">
     <img src="https://img.shields.io/badge/docs-hexdocs-blue" alt="HexDocs">
   </a>
-  <a href="https://github.com/Lorenzo-SF/Batamanta/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/Lorenzo-SF/Batamanta/ci.yml" alt="CI Status">
+  <a href="https://github.com/Lorenzo-SF/Batamanta/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/Lorenzo-SF/Batamanta/ci.yml?branch=main" alt="CI Status">
   </a>
   <img src="https://img.shields.io/badge/self--contained-binaries-success" alt="Self-contained">
   <img src="https://img.shields.io/badge/ERTS-embedded-critical" alt="ERTS Embedded">
@@ -108,6 +108,7 @@ def project do
     app: :my_app,
     version: "0.1.0",
     batamanta: [
+      format: :escript,       # :escript | :release
       erts_target: :auto,        # Auto-detect host platform (RECOMMENDED)
       execution_mode: :cli,      # :cli | :tui | :daemon
       compression: 3,            # 1-19 (zstd level)
@@ -124,6 +125,7 @@ end
 |--------|------|---------|-------------|
 | `erts_target` | atom | `:auto` | Target platform (see below) |
 | `otp_version` | string | `:auto` | OTP version (e.g., "28.1") |
+| `format` | atom | `:release`¹ | `:escript` o `:release` |
 | `execution_mode` | atom | `:cli` | `:cli`, `:tui`, or `:daemon` |
 | `compression` | integer | `3` | Zstd compression level (1-19) |
 | `binary_name` | string | app name | Custom binary name |
@@ -131,6 +133,8 @@ end
 | `force_os` | string | nil | Force OS: `"linux"`, `"macos"`, `"windows"` |
 | `force_arch` | string | nil | Force arch: `"x86_64"`, `"aarch64"` |
 | `force_libc` | string | nil | Force libc: `"gnu"`, `"musl"` (Linux only) |
+
+> ¹ Auto-detected as `:escript` when the project defines `escript: [main_module: ...]` in `mix.exs`.
 
 ### 3. Build
 
@@ -237,11 +241,13 @@ In auto mode, if the exact version is not available:
 
 ## Execution Modes
 
-| Mode | Description | Platform |
-|------|-------------|----------|
-| `:cli` | Standard CLI with inherited stdin/stdout/stderr | All |
-| `:tui` | Text UI with raw terminal mode, arrow key navigation | Unix only |
-| `:daemon` | Runs in background, no terminal I/O | Unix only |
+| Mode | Description | Terminal Mode | Platform |
+|------|-------------|---------------|----------|
+| `:cli` | Standard CLI with inherited stdin/stdout/stderr | **Cooked** (canonical mode, line-buffered input) | All |
+| `:tui` | Text UI with raw terminal mode, arrow key navigation | **Raw** (direct character input, no line buffering) | Unix only |
+| `:daemon` | Runs in background, no terminal I/O | N/A (detached) | Unix only |
+
+> **Note:** In `:cli` mode (cooked), the terminal processes input line-by-line - Enter sends the line, backspace works normally, and special keys like arrow keys are not directly captured. In `:tui` mode (raw), the app has direct control over the terminal and can capture individual keypresses including arrow keys, function keys, etc.
 
 ---
 
@@ -430,6 +436,9 @@ mix batamanta --erts-target alpine_3_19_x86_64
 # Force individual components
 mix batamanta --force-os linux --force-arch aarch64 --force-libc musl
 
+# Force escript format
+mix batamanta --format escript
+
 # Adjust compression level
 mix batamanta --compression 9
 
@@ -441,6 +450,7 @@ mix batamanta --erts-target ubuntu_22_04_arm64 --compression 5
 
 | Flag | Description |
 |------|-------------|
+| `--format` | Output format: `release` or `escript` |
 | `--erts-target` | Override ERTS target atom |
 | `--otp-version` | Specify exact OTP version (e.g., "28.1") |
 | `--force-os` | Force OS: `linux`, `macos`, `windows` |

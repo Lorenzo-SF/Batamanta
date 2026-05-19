@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-05-19
+
+### Changed
+- **Development versions upgraded**: Erlang 28.1 + Elixir 1.19.5 (OTP 28)
+  - Internal development now uses latest stable OTP/Elixir
+  - Minimum packagable OTP remains at 25 (ERTS repository unchanged)
+  - Minimum OTP to run `mix batamanta` remains at 25
+- **CI matrix updated**: Elixir 1.15.8/OTP 26.2.5 + Elixir 1.19.5/OTP 28.1
+- **CI caching**: Mix and Cargo dependency caching added for faster runs
+- **CI artifacts**: Built binaries are now uploaded as artifacts for debugging
+- **CI cleanup**: Simplified cleanup step — only clears ERTS cache, not project build artifacts
+
+### Fixed
+- **Escript wrapper args (critical)**: Arguments wrapped by the shell wrapper
+  script no longer carry literal double-quote characters. `\"$arg\"` in the
+  wrapper injected `"status"` (with literal quotes) instead of `status`.
+  Replaced with `shift`/`set --` pattern using `"$@"` — fixes all CLI
+  subcommands in escript-mode binaries.
+- **Release daemon args**: Missing `-extra --` separator before user arguments
+  in the daemon spawn path caused `erlexec` to interpret user args as its own
+  flags. Added `-extra --` before forwarding, matching the non-daemon path.
+- **Unless-else style**: Three `unless condition do :ok else ... end` blocks
+  in `EscriptPackager` inverted to `if condition do ... else :ok end` (Credo
+  compliance).
+- **LibcDetector**: `ldd --version` detection now works on CachyOS and other
+  rolling-release distributions (OTP 28 handles edge cases gracefully)
+- **RustTemplate**: Removed stale P1 FIX markers; `build.rs` now panics with a
+  clear error if the payload is missing instead of silently skipping
+- **mix.exs**: Removed stale P2 FIX comment about `rust.test` alias
+  (implementation was already correct)
+- **ex_doc**: Updated from `~> 0.34` to `~> 0.40`
+
+### Quality
+- Format: ✅ clean
+- Credo --strict: ✅ 0 issues (340 mods/funs)
+- Compile --warnings-as-errors: ✅ 0 warnings
+- Tests: 199 passing, 3 excluded (integration)
+
 ## [1.4.0] - 2026-04-07
 
 ### Added

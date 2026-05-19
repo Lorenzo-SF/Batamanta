@@ -2,7 +2,6 @@ defmodule Mix.Tasks.Rust.Test do
   @moduledoc """
   Runs Rust tests for the Batamanta dispenser.
 
-  ## Examples
 
       mix rust.test
 
