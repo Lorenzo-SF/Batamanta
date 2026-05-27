@@ -130,6 +130,7 @@ end
 | `compression` | integer | `3` | Zstd compression level (1-19) |
 | `binary_name` | string | app name | Custom binary name |
 | `show_banner` | boolean | `true` | Show build banner |
+| `umbrella` | boolean | `false` | Enable umbrella mode (see below) |
 | `force_os` | string | nil | Force OS: `"linux"`, `"macos"`, `"windows"` |
 | `force_arch` | string | nil | Force arch: `"x86_64"`, `"aarch64"` |
 | `force_libc` | string | nil | Force libc: `"gnu"`, `"musl"` (Linux only) |
@@ -257,6 +258,60 @@ In auto mode, if the exact version is not available:
 |--------|-------------|-------|
 | `:release` | Full OTP release with ERTS (default) | Larger (~60-70MB), self-contained |
 | `:escript` | Lightweight escript bundle with minified ERTS | Smaller (~20MB), self-contained |
+
+---
+
+## Umbrella Projects
+
+Batamanta supports Elixir umbrella projects. Set `umbrella: true` at the umbrella root to package only the sub-apps that have `batamanta:` configured in their individual `mix.exs`:
+
+```elixir
+# umbrella_root/mix.exs
+def project do
+  [
+    apps_path: "apps",
+    deps: deps(),
+    batamanta: [
+      umbrella: true,
+      show_banner: true
+    ]
+  ]
+end
+
+# umbrella_root/apps/my_service/mix.exs
+def project do
+  [
+    app: :my_service,
+    version: "0.1.0",
+    batamanta: [
+      format: :release,
+      binary_name: "my_service"
+    ],
+    deps: deps()
+  ]
+end
+
+# umbrella_root/apps/my_cli/mix.exs
+def project do
+  [
+    app: :my_cli,
+    version: "0.1.0",
+    batamanta: [
+      format: :escript
+    ],
+    escript: [main_module: MyCli.CLI],
+    deps: deps()
+  ]
+end
+```
+
+When you run `mix batamanta` at the umbrella root, batamanta:
+1. Detects all sub-apps in `apps/` that have `batamanta:` config
+2. Builds releases for all apps once (`mix release` is umbrella-aware)
+3. Packages only the configured apps into standalone binaries
+4. Each app uses its own `format`, `binary_name`, `compression`, and `execution_mode`
+
+Sub-apps without `batamanta:` config are ignored. The umbrella root config provides shared settings (ERTS target, OTP version) while each sub-app overrides individual settings.
 
 ---
 
