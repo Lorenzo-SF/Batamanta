@@ -1,7 +1,7 @@
 defmodule Batamanta.MixProject do
   use Mix.Project
 
-  @version "1.5.0"
+  @version "1.5.1"
   @source_url "https://github.com/Lorenzo-SF/Batamanta"
   @elixir_vsn "~> 1.15"
 
@@ -47,7 +47,11 @@ defmodule Batamanta.MixProject do
   defp package do
     [
       name: "batamanta",
-      files: ~w(lib priv mix.exs README* LICENSE* CHANGELOG* assets),
+      files: ~w(lib mix.exs README* LICENSE* CHANGELOG*
+                priv/assets priv/erts_repository priv/plts
+                priv/rust_template/Cargo.* priv/rust_template/src
+                priv/rust_template/build.rs
+                assets/batamantaman.png),
       maintainers: ["Lorenzo-SF"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url}
