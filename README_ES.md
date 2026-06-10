@@ -126,6 +126,7 @@ end
 | `compression` | integer | `3` | Nivel de compresión zstd (1-19) |
 | `binary_name` | string | nombre de app | Nombre personalizado del binario |
 | `show_banner` | boolean | `true` | Mostrar banner de construcción |
+| `umbrella` | boolean | `false` | Activar modo umbrella (ver abajo) |
 | `force_os` | string | nil | Forzar SO: `"linux"`, `"macos"`, `"windows"` |
 | `force_arch` | string | nil | Forzar arquitectura: `"x86_64"`, `"aarch64"` |
 | `force_libc` | string | nil | Forzar libc: `"gnu"`, `"musl"` (solo Linux) |
@@ -188,18 +189,59 @@ batamanta: [
 | Hot Upgrades | ✅ | ❌ |
 | Elixir embebido | No | ✅ |
 
-### CLI Override
+---
 
-```bash
-# Forzar formato escript
-mix batamanta --format escript
+## Proyectos Umbrella
 
-# Forzar formato release
-mix batamanta --format release
+Batamanta soporta proyectos umbrella de Elixir. Configura `umbrella: true` en la raíz del umbrella para empaquetar solo las sub-apps que tengan `batamanta:` configurado en su `mix.exs` individual:
+
+```elixir
+# umbrella_root/mix.exs
+def project do
+  [
+    apps_path: "apps",
+    deps: deps(),
+    batamanta: [
+      umbrella: true,
+      show_banner: true
+    ]
+  ]
+end
+
+# umbrella_root/apps/mi_servicio/mix.exs
+def project do
+  [
+    app: :mi_servicio,
+    version: "0.1.0",
+    batamanta: [
+      format: :release,
+      binary_name: "mi_servicio"
+    ],
+    deps: deps()
+  ]
+end
+
+# umbrella_root/apps/mi_cli/mix.exs
+def project do
+  [
+    app: :mi_cli,
+    version: "0.1.0",
+    batamanta: [
+      format: :escript
+    ],
+    escript: [main_module: MiCli.CLI],
+    deps: deps()
+  ]
+end
 ```
 
+Al ejecutar `mix batamanta` en la raíz del umbrella, batamanta:
+1. Detecta todas las sub-apps en `apps/` que tengan configuración `batamanta:`
+2. Construye los releases para todas las apps una sola vez (`mix release` soporta umbrella)
+3. Empaqueta solo las apps configuradas en binarios autocontenidos
+4. Cada app usa su propio `format`, `binary_name`, `compression` y `execution_mode`
 
-Esto genera: `mi_app-0.1.0-x86_64-linux`
+Las sub-apps sin configuración `batamanta:` se ignoran. La configuración de la raíz del umbrella proporciona ajustes compartidos (ERTS target, versión OTP) mientras que cada sub-app sobrescribe sus ajustes individuales.
 
 ---
 

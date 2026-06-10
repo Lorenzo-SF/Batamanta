@@ -198,6 +198,7 @@ defmodule Batamanta.Packager do
           File.mkdir_p!(bin_path)
           File.cp!(src, secondary_dst)
         end
+
         ensure_sys_config(rel_path_abs, version_dir, erts_work)
         ensure_vm_args(rel_path_abs, version_dir)
     end

@@ -17,6 +17,26 @@ defmodule Mix.Tasks.Batamanta do
       ]
 
 
+  ## Umbrella Projects
+
+  Set `umbrella: true` at the umbrella root to package only the sub-apps
+  that have `batamanta:` configured in their individual `mix.exs`:
+
+      # umbrella_root/mix.exs
+      batamanta: [
+        umbrella: true
+      ]
+
+      # umbrella_root/apps/my_app/mix.exs
+      batamanta: [
+        format: :release
+      ]
+
+  Each sub-app is packaged independently using its own config. The umbrella
+  root config provides shared settings (ERTS target, OTP version) while each
+  sub-app can override `format`, `binary_name`, `compression`, and `execution_mode`.
+
+
   **User specifies, user owns.** If you specify `otp_version`, that exact version
   is used. If not specified (auto mode), a conservative fallback is used.
 
@@ -103,6 +123,16 @@ defmodule Mix.Tasks.Batamanta do
     config = Mix.Project.config()
     bata_config = Keyword.get(config, :batamanta, [])
 
+    umbrella = Keyword.get(bata_config, :umbrella, false)
+
+    if umbrella do
+      run_umbrella(opts, config, bata_config)
+    else
+      run_single(opts, config, bata_config)
+    end
+  end
+
+  defp run_single(opts, config, bata_config) do
     format = resolve_format(opts, bata_config, config)
 
     erts_target = resolve_erts_target(opts, bata_config)
@@ -141,6 +171,315 @@ defmodule Mix.Tasks.Batamanta do
         format
       )
     end
+  end
+
+  defp run_umbrella(opts, config, bata_config) do
+    apps = find_umbrella_apps(config)
+
+    if apps == [] do
+      Mix.shell().info("[batamanta] no umbrella apps with batamanta config found")
+      :ok
+    else
+      run_umbrella_with_apps(apps, opts, config, bata_config)
+    end
+  end
+
+  defp run_umbrella_with_apps(apps, opts, config, bata_config) do
+    show_banner = Keyword.get(bata_config, :show_banner, true)
+
+    erts_target = resolve_erts_target(opts, bata_config)
+    override_config = build_override_config(opts, bata_config)
+    {:ok, resolved_target} = Target.resolve_auto(erts_target, override_config)
+    target_info = Target.get_target_info(resolved_target)
+
+    {otp_version, version_mode} = resolve_otp_version(opts, bata_config)
+
+    banner_ctx =
+      build_umbrella_banner(
+        otp_version,
+        target_info,
+        resolved_target,
+        show_banner,
+        version_mode,
+        apps
+      )
+
+    compression = opts[:compression] || bata_config[:compression] || 3
+
+    {release_apps, escript_apps} = partition_apps_by_format(apps, opts)
+
+    with {:ok, erts_path} <-
+           fetch_erts({otp_version, version_mode}, resolved_target, target_info, banner_ctx) do
+      if release_apps != [] do
+        run_umbrella_release(
+          release_apps,
+          config,
+          erts_path,
+          resolved_target,
+          target_info,
+          compression,
+          banner_ctx
+        )
+      end
+
+      if escript_apps != [] do
+        run_umbrella_escripts(
+          escript_apps,
+          erts_path,
+          resolved_target,
+          target_info,
+          compression,
+          banner_ctx
+        )
+      end
+
+      Banner.set_image(banner_ctx, :success)
+    end
+  end
+
+  @doc false
+  def find_umbrella_apps(config) do
+    apps_path = Keyword.get(config, :apps_path, "apps")
+    umbrella_root = File.cwd!()
+    apps_dir = Path.join(umbrella_root, apps_path)
+
+    if File.dir?(apps_dir) do
+      File.ls!(apps_dir)
+      |> Enum.filter(fn entry ->
+        app_path = Path.join(apps_dir, entry)
+        mix_file = Path.join(app_path, "mix.exs")
+        File.dir?(app_path) && File.exists?(mix_file) && app_has_batamanta_config?(app_path)
+      end)
+      |> Enum.map(fn entry ->
+        {String.to_atom(entry), Path.join(apps_dir, entry)}
+      end)
+    else
+      []
+    end
+  end
+
+  defp app_has_batamanta_config?(app_path) do
+    app_name = Path.basename(app_path) |> String.to_atom()
+
+    try do
+      Mix.Project.in_project(app_name, app_path, [], fn _module ->
+        config = Mix.Project.config()
+        bata_config = Keyword.get(config, :batamanta, [])
+        Keyword.keyword?(bata_config) && bata_config != []
+      end)
+    rescue
+      _ -> false
+    end
+  end
+
+  @doc false
+  def partition_apps_by_format(apps, opts) do
+    Enum.split_with(apps, fn {app_name, app_path} ->
+      try do
+        Mix.Project.in_project(app_name, app_path, [], fn _module ->
+          config = Mix.Project.config()
+          bata_config = Keyword.get(config, :batamanta, [])
+          format = resolve_format(opts, bata_config, config)
+          format == :release
+        end)
+      rescue
+        _ -> true
+      end
+    end)
+  end
+
+  @doc false
+  def build_umbrella_banner(
+        otp_version,
+        target_info,
+        _resolved_target,
+        show_banner,
+        version_mode,
+        apps
+      ) do
+    mode_str = if version_mode == :explicit, do: " (user-specified)", else: " (auto-detected)"
+    app_names = Enum.map_join(apps, ", ", fn {name, _path} -> Atom.to_string(name) end)
+
+    messages = [
+      ">> 🏠 Umbrella apps: #{app_names}",
+      ">> 🖥️  OS: #{target_info.os}",
+      ">> ⚙️  Architecture: #{target_info.arch}",
+      ">> 📦 Type: #{target_info.libc || "N/A"}",
+      ">> 🔢 ERTS: #{otp_version}#{mode_str}"
+    ]
+
+    Banner.show_with_context(messages,
+      show_banner: show_banner,
+      on_success_image: "batamantaman_happy.png",
+      on_error_image: "batamantaman_sad.png"
+    )
+  end
+
+  defp run_umbrella_release(
+         apps,
+         _config,
+         erts_path,
+         resolved_target,
+         target_info,
+         compression,
+         banner_ctx
+       ) do
+    Logger.info(banner_ctx, ">> 📦 Creating Release for umbrella...")
+
+    build_env =
+      EnvCleaner.build_env(erts_path)
+      |> Map.new()
+      |> Map.put("MIX_ENV", "prod")
+
+    {out, status} =
+      System.cmd("mix", ["release", "--overwrite", "--quiet"],
+        env: build_env,
+        stderr_to_stdout: true
+      )
+
+    if status != 0 do
+      Logger.error(banner_ctx, "Mix release compilation failed:")
+      Logger.error(banner_ctx, out)
+      Banner.set_image(banner_ctx, :error)
+      Mix.raise("Mix release compilation failed.")
+    end
+
+    Enum.each(apps, fn {app_name, app_path} ->
+      try do
+        {app_config, app_bata_config} = read_umbrella_app_config(app_name, app_path)
+        app_binary_name = Keyword.get(app_bata_config, :binary_name)
+        app_compression = app_bata_config[:compression] || compression
+
+        release_path = get_release_path(app_config[:app])
+
+        if File.dir?(release_path) do
+          payload_path =
+            Path.join(
+              System.tmp_dir!(),
+              "payload_#{app_name}_#{:erlang.unique_integer([:positive])}.tar.zst"
+            )
+
+          Logger.info(
+            banner_ctx,
+            ">> 📦 Packaging Payload for #{app_name} (Zstd level #{app_compression})..."
+          )
+
+          case Packager.package(release_path, erts_path, payload_path, app_compression) do
+            {:ok, _} ->
+              compile_wrapper(
+                :release,
+                app_config,
+                payload_path,
+                resolved_target,
+                target_info,
+                app_binary_name,
+                banner_ctx
+              )
+
+              File.rm(payload_path)
+
+            {:error, reason} ->
+              Logger.error(banner_ctx, "Packaging Error for #{app_name}: #{reason}")
+              Banner.set_image(banner_ctx, :error)
+          end
+        else
+          Logger.info(
+            banner_ctx,
+            ">> ⏭️  Skipping #{app_name}: release not found at #{release_path}"
+          )
+        end
+      rescue
+        e ->
+          Logger.error(banner_ctx, "Error processing #{app_name}: #{Exception.message(e)}")
+      end
+    end)
+  end
+
+  defp run_umbrella_escripts(
+         apps,
+         erts_path,
+         resolved_target,
+         target_info,
+         compression,
+         banner_ctx
+       ) do
+    Enum.each(apps, fn {app_name, app_path} ->
+      try do
+        Logger.info(banner_ctx, ">> 📦 Creating Escript for #{app_name}...")
+
+        {app_config, app_bata_config} = read_umbrella_app_config(app_name, app_path)
+        app_binary_name = Keyword.get(app_bata_config, :binary_name)
+        app_compression = app_bata_config[:compression] || compression
+
+        build_env = EnvCleaner.build_env(erts_path)
+
+        {output, status} =
+          System.cmd("mix", ["escript.build"],
+            cd: app_path,
+            env: build_env,
+            stderr_to_stdout: true
+          )
+
+        if status != 0 do
+          Logger.error(banner_ctx, "Escript build failed for #{app_name}:")
+          Logger.error(banner_ctx, output)
+          Banner.set_image(banner_ctx, :error)
+        else
+          escript_path = EscriptBuilder.find_escript_path(app_config)
+
+          if File.exists?(escript_path) do
+            EscriptBuilder.validate_escript!(escript_path)
+
+            Logger.info(banner_ctx, ">> ✅ Escript built for #{app_name}: #{escript_path}")
+
+            payload_path =
+              Path.join(
+                System.tmp_dir!(),
+                "payload_#{app_name}_#{:erlang.unique_integer([:positive])}.tar.zst"
+              )
+
+            Logger.info(
+              banner_ctx,
+              ">> 📦 Packaging Escript for #{app_name} (Zstd level #{app_compression})..."
+            )
+
+            case EscriptPackager.package(escript_path, erts_path, payload_path, app_compression) do
+              {:ok, _} ->
+                compile_wrapper(
+                  :escript,
+                  app_config,
+                  payload_path,
+                  resolved_target,
+                  target_info,
+                  app_binary_name,
+                  banner_ctx
+                )
+
+                File.rm(payload_path)
+
+              {:error, reason} ->
+                Logger.error(banner_ctx, "Escript packaging error for #{app_name}: #{reason}")
+                Banner.set_image(banner_ctx, :error)
+            end
+          else
+            Logger.error(banner_ctx, "Escript not found for #{app_name}: #{escript_path}")
+            Banner.set_image(banner_ctx, :error)
+          end
+        end
+      rescue
+        e ->
+          Logger.error(banner_ctx, "Error processing #{app_name}: #{Exception.message(e)}")
+      end
+    end)
+  end
+
+  @doc false
+  def read_umbrella_app_config(app_name, app_path) do
+    Mix.Project.in_project(app_name, app_path, [], fn _module ->
+      config = Mix.Project.config()
+      bata_config = Keyword.get(config, :batamanta, [])
+      {config, bata_config}
+    end)
   end
 
   @doc """
@@ -514,7 +853,7 @@ defmodule Mix.Tasks.Batamanta do
         try do
           case File.stat(dir) do
             {:ok, %{mtime: mtime}} ->
-              age_seconds = :erlang.system_time(:second) - mtime
+              age_seconds = mtime_to_age_seconds(mtime)
 
               if age_seconds > 3600 do
                 lock_path = Path.join(dir, ".batamanta_lock")
@@ -557,9 +896,7 @@ defmodule Mix.Tasks.Batamanta do
   defp clean_if_stale(dir) do
     case File.stat(dir) do
       {:ok, %{mtime: mtime}} ->
-        age_seconds =
-          :calendar.datetime_to_gregorian_seconds(:calendar.universal_time()) -
-            :calendar.datetime_to_gregorian_seconds(mtime)
+        age_seconds = mtime_to_age_seconds(mtime)
 
         if age_seconds > 86_400 do
           File.rm_rf(dir)
@@ -571,4 +908,13 @@ defmodule Mix.Tasks.Batamanta do
   rescue
     _ -> :skip
   end
+
+  @doc false
+  def mtime_to_age_seconds(mtime) when is_tuple(mtime) do
+    :calendar.datetime_to_gregorian_seconds(:calendar.universal_time()) -
+      :calendar.datetime_to_gregorian_seconds(mtime)
+  end
+
+  @doc false
+  def mtime_to_age_seconds(_mtime), do: 0
 end
