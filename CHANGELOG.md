@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-06-10
+
+### Added
+- **Umbrella Projects Support**: New `umbrella: true` config option to build standalone binaries for umbrella sub-apps. Batamanta detects sub-apps with `batamanta:` config in `apps/`, builds releases/escripts once, and packages only configured apps.
+  - `find_umbrella_apps/1` to detect sub-apps with batamanta config
+  - `partition_apps_by_format/2` to split apps by release/escript format
+  - `run_umbrella_release/6` to build releases for umbrella sub-apps
+  - `run_umbrella_escripts/6` to build escripts for umbrella sub-apps
+  - `read_umbrella_app_config/2` to read per-app batamanta configuration
+  - `build_umbrella_banner/6` for umbrella-specific build banner
+- **Banner images**: Six PNG banner assets added to `priv/assets/`
+- **Banner fallback text**: Informational message when banner image file is not found
+
+### Changed
+- **Banner image resolution**: Expanded search candidates to include `priv/assets/` paths for both dev and prod builds
+- **Host detection fallback**: Default to `:ubuntu_22_04_x86_64` when host detection fails
+- **mtime_to_age_seconds/1**: Extracted duplicate datetime arithmetic into a shared helper with safe fallback for non-tuple inputs
+- **Documentation**: Added comprehensive umbrella project guide in English and Spanish
+
+### Fixed
+- **Banner render with `show_banner: false`**: Removed redundant `protocol == :ascii` check that skipped banner context initialization when `show_banner` was false
+
+### Quality
+- Format: ✅ clean
+- Tests: 199 passing, 3 excluded (integration); 5 new umbrella-related tests added
+
 ## [1.5.0] - 2026-05-19
 
 ### Changed
@@ -136,7 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default Linux target changed from musl to gnu for better compatibility
 - Uses ctrlc instead of signal-hook for better cross-platform support
 
-## [1.0.0] - 2026-03-08
+## [1.0.0] - 2026-03-16
 
 ### Added
 - **Monolithic Binary Generation**: Core capability to wrap Elixir releases and the Erlang Runtime System (ERTS) into a single, static executable.
