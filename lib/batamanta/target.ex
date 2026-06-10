@@ -420,6 +420,7 @@ defmodule Batamanta.Target do
   defp detect_host_or_default do
     case detect_host() do
       {:ok, target} -> target
+      {:error, _reason} -> :ubuntu_22_04_x86_64
     end
   end
 end

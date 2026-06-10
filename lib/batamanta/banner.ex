@@ -45,7 +45,7 @@ defmodule Batamanta.Banner do
     protocol = detect_image_protocol()
 
     ctx =
-      if show_banner == false or protocol == :ascii do
+      if show_banner == false do
         print_messages(messages)
 
         %Context{
@@ -206,6 +206,7 @@ defmodule Batamanta.Banner do
         append_line(acc_ctx, msg)
       end)
     else
+      Mix.shell().info("[batamanta] banner image not found, falling back to text mode")
       print_messages(messages)
       %Context{mode: :text_only, messages: messages, show_banner: true}
     end
@@ -354,20 +355,38 @@ defmodule Batamanta.Banner do
         _ -> nil
       end
 
-    candidates = [
-      Path.join("assets", filename),
-      Path.join(base_path, "assets/#{filename}"),
-      Path.join(base_path, "_build/dev/lib/batamanta/assets/#{filename}"),
-      Path.join(base_path, "_build/prod/lib/batamanta/assets/#{filename}"),
-      app_dir_path && Path.join(app_dir_path, "assets/#{filename}"),
-      app_dir_path &&
-        Path.join(
-          app_dir_path |> Path.dirname() |> Path.dirname() |> Path.dirname(),
-          "assets/#{filename}"
-        ),
-      Path.join(base_path, "../../assets/#{filename}"),
-      Path.expand(Path.join(__DIR__, "../../assets/#{filename}"))
-    ]
+    priv_candidates =
+      if app_dir_path do
+        [
+          Path.join(app_dir_path, "priv/assets/#{filename}"),
+          Path.join(app_dir_path, "../../priv/assets/#{filename}")
+        ]
+      else
+        []
+      end
+
+    # __DIR__-relative priv path (source tree)
+    source_priv = Path.expand(Path.join(__DIR__, "../../priv/assets/#{filename}"))
+
+    candidates =
+      priv_candidates ++
+        [
+          source_priv,
+          Path.join("assets", filename),
+          Path.join(base_path, "assets/#{filename}"),
+          Path.join(base_path, "_build/dev/lib/batamanta/assets/#{filename}"),
+          Path.join(base_path, "_build/prod/lib/batamanta/assets/#{filename}"),
+          Path.join(base_path, "_build/dev/lib/batamanta/priv/assets/#{filename}"),
+          Path.join(base_path, "_build/prod/lib/batamanta/priv/assets/#{filename}"),
+          app_dir_path && Path.join(app_dir_path, "assets/#{filename}"),
+          app_dir_path &&
+            Path.join(
+              app_dir_path |> Path.dirname() |> Path.dirname() |> Path.dirname(),
+              "assets/#{filename}"
+            ),
+          Path.join(base_path, "../../assets/#{filename}"),
+          Path.expand(Path.join(__DIR__, "../../assets/#{filename}"))
+        ]
 
     candidates
     |> Enum.reject(&is_nil/1)
