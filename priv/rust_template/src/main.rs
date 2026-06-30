@@ -536,8 +536,13 @@ fn run_with_erlexec(
     app_name: &str,
     exec_mode: &str,
 ) -> Result<u8> {
-    // Buscar erlexec
+    // Buscar erlexec. Puede estar en:
+    //   1) <release>/bin/erlexec                  (release con ERTS fusionado, include_erts: true)
+    //   2) <release>/erts/bin/erlexec             (release con ERTS flattenizado, include_erts: false)
+    //   3) Cualquier subdirectorio de <release>   (fallback genérico)
+    let erts_subdir_bin = release_dir.join("erts").join("bin");
     let erlexec = find_file(bin_dir, "erlexec")
+        .or_else(|| find_file(&erts_subdir_bin, "erlexec"))
         .or_else(|| find_file(release_dir, "erlexec"))
         .context("erlexec not found")?;
 
@@ -552,6 +557,21 @@ fn run_with_erlexec(
     }
 
     let bin_path = erlexec.parent().unwrap();
+
+    // Determinar dónde está el ERTS:
+    //   - Si erlexec vive bajo <release>/erts/bin/, el ERTS está flattenizado
+    //     en <release>/erts/ y ROOTDIR debe apuntar allí (no a <release>/).
+    //   - En caso contrario, el ERTS está fusionado en <release>/lib/ y
+    //     ROOTDIR coincide con <release>/.
+    // Esto resuelve el `load_failed` que se produce cuando el boot script
+    // referencia `$ROOT/lib/kernel-*` y ROOTDIR no apunta al directorio
+    // donde realmente está el ERTS (caso típico: include_erts: false).
+    let erts_dir = if bin_path.starts_with(&erts_subdir_bin) {
+        release_dir.join("erts")
+    } else {
+        release_dir.to_path_buf()
+    };
+    let rootdir = erts_dir.as_path();
 
     // Detectar dinámicamente la versión del release
     let release_version = get_release_version(release_dir);
@@ -591,20 +611,24 @@ fn run_with_erlexec(
         args.push(arg);
     }
 
-    // Spawn el proceso hijo
-    let erts_lib = release_dir.join("erts").join("lib");
+    // ERL_LIBS incluye tanto la lib de la release como la lib del ERTS
+    // (cuando el ERTS está flattenizado). El code server la usa para
+    // resolver módulos runtime; el boot script sigue necesitando
+    // ROOTDIR correctamente para los primLoad iniciales.
+    let erts_lib = erts_dir.join("lib");
+    let erl_libs_str = if erts_lib.exists() {
+        format!("{}:{}", release_lib.display(), erts_lib.display())
+    } else {
+        release_lib.to_string_lossy().into_owned()
+    };
 
     let mut child: std::process::Child = if exec_mode == "daemon" {
         // Usar spawn_detached para crear una nueva sesión (portable: Linux y macOS)
         let erlexec_str = erlexec.to_string_lossy().into_owned();
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let rootdir_str = release_dir.to_string_lossy().into_owned();
+        let rootdir_str = rootdir.to_string_lossy().into_owned();
+        let release_root_str = release_dir.to_string_lossy().into_owned();
         let bindir_str = bin_path.to_string_lossy().into_owned();
-        let erl_libs_str = format!(
-            "{}:{}",
-            release_lib.display(),
-            erts_lib.display()
-        );
         let sys_config_str = releases_version_dir
             .join("sys.config")
             .to_string_lossy()
@@ -618,7 +642,7 @@ fn run_with_erlexec(
             ("BINDIR", bindir_str.as_str()),
             ("ERL_LIBS", erl_libs_str.as_str()),
             ("ERL_ROOTDIR", rootdir_str.as_str()),
-            ("RELEASE_ROOT", rootdir_str.as_str()),
+            ("RELEASE_ROOT", release_root_str.as_str()),
             ("RELEASE_PROG", app_name),
             ("RELEASE_SYS_CONFIG", sys_config_str.as_str()),
             ("RELEASE_VM_ARGS", vm_args_str.as_str()),
@@ -654,10 +678,10 @@ fn run_with_erlexec(
         let vm_args_path = releases_version_dir.join("vm.args");
 
         let mut cmd = Command::new(&erlexec);
-        cmd.env("ROOTDIR", release_dir)
+        cmd.env("ROOTDIR", rootdir)
             .env("BINDIR", bin_path)
-            .env("ERL_LIBS", format!("{}:{}", release_lib.display(), erts_lib.display()))
-            .env("ERL_ROOTDIR", release_dir)
+            .env("ERL_LIBS", &erl_libs_str)
+            .env("ERL_ROOTDIR", rootdir)
             .env("RELEASE_ROOT", release_dir)
             .env("RELEASE_PROG", app_name)
             .env("RELEASE_SYS_CONFIG", &sys_config_path)
@@ -878,7 +902,58 @@ mod tests {
     #[test]
     fn test_find_file_by_ext_returns_none_when_not_found() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let result = find_file_by_ext(temp_dir.path(), "boot");
+        let result = find_file_by_ext(temp_dir.path(), "nonexistent");
         assert!(result.is_none());
+    }
+
+    /// Verifica la búsqueda de `erlexec` con el orden de preferencia del fix:
+    ///   1) <release>/bin/erlexec
+    ///   2) <release>/erts/bin/erlexec
+    ///   3) búsqueda genérica en <release>
+    /// Esto cubre el caso `include_erts: false` (release con ERTS
+    /// flattenizado en `release/erts/bin/erlexec`) que era el origen
+    /// del `load_failed` en kernel/stdlib.
+    #[test]
+    fn test_find_erlexec_prefers_flattened_erts_bin() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let release_dir = temp_dir.path();
+        let bin_dir = release_dir.join("bin");
+        let erts_subdir_bin = release_dir.join("erts").join("bin");
+
+        // Caso típico de batamanta con `include_erts: false`:
+        // erlexec en release/erts/bin/ (flattenizado), nada en release/bin/.
+        fs::create_dir_all(&erts_subdir_bin).unwrap();
+        let erlexec_in_erts = erts_subdir_bin.join("erlexec");
+        File::create(&erlexec_in_erts).unwrap();
+
+        let result = find_file(&bin_dir, "erlexec")
+            .or_else(|| find_file(&erts_subdir_bin, "erlexec"))
+            .or_else(|| find_file(release_dir, "erlexec"));
+
+        assert!(result.is_some(), "erlexec should be found in erts/bin/");
+        assert_eq!(result.unwrap(), erlexec_in_erts);
+    }
+
+    #[test]
+    fn test_find_erlexec_prefers_release_bin_when_both_exist() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let release_dir = temp_dir.path();
+        let bin_dir = release_dir.join("bin");
+        let erts_subdir_bin = release_dir.join("erts").join("bin");
+
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&erts_subdir_bin).unwrap();
+        let erlexec_in_bin = bin_dir.join("erlexec");
+        File::create(&erlexec_in_bin).unwrap();
+        File::create(erts_subdir_bin.join("erlexec")).unwrap();
+
+        let result = find_file(&bin_dir, "erlexec")
+            .or_else(|| find_file(&erts_subdir_bin, "erlexec"))
+            .or_else(|| find_file(release_dir, "erlexec"));
+
+        assert!(result.is_some());
+        // Cuando el ERTS está fusionado en bin/ (include_erts: true),
+        // esa ubicación debe ganar para preservar la lógica legacy.
+        assert_eq!(result.unwrap(), erlexec_in_bin);
     }
 }
