@@ -398,4 +398,85 @@ defmodule Mix.Tasks.BatamantaTest do
       assert Enum.any?(ctx.messages, fn m -> String.contains?(m, "app_a, app_b") end)
     end
   end
+
+  describe "get_release_path/2" do
+    test "returns <root>/_build/prod/rel/<app> for a standalone project" do
+      # En un proyecto normal, build_path = <root>/_build/<env>
+      # y el release vive en <root>/_build/prod/rel/<app>.
+      tmp_root = Path.join(System.tmp_dir!(), "bat_test_standalone_#{System.unique_integer()}")
+
+      try do
+        # Simulamos el contexto Mix de un proyecto standalone creando
+        # un mini mix.exs y haciendo cd!.
+        File.mkdir_p!(tmp_root)
+
+        File.write!(Path.join(tmp_root, "mix.exs"), """
+        defmodule Standalone.MixProject do
+          use Mix.Project
+          def project, do: [app: :standalone, version: "0.1.0", deps: []]
+          def application, do: []
+        end
+        """)
+
+        File.cd!(tmp_root, fn ->
+          path = Batamanta.get_release_path(:standalone)
+          assert path == Path.join([tmp_root, "_build", "prod", "rel", "standalone"])
+        end)
+      after
+        File.rm_rf!(tmp_root)
+      end
+    end
+
+    test "returns <app_path>/_build/prod/rel/<app> for an umbrella sub-app" do
+      # En un umbrella, el _build vive en el sub-app, no en el root.
+      # Este test es la regresión clave: get_release_path(:app1, app_path)
+      # debe apuntar al _build del sub-app, no al del root.
+      umbrella_root = Path.join(System.tmp_dir!(), "bat_test_umb_#{System.unique_integer()}")
+      app_path = Path.join([umbrella_root, "apps", "app1"])
+
+      try do
+        File.mkdir_p!(app_path)
+        path = Batamanta.get_release_path(:app1, app_path)
+        assert path == Path.join([app_path, "_build", "prod", "rel", "app1"])
+      after
+        File.rm_rf!(umbrella_root)
+      end
+    end
+
+    test "with a nested umbrella sub-app (apps/foo/bar) uses the sub-app path" do
+      app_path =
+        Path.join([
+          System.tmp_dir!(),
+          "bat_test_nested_#{System.unique_integer()}",
+          "apps",
+          "foo",
+          "bar"
+        ])
+
+      try do
+        File.mkdir_p!(app_path)
+        path = Batamanta.get_release_path(:bar, app_path)
+        assert path == Path.join([app_path, "_build", "prod", "rel", "bar"])
+      after
+        File.rm_rf!(Path.dirname(Path.dirname(Path.dirname(app_path))))
+      end
+    end
+
+    test "app_path takes precedence over Mix.Project.build_path" do
+      # Incluso si build_path apunta a un sitio distinto, app_path
+      # manda — porque en un umbrella el `mix release` se ejecuta
+      # con `cd: app_path` y deja el release allí.
+      tmp = Path.join(System.tmp_dir!(), "bat_test_prec_#{System.unique_integer()}")
+      app_path = Path.join(tmp, "apps/my_app")
+
+      try do
+        File.mkdir_p!(app_path)
+        path = Batamanta.get_release_path(:my_app, app_path)
+        assert String.starts_with?(path, app_path)
+        assert String.ends_with?(path, "_build/prod/rel/my_app")
+      after
+        File.rm_rf!(tmp)
+      end
+    end
+  end
 end
