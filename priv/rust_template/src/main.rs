@@ -713,7 +713,15 @@ fn run_with_erlexec(
             .arg(release_dir)
             // FIX: pass sys.config so application env is loaded correctly.
             // Without this, Config.Reader/Mix.Config values are ignored.
-            .arg("-config")
+            //
+            // erlexec (the modern Erlang entry point) takes the path
+            // via `--erl-config <path>` (with the `--` prefix) and the
+            // path WITHOUT the `.config` extension. The previous
+            // single-dash `-config` form was ignored by erlexec, which
+            // let the Config.Reader fall back to its default
+            // `sys.config.config` lookup and fail boot with
+            // "Could not read runtime configuration".
+            .arg("--erl-config")
             .arg(sys_config_path.with_extension(""))
             // FIX: pass vm.args so VM flags (node name, cookie, etc.) are applied.
             // Use -args_file which erlexec reads before its own argv processing.
