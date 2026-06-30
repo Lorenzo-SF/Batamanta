@@ -577,14 +577,49 @@ fn run_with_erlexec(
     let release_version = get_release_version(release_dir);
     let releases_version_dir = release_dir.join("releases").join(&release_version);
 
-    // Buscar el archivo .boot
-    let boot_path = releases_version_dir.join("start.boot");
-    let boot_path = if boot_path.exists() {
-        boot_path
+    // User args control the boot strategy:
+    //   * No args → full supervision tree (`start.boot`). Used for
+    //     daemon-style invocations like `delfos watch` or
+    //     `delfos serve --mcp` whose handlers block indefinitely.
+    //   * With args → boot cleanly (`start_clean.boot`) and run
+    //     `Delfos.CLI.main/1` via `-eval`. The CLI is responsible
+    //     for starting the app it needs via
+    //     `Application.ensure_all_started/1` and for stopping the
+    //     VM when done.
+    //
+    // Decoupling boot strategy from the app's `start/2` keeps the
+    // supervision tree module side-effect-free: it can be tested
+    // with `Application.ensure_all_started(:delfos)` and never has
+    // to read `:init.get_plain_arguments/0` to decide what to do.
+    let user_args: Vec<String> = env::args().skip(1).collect();
+    let cli_mode = !user_args.is_empty();
+
+    // Buscar el archivo .boot. En CLI mode usamos `start_clean`
+    // para no arrancar el supervisor (lo hará el `Delfos.CLI.main/1`
+    // cuando llame a `Application.ensure_all_started/1`).
+    let boot_path = if cli_mode {
+        let clean = releases_version_dir.join("start_clean.boot");
+        if clean.exists() {
+            clean
+        } else {
+            find_file_by_ext(&release_dir.join("releases"), "boot")
+                .filter(|p| p.file_name().and_then(|s| s.to_str()) == Some("start_clean.boot"))
+                .or_else(|| find_file_by_ext(bin_dir, "boot"))
+                .context("No start_clean.boot found for CLI mode")?
+        }
     } else {
-        find_file_by_ext(&release_dir.join("releases"), "boot")
-            .or_else(|| find_file_by_ext(bin_dir, "boot"))
-            .context("No .boot file found")?
+        let full = releases_version_dir.join("start.boot");
+        if full.exists() {
+            full
+        } else {
+            find_file_by_ext(&release_dir.join("releases"), "boot")
+                .filter(|p| {
+                    let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    name == "start.boot" || !name.contains("start_clean")
+                })
+                .or_else(|| find_file_by_ext(bin_dir, "boot"))
+                .context("No start.boot found for daemon mode")?
+        }
     };
 
     let boot_arg = boot_path.with_extension("").to_string_lossy().into_owned();
@@ -604,11 +639,43 @@ fn run_with_erlexec(
         "-noshell".to_string(),
     ];
 
-    // Agregar argumentos del usuario (después de -extra -- para erlexec)
-    args.push("-extra".to_string());
-    args.push("--".to_string());
-    for arg in env::args().skip(1) {
-        args.push(arg);
+    // En CLI mode: arrancar la app perezosamente vía `Delfos.CLI.main/1`
+    // y dejar que se auto-paré. En daemon mode: dejar que el
+    // `start.boot` arranque la app y el handler del comando decida
+    // cuándo salir.
+    if cli_mode {
+        // Escapar cada arg para embedding en la expresión Elixir.
+        // El shell que invoca `mix release --quiet` puede contener
+        // caracteres especiales; la lista de args se construye con
+        // `\"...\"` para que el lexer de Elixir los trate como literales.
+        let quoted: Vec<String> = user_args
+            .iter()
+            .map(|a| {
+                let escaped = a.replace('\\', "\\\\").replace('"', "\\\"");
+                format!("\"{}\"", escaped)
+            })
+            .collect();
+        let elixir_list = quoted.join(", ");
+
+        // `-eval` corre la expresión al boot; `-s init stop` mata
+        // la VM cuando la expresión retorna. `Process.sleep(50)`
+        // interno de `Delfos.CLI.main/1` da tiempo a que el
+        // stdout se vuelque antes del halt.
+        args.push("-eval".to_string());
+        args.push(format!("Delfos.CLI.main([{}])", elixir_list));
+        args.push("-s".to_string());
+        args.push("init".to_string());
+        args.push("stop".to_string());
+    } else {
+        // Daemon mode: nada que añadir; el comando actual
+        // (e.g. `delfos watch`) se dispatcha por el flow normal
+        // del Alaja CLI en el `start/2` de la app. Pasamos los
+        // user args por si los quiere leer.
+        args.push("-extra".to_string());
+        args.push("--".to_string());
+        for arg in &user_args {
+            args.push(arg.clone());
+        }
     }
 
     // ERL_LIBS incluye tanto la lib de la release como la lib del ERTS
@@ -738,9 +805,9 @@ fn run_with_erlexec(
             .arg("false")
             .arg("-noshell")
             // Forward user arguments to the application
-            .arg("-extra")
-            .arg("--")
-            .args(env::args().skip(1))
+            // Los args ya se forwardearon arriba (`-eval Delfos.CLI.main(...)`
+            // en CLI mode, `-extra --` en daemon mode), no hace
+            // falta añadirlos otra vez.
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
