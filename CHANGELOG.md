@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-07-01
+
+### Fixed
+- **Release mode boot crash (`load_failed` on kernel/stdlib)**: when a release is built with `include_erts: false` (or when batamanta flattens the ERTS into `release/erts/`), the wrapper's `ROOTDIR` was set to the release root, but the boot script references `$ROOT/lib/kernel-*`, `$ROOT/lib/stdlib-*`, etc. Those modules live in the bundled ERTS, not in `release/lib/`. The VM crashed on boot with `{load_failed,[supervisor,kernel,...]}`. The wrapper now detects where `erlexec` actually lives and points `ROOTDIR` to the bundled ERTS directory when it is flattened. Two new Rust unit tests cover the `include_erts: true` and `include_erts: false` layouts.
+- **Umbrella release builds were silently broken**: `run_umbrella_release/7` ran `mix release` from the umbrella root (no `cd:`), so only the root's release (typically a no-op) was ever built. The sub-app releases were never assembled. The loop now iterates sub-apps and runs `mix release` with `cd: app_path` so each sub-app produces its own release.
+- **Umbrella `get_release_path/1` pointed at the wrong directory**: the function computed `<root>/_build/prod/rel/<app>` for every app, but in a sub-app the release lives in `<sub_app>/_build/prod/rel/<app>`. Now accepts an optional `app_path` argument; the umbrella caller passes the sub-app path while the standalone path is unchanged. Four new unit tests cover standalone, single-level umbrella, nested umbrella, and `app_path` precedence.
+
+### Added
+- **`smoke_tests/test_release_nif`**: regression guard that exercises the exact `include_erts: false` configuration that hit the boot crash, with explicit `:erlang.system_info/1` + `Supervisor.start_link/2` calls that fail if `kernel`/`supervisor` did not load. Wired into `smoke_tests.sh`.
+
+### Quality
+- Format: ✅ clean
+- Credo --strict: ✅ 0 issues
+- Compile --warnings-as-errors: ✅ 0 warnings
+- Tests: 213 passing, 3 excluded (integration); 6 new tests added (2 Rust, 4 Elixir)
+
 ## [1.5.1] - 2026-06-10
 
 ### Added
