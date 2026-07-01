@@ -89,6 +89,33 @@ fn get_format() -> String {
     GENERATED_FORMAT.to_string()
 }
 
+/// Deriva el nombre del módulo CLI a partir del nombre de la app.
+///
+/// Sigue la convención de Alaja: app `:delfos` → módulo `Delfos.CLI`,
+/// app `:my_app` → módulo `MyApp.CLI`, etc.
+/// Si el nombre está vacío, devuelve `None` (no hay módulo CLI derivable).
+fn derive_cli_module(app_name: &str) -> Option<String> {
+    if app_name.is_empty() {
+        return None;
+    }
+    let pascal: String = app_name
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let mut chars = s.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+            }
+        })
+        .collect();
+    if pascal.is_empty() {
+        None
+    } else {
+        Some(format!("{}.CLI", pascal))
+    }
+}
+
 /// Obtiene la versión del release leyendo start_erl.data
 /// Este archivo contiene la versión de ERTS y la versión del release
 fn get_release_version(release_dir: &Path) -> String {
@@ -534,14 +561,24 @@ fn run_with_erlexec(
     bin_dir: &Path,
     release_lib: &Path,
     app_name: &str,
-    exec_mode: &str,
+    _exec_mode: &str,
 ) -> Result<u8> {
-    // Buscar erlexec. Puede estar en:
-    //   1) <release>/bin/erlexec                  (release con ERTS fusionado, include_erts: true)
-    //   2) <release>/erts/bin/erlexec             (release con ERTS flattenizado, include_erts: false)
-    //   3) Cualquier subdirectorio de <release>   (fallback genérico)
+    // Locate erlexec and the ERTS root.
+    //
+    // The Mix release layout is `<release>/erts-X.Y/bin/erlexec` and
+    // `ROOTDIR=<release>` (the parent of `erts-X.Y/`). The `bin/erl`
+    // shell script in that layout computes `ROOTDIR` the same way
+    // and we mirror it here so we can call `erlexec` directly without
+    // the shell wrapper.
+    //
+    // We accept three layouts to stay robust across history:
+    //   1) <release>/erts-X.Y/bin/erlexec      — standard Mix release
+    //   2) <release>/erts/bin/erlexec          — old batamanta flat
+    //   3) <release>/bin/erlexec                — include_erts: true,
+    //                                             ERTS fused into bin/
     let erts_subdir_bin = release_dir.join("erts").join("bin");
     let erlexec = find_file(bin_dir, "erlexec")
+        .or_else(|| find_file_with_prefix(release_dir, "erts-", "erlexec"))
         .or_else(|| find_file(&erts_subdir_bin, "erlexec"))
         .or_else(|| find_file(release_dir, "erlexec"))
         .context("erlexec not found")?;
@@ -558,56 +595,68 @@ fn run_with_erlexec(
 
     let bin_path = erlexec.parent().unwrap();
 
-    // Determinar dónde está el ERTS:
-    //   - Si erlexec vive bajo <release>/erts/bin/, el ERTS está flattenizado
-    //     en <release>/erts/ y ROOTDIR debe apuntar allí (no a <release>/).
-    //   - En caso contrario, el ERTS está fusionado en <release>/lib/ y
-    //     ROOTDIR coincide con <release>/.
-    // Esto resuelve el `load_failed` que se produce cuando el boot script
-    // referencia `$ROOT/lib/kernel-*` y ROOTDIR no apunta al directorio
-    // donde realmente está el ERTS (caso típico: include_erts: false).
-    let erts_dir = if bin_path.starts_with(&erts_subdir_bin) {
-        release_dir.join("erts")
-    } else {
+    // ROOTDIR must point to where the boot script's `$ROOT/lib/kernel-*`
+    // can find kernel, stdlib, etc.
+    //
+    // In a standard Mix release (`include_erts: true`), kernel lives at
+    // `<release>/lib/kernel-*` and ROOTDIR = `<release>`. When
+    // `include_erts: false`, the release has no kernel in lib/ — it's
+    // bundled inside the ERTS at `<release>/erts-X.Y/lib/` — so ROOTDIR
+    // must point to the ERTS directory.
+    //
+    // Heuristic: check if `<release>/lib/kernel-*` exists.
+    let has_kernel_in_release_lib = std::fs::read_dir(release_dir.join("lib"))
+        .ok()
+        .map(|mut entries| {
+            entries.any(|e| {
+                e.ok()
+                    .and_then(|e| e.file_name().to_str().map(|s| s.to_string()))
+                    .map_or(false, |name| name.starts_with("kernel-"))
+            })
+        })
+        .unwrap_or(false);
+
+    let rootdir = if has_kernel_in_release_lib {
+        // Standard release or fused ERTS: kernel at <release>/lib/kernel-*
         release_dir.to_path_buf()
+    } else {
+        // include_erts: false or old flat layout: kernel inside the bundled
+        // ERTS directory. The ERTS dir is the parent of bin_path.
+        bin_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| release_dir.to_path_buf())
     };
-    let rootdir = erts_dir.as_path();
 
     // Detectar dinámicamente la versión del release
     let release_version = get_release_version(release_dir);
     let releases_version_dir = release_dir.join("releases").join(&release_version);
 
-    // User args control the boot strategy:
-    //   * No args → full supervision tree (`start.boot`). Used for
-    //     daemon-style invocations like `delfos watch` or
-    //     `delfos serve --mcp` whose handlers block indefinitely.
-    //   * With args → boot cleanly (`start_clean.boot`) and run
-    //     `Delfos.CLI.main/1` via `-eval`. The CLI is responsible
-    //     for starting the app it needs via
-    //     `Application.ensure_all_started/1` and for stopping the
-    //     VM when done.
+    // La estrategia de boot se decide por `exec_mode` configurado en mix.exs:
     //
-    // Decoupling boot strategy from the app's `start/2` keeps the
-    // supervision tree module side-effect-free: it can be tested
-    // with `Application.ensure_all_started(:delfos)` and never has
-    // to read `:init.get_plain_arguments/0` to decide what to do.
+    //   :cli     → SIEMPRE start.boot + -eval <Module>.main([args]) + -s init stop.
+    //              El módulo CLI deriva del app_name ("Delfos.CLI" para :delfos).
+    //              Haya o no argumentos: el CLI muestra help/usage si está vacío.
+    //              Esto arregla el bug de delfos que se colgaba al lanzarse sin args.
+    //
+    //   :daemon  → start.boot + -extra --. La app lee args de
+    //              `:init.get_plain_arguments()` en su Application.start/2.
+    //              Ella misma gestiona su ciclo de vida (System.halt/1, etc.).
+    //
+    //   :tui     → Igual que daemon pero el wrapper Rust pone la terminal en raw
+    //              mode (stty -icanon -echo) antes de spawnear el VM.
+    //
+    // Si no se puede derivar el módulo CLI del app_name, se cae a daemon mode.
     let user_args: Vec<String> = env::args().skip(1).collect();
-    let cli_mode = !user_args.is_empty();
-
-    // Buscar el archivo .boot. En CLI mode usamos `start_clean`
-    // para no arrancar el supervisor (lo hará el `Delfos.CLI.main/1`
-    // cuando llame a `Application.ensure_all_started/1`).
-    let boot_path = if cli_mode {
-        let clean = releases_version_dir.join("start_clean.boot");
-        if clean.exists() {
-            clean
-        } else {
-            find_file_by_ext(&release_dir.join("releases"), "boot")
-                .filter(|p| p.file_name().and_then(|s| s.to_str()) == Some("start_clean.boot"))
-                .or_else(|| find_file_by_ext(bin_dir, "boot"))
-                .context("No start_clean.boot found for CLI mode")?
-        }
+    let exec_mode = get_exec_mode();
+    let cli_module = if exec_mode == "cli" {
+        derive_cli_module(&get_app_name())
     } else {
+        None
+    };
+
+    // Buscar el archivo .boot. Siempre usamos `start.boot`.
+    let boot_path = {
         let full = releases_version_dir.join("start.boot");
         if full.exists() {
             full
@@ -618,13 +667,13 @@ fn run_with_erlexec(
                     name == "start.boot" || !name.contains("start_clean")
                 })
                 .or_else(|| find_file_by_ext(bin_dir, "boot"))
-                .context("No start.boot found for daemon mode")?
+                .context("No .boot file found")?
         }
     };
 
     let boot_arg = boot_path.with_extension("").to_string_lossy().into_owned();
 
-    // Construir argumentos
+    // Construir argumentos base del VM
     let mut args: Vec<String> = vec![
         "-boot".to_string(),
         boot_arg.clone(),
@@ -639,15 +688,10 @@ fn run_with_erlexec(
         "-noshell".to_string(),
     ];
 
-    // En CLI mode: arrancar la app perezosamente vía `Delfos.CLI.main/1`
-    // y dejar que se auto-paré. En daemon mode: dejar que el
-    // `start.boot` arranque la app y el handler del comando decida
-    // cuándo salir.
-    if cli_mode {
+    // En CLI mode: despachar vía -eval <Module>.main([args]) + -s init stop.
+    // En daemon mode: pasar args via -extra -- para :init.get_plain_arguments().
+    if let Some(module) = cli_module {
         // Escapar cada arg para embedding en la expresión Elixir.
-        // El shell que invoca `mix release --quiet` puede contener
-        // caracteres especiales; la lista de args se construye con
-        // `\"...\"` para que el lexer de Elixir los trate como literales.
         let quoted: Vec<String> = user_args
             .iter()
             .map(|a| {
@@ -657,20 +701,16 @@ fn run_with_erlexec(
             .collect();
         let elixir_list = quoted.join(", ");
 
-        // `-eval` corre la expresión al boot; `-s init stop` mata
-        // la VM cuando la expresión retorna. `Process.sleep(50)`
-        // interno de `Delfos.CLI.main/1` da tiempo a que el
-        // stdout se vuelque antes del halt.
+        // -eval ejecuta la expresión; -s init stop para la VM cuando
+        // main/1 retorna. Si main/1 bloquea (delfos watch, serve --mcp),
+        // init:stop nunca se ejecuta y el VM sigue vivo correctamente.
         args.push("-eval".to_string());
-        args.push(format!("Delfos.CLI.main([{}])", elixir_list));
+        args.push(format!("{}.main([{}])", module, elixir_list));
         args.push("-s".to_string());
         args.push("init".to_string());
         args.push("stop".to_string());
     } else {
-        // Daemon mode: nada que añadir; el comando actual
-        // (e.g. `delfos watch`) se dispatcha por el flow normal
-        // del Alaja CLI en el `start/2` de la app. Pasamos los
-        // user args por si los quiere leer.
+        // Daemon mode: pasar args para :init.get_plain_arguments()
         args.push("-extra".to_string());
         args.push("--".to_string());
         for arg in &user_args {
@@ -678,16 +718,11 @@ fn run_with_erlexec(
         }
     }
 
-    // ERL_LIBS incluye tanto la lib de la release como la lib del ERTS
-    // (cuando el ERTS está flattenizado). El code server la usa para
-    // resolver módulos runtime; el boot script sigue necesitando
-    // ROOTDIR correctamente para los primLoad iniciales.
-    let erts_lib = erts_dir.join("lib");
-    let erl_libs_str = if erts_lib.exists() {
-        format!("{}:{}", release_lib.display(), erts_lib.display())
-    } else {
-        release_lib.to_string_lossy().into_owned()
-    };
+    // ERL_LIBS for runtime code path resolution. With the standard
+    // Mix release layout (erts-X.Y/lib/*, lib/*) the boot script
+    // already populates the code path, so we only need release_lib
+    // here. Kept as a single entry to avoid masking bad layouts.
+    let erl_libs_str = release_lib.to_string_lossy().into_owned();
 
     let mut child: std::process::Child = if exec_mode == "daemon" {
         // Usar spawn_detached para crear una nueva sesión (portable: Linux y macOS)
@@ -745,10 +780,10 @@ fn run_with_erlexec(
         let vm_args_path = releases_version_dir.join("vm.args");
 
         let mut cmd = Command::new(&erlexec);
-        cmd.env("ROOTDIR", rootdir)
+        cmd.env("ROOTDIR", &rootdir)
             .env("BINDIR", bin_path)
             .env("ERL_LIBS", &erl_libs_str)
-            .env("ERL_ROOTDIR", rootdir)
+            .env("ERL_ROOTDIR", &rootdir)
             .env("RELEASE_ROOT", release_dir)
             .env("RELEASE_PROG", app_name)
             .env("RELEASE_SYS_CONFIG", &sys_config_path)
@@ -851,6 +886,29 @@ fn find_file(path: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Find `name` inside any `prefix*` sibling of `parent` whose name
+/// starts with `prefix`.
+///
+/// Used to locate `<release>/erts-X.Y/bin/erlexec` without knowing
+/// the exact `X.Y` at compile time. Returns the first match.
+fn find_file_with_prefix(parent: &Path, prefix: &str, name: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(parent).ok()?;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir()
+            && p.file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.starts_with(prefix))
+                .unwrap_or(false)
+        {
+            if let Some(found) = find_file(&p, name) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 fn find_file_by_ext(path: &Path, ext: &str) -> Option<PathBuf> {
     if path.is_dir() {
         for entry in fs::read_dir(path).ok()? {
@@ -941,6 +999,42 @@ mod tests {
         let result = find_file(temp_dir.path(), "test.txt");
         assert!(result.is_some());
         assert_eq!(result.unwrap(), file_path);
+    }
+
+    /// `find_file_with_prefix` locates a file inside a sibling
+    /// directory whose name starts with the given prefix — used to
+    /// find `erts-X.Y/bin/erlexec` without hardcoding the version.
+    #[test]
+    fn test_find_file_with_prefix_locates_versioned_erts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let nested = temp_dir.path().join("erts-16.3");
+        let nested_bin = nested.join("bin");
+        fs::create_dir_all(&nested_bin).unwrap();
+        let erlexec = nested_bin.join("erlexec");
+        File::create(&erlexec).unwrap();
+
+        let result = find_file_with_prefix(temp_dir.path(), "erts-", "erlexec");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), erlexec);
+    }
+
+    #[test]
+    fn test_find_file_with_prefix_returns_none_when_no_match() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = find_file_with_prefix(temp_dir.path(), "erts-", "erlexec");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_file_with_prefix_skips_unrelated_dirs() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        // lib/ is a sibling but does not start with "erts-".
+        let lib = temp_dir.path().join("lib");
+        fs::create_dir_all(&lib).unwrap();
+        File::create(lib.join("erlexec")).unwrap();
+
+        let result = find_file_with_prefix(temp_dir.path(), "erts-", "erlexec");
+        assert!(result.is_none());
     }
 
     #[test]

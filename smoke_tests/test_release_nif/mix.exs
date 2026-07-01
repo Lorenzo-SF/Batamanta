@@ -14,7 +14,7 @@ defmodule TestReleaseNif.MixProject do
         # false layout where the batamanta wrapper used to crash with
         # `load_failed` on kernel/stdlib.
         otp_version: "26.0",
-        execution_mode: :cli,
+        execution_mode: :daemon,
         compression: 1
       ],
       releases: [
