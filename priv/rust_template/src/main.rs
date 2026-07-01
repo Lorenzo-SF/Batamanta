@@ -655,8 +655,32 @@ fn run_with_erlexec(
         None
     };
 
-    // Buscar el archivo .boot. Siempre usamos `start.boot`.
-    let boot_path = {
+    // Seleccionar el archivo .boot según el modo:
+    //
+    //   :cli  → start_clean.boot (inicia solo kernel/stdlib/Elixir).
+    //           El módulo CLI via `-eval Delfos.CLI.main([args])` arranca
+    //           la app completa vía `Application.ensure_all_started/1` y
+    //           `-s init stop` apaga la VM al terminar.
+    //
+    //   :daemon / :tui  → start.boot (supervision tree completo).
+    //           La app lee args de `:init.get_plain_arguments()` y gestiona
+    //           su propio ciclo de vida.
+    let boot_path = if exec_mode == "cli" {
+        let clean = releases_version_dir.join("start_clean.boot");
+        if clean.exists() {
+            clean
+        } else {
+            find_file_by_ext(&release_dir.join("releases"), "boot")
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|n| n == "start_clean.boot")
+                        .unwrap_or(false)
+                })
+                .or_else(|| find_file_by_ext(bin_dir, "boot"))
+                .context("No start_clean.boot found for CLI mode")?
+        }
+    } else {
         let full = releases_version_dir.join("start.boot");
         if full.exists() {
             full
@@ -691,21 +715,24 @@ fn run_with_erlexec(
     // En CLI mode: despachar vía -eval <Module>.main([args]) + -s init stop.
     // En daemon mode: pasar args via -extra -- para :init.get_plain_arguments().
     if let Some(module) = cli_module {
-        // Escapar cada arg para embedding en la expresión Elixir.
+        // Escapar cada arg como binario Erlang (<<"text">>) para que
+        // Elixir lo reciba como string (binario), no como charlist.
         let quoted: Vec<String> = user_args
             .iter()
             .map(|a| {
-                let escaped = a.replace('\\', "\\\\").replace('"', "\\\"");
-                format!("\"{}\"", escaped)
+                // Escapar backslash y comillas para Erlang binary syntax
+                let escaped = a.replace('\\', "\\\\").replace("\"", "\\\"");
+                format!("<<\"{}\">>", escaped)
             })
             .collect();
         let elixir_list = quoted.join(", ");
 
-        // -eval ejecuta la expresión; -s init stop para la VM cuando
-        // main/1 retorna. Si main/1 bloquea (delfos watch, serve --mcp),
-        // init:stop nunca se ejecuta y el VM sigue vivo correctamente.
+        // -eval usa sintaxis Erlang. Llamamos la función Elixir desde
+        // Erlang usando el átomo 'Elixir.Modulo' y pasamos los args
+        // como binarios (<<>>) que Elixir ve como strings.
+        // Ejemplo: 'Elixir.Delfos.CLI':main([<<"version">>])
         args.push("-eval".to_string());
-        args.push(format!("{}.main([{}])", module, elixir_list));
+        args.push(format!("'Elixir.{}':main([{}])", module, elixir_list));
         args.push("-s".to_string());
         args.push("init".to_string());
         args.push("stop".to_string());
@@ -779,6 +806,17 @@ fn run_with_erlexec(
         let sys_config_path = releases_version_dir.join("sys.config");
         let vm_args_path = releases_version_dir.join("vm.args");
 
+        // Construir el comando usando el vector `args` que ya contiene
+        // todos los argumentos base (-boot, -boot_var, -noshell) MÁS
+        // los argumentos específicos del modo:
+        //   - CLI:  -eval <Mod>.main([...]) + -s init stop
+        //   - TUI:  (sin -eval, sin -extra, mismo que daemon)
+        //   - Daemon: -extra --
+        //
+        // Luego se añaden los argumentos extra que erlexec/beam necesitan
+        // y que NO están en el vector `args`: --erl-config, -args_file.
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
         let mut cmd = Command::new(&erlexec);
         cmd.env("ROOTDIR", &rootdir)
             .env("BINDIR", bin_path)
@@ -803,30 +841,13 @@ fn run_with_erlexec(
                     env::var("PATH").unwrap_or_default()
                 ),
             )
-            // Boot script (without .boot extension — erlexec adds it)
-            .arg("-boot")
-            .arg(&boot_arg)
-            // Boot variables expected by Elixir releases
-            .arg("-boot_var")
-            .arg("RELEASE_LIB")
-            .arg(release_lib)
-            .arg("-boot_var")
-            .arg("RELEASE_ROOT")
-            .arg(release_dir)
+            // Todos los argumentos del vector (boot, boot_var, -eval, -s, etc.)
+            .args(&args_refs)
             // FIX: pass sys.config so application env is loaded correctly.
-            // Without this, Config.Reader/Mix.Config values are ignored.
-            //
-            // erlexec (the modern Erlang entry point) takes the path
-            // via `--erl-config <path>` (with the `--` prefix) and the
-            // path WITHOUT the `.config` extension. The previous
-            // single-dash `-config` form was ignored by erlexec, which
-            // let the Config.Reader fall back to its default
-            // `sys.config.config` lookup and fail boot with
-            // "Could not read runtime configuration".
+            // erlexec takes --erl-config <path> (WITHOUT .config extension)
             .arg("--erl-config")
             .arg(sys_config_path.with_extension(""))
             // FIX: pass vm.args so VM flags (node name, cookie, etc.) are applied.
-            // Use -args_file which erlexec reads before its own argv processing.
             .args(if vm_args_path.exists() {
                 vec![
                     "-args_file".to_string(),
@@ -835,14 +856,6 @@ fn run_with_erlexec(
             } else {
                 vec![]
             })
-            // Disable EPMD to avoid startup hangs in non-distributed mode
-            .arg("-start_epmd")
-            .arg("false")
-            .arg("-noshell")
-            // Forward user arguments to the application
-            // Los args ya se forwardearon arriba (`-eval Delfos.CLI.main(...)`
-            // en CLI mode, `-extra --` en daemon mode), no hace
-            // falta añadirlos otra vez.
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
