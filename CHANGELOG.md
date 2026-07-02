@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   since OTP 17. Consumer apps were silently booting with no
   application env and crashing on first Postgres/Redis/etc. access
   with errors like `missing the :database key`.
+- CLI release binaries: `RELEASE_SYS_CONFIG` env var was being set
+  with the `.config` extension included. The Erlang `Config.Provider`
+  machinery appends `.config` automatically, so the provider tried
+  to read `sys.config.config` (double extension) and aborted boot.
+  Fix: pass the path without `.config` in `RELEASE_SYS_CONFIG`,
+  matching the convention of the standard Mix release `bin/app`
+  script. Affects every consumer app that has a `config_provider_init`
+  in its `sys.config` (i.e. uses `config/runtime.exs`).
 
 ## [1.6.0] - 2026-07-02
 
