@@ -40,11 +40,17 @@ jobs:
           install-hex: true
           install-rebar: true
 
+      - name: Get version for cache bust
+        id: mix-version
+        run: echo "version=$(grep '@version' mix.exs | head -1 | sed 's/.*"\(.*\)".*/\1/')" >> "$GITHUB_OUTPUT"
+
       - name: Cache Mix dependencies
         uses: actions/cache@v4
         with:
-          key: mix-${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('mix.lock') }}
-          restore-keys: mix-${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-
+          key: mix-${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-${{ steps.mix-version.outputs.version }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-${{ steps.mix-version.outputs.version }}-
+            mix-${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-
           path: |
             deps/
             _build/${{ env.MIX_ENV }}
@@ -148,11 +154,17 @@ jobs:
           install-hex: true
           install-rebar: true
 
+      - name: Get version for cache bust
+        id: mix-version
+        run: echo "version=$(grep '@version' mix.exs | head -1 | sed 's/.*"\(.*\)".*/\1/')" >> "$GITHUB_OUTPUT"
+
       - name: Cache Mix dependencies
         uses: actions/cache@v4
         with:
-          key: mix-${{ runner.os }}-28.1-1.18.4-${{ hashFiles('mix.lock') }}
-          restore-keys: mix-${{ runner.os }}-28.1-1.18.4-
+          key: mix-${{ runner.os }}-28.1-1.18.4-${{ steps.mix-version.outputs.version }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-${{ runner.os }}-28.1-1.18.4-${{ steps.mix-version.outputs.version }}-
+            mix-${{ runner.os }}-28.1-1.18.4-
           path: |
             deps/
             _build/${{ env.MIX_ENV }}
