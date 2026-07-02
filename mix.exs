@@ -27,11 +27,19 @@ defmodule Batamanta.MixProject do
           threshold: 100
         ]
       ]
-    ]
+    ] ++ optional_test_config()
   end
 
   defp description do
     "Encapsulates Elixir releases alongside their ERTS into self-contained executable binaries. Downloads ERTS from Hex.pm with fallback to system ERTS if unavailable."
+  end
+
+  defp optional_test_config do
+    if Version.match?(System.version(), ">= 1.19.0") do
+      [test_ignore_filters: [~r/test\/support\/runner_mock\.exs/, ~r/test\/test_httpc\.exs/]]
+    else
+      []
+    end
   end
 
   defp docs do
