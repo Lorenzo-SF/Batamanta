@@ -24,7 +24,7 @@ test() {
 }
 
 for dir in test_cli test_tui test_daemon test_escript \
-           test_release_otp27 test_escript_otp26 ; do
+           test_release_otp27 test_release_nif test_escript_otp26 ; do
     cd "$dir" || exit
     test
     bin_name=$(basename "$dir")-0.1.0-x86_64-linux
