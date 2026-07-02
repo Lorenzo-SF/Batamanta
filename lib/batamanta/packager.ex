@@ -66,6 +66,12 @@ defmodule Batamanta.Packager do
 
   @spec prepare_erts(Path.t()) :: :ok
   defp prepare_erts(erts_path) do
+    # Flatten the nested `erts-X.Y/` subdirectory so that the OTP
+    # libs (kernel, stdlib, etc.) are directly under `<erts>/lib/`
+    # and `erlexec` is at `<erts>/bin/erlexec`. This ensures the
+    # boot script's `$ROOTDIR/lib/kernel-*` path resolves when
+    # ROOTDIR points to `<erts>` (needed for `include_erts: false`
+    # where the Mix release has no kernel in its own `lib/`).
     flatten_nested_erts(erts_path)
     cleanup_erts(erts_path)
     ensure_executable_permissions(erts_path)

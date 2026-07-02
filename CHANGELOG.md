@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-07-02
+
+### Added
+- **CLI dispatch via `-eval` + `start_clean.boot`**: CLI mode (`execution_mode: :cli`) now boots the VM with `start_clean.boot` (minimal boot — no application supervision tree) instead of `start.boot` (full release boot). CLI args are dispatched via `-eval 'Elixir.Module.CLI':main([<<"...">>])` followed by `-s init stop`, so the binary runs the CLI command and exits cleanly without ever starting OTP applications. Daemon and TUI modes continue using `start.boot` (full supervision tree).
+- **`smoke_tests/test_escript_otp26`**: regression guard for escript builds targeting OTP 26 (OTP compatibility).
+- **`smoke_tests/test_release_nif`**: regression guard that exercises `include_erts: false` with explicit `:erlang.system_info/1` + `Supervisor.start_link/2` calls that fail if `kernel`/`supervisor` did not load. Wired into `smoke_tests.sh`.
+- **`derive_cli_module/1`**: derives the CLI module name from the app name at runtime (`:delfos` → `"Delfos.CLI"`, `:test_cli` → `"TestCli.CLI"`), following Alaja convention.
+- **ROOTDIR heuristic**: new logic checks if `<release>/lib/kernel-*` exists to determine whether ROOTDIR should point to the release root (standard layout) or the bundled ERTS directory (`include_erts: false` layout).
+
+### Fixed
+- **CLI args silently dropped (critical)**: the `args` vector (containing `-eval`, `-s init stop`, and user arguments) was built but **never passed to the `Command`** in CLI mode. The `Command` was constructed from scratch with individual `.arg()` calls, duplicating only the base erlexec args. Now uses `.args(&args)` — the complete vector is passed to the spawned process.
+- **CLI args as charlists instead of binaries**: `"version"` in Erlang syntax produces a charlist (`[118,101,114,...]`), which Elixir receives as `'version'` (charlist) instead of `"version"` (string). All CLI arg comparisons using `== "version"` evaluated to `false`, causing `'unknown command'` errors. Fixed by formatting args as Erlang binary syntax: `<<"version">>`.
+- **CLI mode used `start.boot` (full supervision tree)**: before this release, `exec_mode == :cli` still started the full OTP release (`start.boot`), starting the application supervisor tree, Ecto repos, and all children. The CLI command ran as a side effect after the full tree started, and `-s init stop` was ineffective because the supervision tree kept the VM alive. Daemon/TUI remain unaffected.
+- **`exec_mode` overridden by args presence**: `cli_mode = !user_args.is_empty()` in `run_with_erlexec` meant any binary launched without arguments entered daemon mode even when `execution_mode: :cli` was configured. An empty-args CLI binary (e.g. `delfos` with no subcommand) would boot the full supervision tree and hang forever. Now `exec_mode` is the sole determinant of boot strategy.
+- **`--erl-config` vs `-config` flag**: previous releases used the `-config` flag for erlexec, which is unsupported in newer OTP versions. Changed to `--erl-config` for compatibility.
+- **Release mode boot crash (`load_failed` on kernel/stdlib)**: when a release is built with `include_erts: false` (or when batamanta flattens the ERTS into `release/erts/`), the wrapper's `ROOTDIR` was set to the release root, but the boot script references `$ROOT/lib/kernel-*`, `$ROOT/lib/stdlib-*`, etc. Those modules live in the bundled ERTS, not in `release/lib/`. The VM crashed on boot with `{load_failed,[supervisor,kernel,...]}`. The wrapper now detects where `erlexec` actually lives and points `ROOTDIR` to the bundled ERTS directory when it is flattened. Two new Rust unit tests cover the `include_erts: true` and `include_erts: false` layouts.
+- **Umbrella release builds were silently broken**: `run_umbrella_release/7` ran `mix release` from the umbrella root (no `cd:`), so only the root's release (typically a no-op) was ever built. The sub-app releases were never assembled. The loop now iterates sub-apps and runs `mix release` with `cd: app_path` so each sub-app produces its own release.
+- **Umbrella `get_release_path/1` pointed at the wrong directory**: the function computed `<root>/_build/prod/rel/<app>` for every app, but in a sub-app the release lives in `<sub_app>/_build/prod/rel/<app>`. Now accepts an optional `app_path` argument; the umbrella caller passes the sub-app path while the standalone path is unchanged. Four new unit tests cover standalone, single-level umbrella, nested umbrella, and `app_path` precedence.
+- **`flatten_nested_erts` removed from `Packager.prepare_erts/1`**: the flattening step was accidentally removed in a previous refactor, causing `include_erts: false` releases to have a malformed ERTS layout (erlexec two levels deep). Restored the call to ensure erlexec and kernel are at the same level under ROOTDIR.
+- **`test_escript` missing `main_module`**: the `test_escript_otp26` smoke test project lacked the `escript: [main_module: ...]` configuration in its `mix.exs` and the corresponding `cli.ex` entry point. Added both.
+
+### Changed
+- **`exec_mode` is the sole boot strategy selector**: Previously, the presence of CLI arguments could override `exec_mode`, causing daemon-configured apps to accidentally enter CLI mode (and vice versa). Now `exec_mode` is evaluated first and always respected.
+- **`flatten_nested_erts` is now always applied**: even for standard releases, the flattening step is harmless (no-op when files are already flat) and essential for `include_erts: false`. The erlexec binary is moved up one level to match the kernel directory location.
+
+### Quality
+- Format: ✅ clean
+- Credo --strict: ✅ 0 issues
+- Compile --warnings-as-errors: ✅ 0 warnings
+- Tests: 221 passing, 3 excluded (integration); 14 new tests added (6 Rust, 8 Elixir)
+- Smoke tests: 7/7 passing (test_cli, test_tui, test_daemon, test_escript, test_release_otp27, test_release_nif, test_escript_otp26)
+
 ## [1.5.1] - 2026-06-10
 
 ### Added

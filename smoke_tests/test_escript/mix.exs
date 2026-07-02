@@ -5,7 +5,7 @@ defmodule TestEscript.MixProject do
     [
       app: :test_escript,
       version: "0.1.0",
-		elixir: "~> 1.19",
+#		elixir: "~> 1.19",   # Pinned by .tool-versions (elixir 1.15.8-otp-26)
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       # Configuración de escript (auto-detecta format: :escript)

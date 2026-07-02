@@ -9,7 +9,7 @@ defmodule TestReleaseOtp27.MixProject do
       deps: deps(),
       batamanta: [
         otp_version: "27.0",
-        execution_mode: :cli,
+        execution_mode: :daemon,
         compression: 1
       ],
       releases: [

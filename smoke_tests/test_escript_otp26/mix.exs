@@ -13,6 +13,7 @@ defmodule TestEscriptOtp26.MixProject do
         execution_mode: :cli,
         compression: 1
       ],
+      escript: escript(),
       releases: [
         test_escript_otp26: [
           include_executables_for: [:unix],
@@ -21,6 +22,10 @@ defmodule TestEscriptOtp26.MixProject do
         ]
       ]
     ]
+  end
+
+  defp escript do
+    [main_module: TestEscriptOtp26.CLI]
   end
 
   def application do

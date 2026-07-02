@@ -5,13 +5,16 @@ defmodule TestCli.MixProject do
     [
       app: :test_cli,
       version: "0.1.0",
-	  elixir: "~> 1.19",
+#      elixir: "~> 1.19",   # Pinned by .tool-versions (elixir 1.15.8-otp-26)
+
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       # Configuración de Batamanta
-      # Si no se especifica erts_target, se usa :auto por defecto
+      # execution_mode: :daemon porque TestCli no tiene un módulo
+      # TestCli.CLI.main/1 — lee los argumentos directamente desde
+      # :init.get_plain_arguments() en Application.start/2.
       batamanta: [
-        execution_mode: :cli,
+        execution_mode: :daemon,
         compression: 1
         # erts_target: :auto  # Por defecto si no se especifica
       ],

@@ -324,25 +324,32 @@ defmodule Mix.Tasks.Batamanta do
          compression,
          banner_ctx
        ) do
-    Logger.info(banner_ctx, ">> 📦 Creating Release for umbrella...")
-
     build_env =
       EnvCleaner.build_env(erts_path)
       |> Map.new()
       |> Map.put("MIX_ENV", "prod")
 
-    {out, status} =
-      System.cmd("mix", ["release", "--overwrite", "--quiet"],
-        env: build_env,
-        stderr_to_stdout: true
-      )
+    # Construir el release de CADA sub-app en su propio directorio.
+    # Sin `cd: app_path` se construía el release del root del umbrella
+    # (que normalmente no es una release), dejando `_build/prod/rel`
+    # en la sub-app sin poblar.
+    Enum.each(apps, fn {app_name, app_path} ->
+      Logger.info(banner_ctx, ">> 📦 Creating Release for #{app_name}...")
 
-    if status != 0 do
-      Logger.error(banner_ctx, "Mix release compilation failed:")
-      Logger.error(banner_ctx, out)
-      Banner.set_image(banner_ctx, :error)
-      Mix.raise("Mix release compilation failed.")
-    end
+      {out, status} =
+        System.cmd("mix", ["release", "--overwrite", "--quiet"],
+          cd: app_path,
+          env: build_env,
+          stderr_to_stdout: true
+        )
+
+      if status != 0 do
+        Logger.error(banner_ctx, "Mix release compilation failed for #{app_name}:")
+        Logger.error(banner_ctx, out)
+        Banner.set_image(banner_ctx, :error)
+        Mix.raise("Mix release compilation failed for #{app_name}.")
+      end
+    end)
 
     Enum.each(apps, fn {app_name, app_path} ->
       try do
@@ -350,7 +357,10 @@ defmodule Mix.Tasks.Batamanta do
         app_binary_name = Keyword.get(app_bata_config, :binary_name)
         app_compression = app_bata_config[:compression] || compression
 
-        release_path = get_release_path(app_config[:app])
+        # En un umbrella, el release vive en la sub-app, no en el root.
+        # Pasamos app_path para que get_release_path/2 apunte al sitio
+        # correcto.
+        release_path = get_release_path(app_config[:app], app_path)
 
         if File.dir?(release_path) do
           payload_path =
@@ -726,15 +736,39 @@ defmodule Mix.Tasks.Batamanta do
     end
   end
 
-  defp get_release_path(app) do
-    current_build = Mix.Project.build_path()
+  # Calcula la ruta absoluta al release de la aplicación.
+  #
+  # Para proyectos normales: `<root>/_build/prod/rel/<app>`.
+  # Para sub-apps de un umbrella: `<sub_app>/_build/prod/rel/<app>` —
+  # el `_build` está donde se ejecutó `mix release`, no en el root del
+  # umbrella. En este caso se debe pasar `app_path` para que el
+  # cálculo apunte al sub-app correcto.
+  #
+  # Examples:
+  #
+  #     iex> get_release_path(:my_app)
+  #     "/home/user/proj/_build/prod/rel/my_app"
+  #
+  #     iex> get_release_path(:my_app, "/home/user/proj/apps/my_app")
+  #     "/home/user/proj/apps/my_app/_build/prod/rel/my_app"
+  @spec get_release_path(atom(), String.t() | nil) :: String.t()
+  def get_release_path(app, app_path \\ nil) do
+    base =
+      case app_path do
+        nil ->
+          # Proyecto normal: _build vive dos niveles por encima del
+          # build_path (build_path = _build/dev → root = ../..).
+          Mix.Project.build_path()
+          |> Path.dirname()
+          |> Path.dirname()
 
-    project_root =
-      current_build
-      |> Path.dirname()
-      |> Path.dirname()
+        path ->
+          # Sub-app de umbrella: el _build está dentro del propio
+          # sub-app, no en el root.
+          path
+      end
 
-    Path.join([project_root, "_build", "prod", "rel", Atom.to_string(app)])
+    Path.join([base, "_build", "prod", "rel", Atom.to_string(app)])
     |> Path.absname()
   end
 
