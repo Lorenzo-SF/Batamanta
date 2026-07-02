@@ -758,10 +758,9 @@ fn run_with_erlexec(
         let rootdir_str = rootdir.to_string_lossy().into_owned();
         let release_root_str = release_dir.to_string_lossy().into_owned();
         let bindir_str = bin_path.to_string_lossy().into_owned();
-        let sys_config_str = releases_version_dir
-            .join("sys.config")
-            .to_string_lossy()
-            .into_owned();
+        let sys_config_with_ext = releases_version_dir.join("sys.config");
+        let sys_config_no_ext = sys_config_with_ext.with_extension("");
+        let sys_config_no_ext_str = sys_config_no_ext.to_string_lossy().into_owned();
         let vm_args_str = releases_version_dir
             .join("vm.args")
             .to_string_lossy()
@@ -773,7 +772,7 @@ fn run_with_erlexec(
             ("ERL_ROOTDIR", rootdir_str.as_str()),
             ("RELEASE_ROOT", release_root_str.as_str()),
             ("RELEASE_PROG", app_name),
-            ("RELEASE_SYS_CONFIG", sys_config_str.as_str()),
+            ("RELEASE_SYS_CONFIG", sys_config_no_ext_str.as_str()),
             ("RELEASE_VM_ARGS", vm_args_str.as_str()),
             ("EMU", "beam"),
             ("PROGNAME", "erl"),
@@ -804,6 +803,7 @@ fn run_with_erlexec(
         }
 
         let sys_config_path = releases_version_dir.join("sys.config");
+        let sys_config_no_ext = sys_config_path.with_extension("");
         let vm_args_path = releases_version_dir.join("vm.args");
 
         // Construir el comando usando el vector `args` que ya contiene
@@ -824,7 +824,7 @@ fn run_with_erlexec(
             .env("ERL_ROOTDIR", &rootdir)
             .env("RELEASE_ROOT", release_dir)
             .env("RELEASE_PROG", app_name)
-            .env("RELEASE_SYS_CONFIG", &sys_config_path)
+            .env("RELEASE_SYS_CONFIG", &sys_config_no_ext)
             .env("RELEASE_VM_ARGS", &vm_args_path)
             .env("EMU", "beam")
             .env("PROGNAME", "erl")
@@ -845,11 +845,14 @@ fn run_with_erlexec(
             .args(&args_refs)
             // FIX: pass sys.config so application env is loaded correctly.
             // The bundled erlexec (OTP 28.4 / Erlang 16.3) only supports
-            // `-config <path-with-.config-extension>`. The newer
-            // `--erl-config` flag (without extension) was added later and is
-            // not recognised here, which left the BEAM booting with no config
-            // and Postgrex/etc. crashing with "missing the :database key".
-            // We use the old style flag (works on every erlexec since OTP 17).
+            // `-config <path-with-.config-extension>`. We use the old-style
+            // flag (works on every erlexec since OTP 17) and pass the path
+            // WITH the .config extension.
+            //
+            // RELEASE_SYS_CONFIG is set WITHOUT the .config extension; the
+            // Erlang Config.Provider evaluates {system, "RELEASE_SYS_CONFIG",
+            // ".config"} as <env-value> ++ ".config", so it would otherwise
+            // look for "sys.config.config" (double extension) and crash.
             .arg("-config")
             .arg(&sys_config_path)
             // FIX: pass vm.args so VM flags (node name, cookie, etc.) are applied.
