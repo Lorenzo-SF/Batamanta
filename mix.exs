@@ -1,7 +1,7 @@
 defmodule Batamanta.MixProject do
   use Mix.Project
 
-  @version "1.6.0"
+  @version "1.6.1"
   @source_url "https://github.com/Lorenzo-SF/Batamanta"
   @elixir_vsn "~> 1.15"
 

@@ -814,7 +814,7 @@ fn run_with_erlexec(
         //   - Daemon: -extra --
         //
         // Luego se añaden los argumentos extra que erlexec/beam necesitan
-        // y que NO están en el vector `args`: --erl-config, -args_file.
+        // y que NO están en el vector `args`: -config, -args_file.
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
         let mut cmd = Command::new(&erlexec);
@@ -844,9 +844,14 @@ fn run_with_erlexec(
             // Todos los argumentos del vector (boot, boot_var, -eval, -s, etc.)
             .args(&args_refs)
             // FIX: pass sys.config so application env is loaded correctly.
-            // erlexec takes --erl-config <path> (WITHOUT .config extension)
-            .arg("--erl-config")
-            .arg(sys_config_path.with_extension(""))
+            // The bundled erlexec (OTP 28.4 / Erlang 16.3) only supports
+            // `-config <path-with-.config-extension>`. The newer
+            // `--erl-config` flag (without extension) was added later and is
+            // not recognised here, which left the BEAM booting with no config
+            // and Postgrex/etc. crashing with "missing the :database key".
+            // We use the old style flag (works on every erlexec since OTP 17).
+            .arg("-config")
+            .arg(&sys_config_path)
             // FIX: pass vm.args so VM flags (node name, cookie, etc.) are applied.
             .args(if vm_args_path.exists() {
                 vec![
