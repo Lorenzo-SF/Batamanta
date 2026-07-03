@@ -12,15 +12,14 @@ defmodule Batamanta.PackagerTest do
 
     File.mkdir_p!(rs)
     File.mkdir_p!(et)
-    File.mkdir_p!(Path.join(et, "bin"))
+    File.mkdir_p!(Path.join([et, "erts-28.0", "bin"]))
     File.mkdir_p!(Path.join(et, "releases"))
     File.mkdir_p!(Path.join(rs, "bin"))
     File.mkdir_p!(Path.join(rs, "lib"))
     File.mkdir_p!(Path.join(rs, "releases"))
 
     File.write!(Path.join(rs, "hello.txt"), "world")
-    File.write!(Path.join(et, "bin/erlexec"), "binary")
-    File.write!(Path.join(et, "releases/OTP_VERSION"), "28.0")
+    File.write!(Path.join([et, "erts-28.0", "bin", "erlexec"]), "binary")
     File.write!(Path.join(rs, "bin/my_app"), "#!/bin/sh\necho hello")
     File.write!(Path.join(rs, "releases/start_erl.data"), "28.0 1.0.0")
 
