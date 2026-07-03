@@ -26,7 +26,8 @@ defmodule Batamanta.Packager do
           {:ok, Path.t()} | {:error, String.t()}
   def package(rel_path, erts_path, out_path, compression_level) do
     temp = Path.join(System.tmp_dir!(), "bat_pkg_#{:erlang.unique_integer([:positive])}")
-    app_name = Mix.Project.config()[:app] |> to_string()
+    config = Mix.Project.config()
+    app_name = config[:app] |> to_string()
 
     try do
       File.mkdir_p!(temp)
@@ -37,6 +38,9 @@ defmodule Batamanta.Packager do
       File.cp_r!(erts_path, erts_work_path)
       erts_work = erts_work_path
 
+      # Capture ERTS version BEFORE prepare_erts modifies the structure
+      erts_version = get_erts_version(erts_work)
+
       prepare_erts(erts_work)
 
       app_name
@@ -46,7 +50,18 @@ defmodule Batamanta.Packager do
       remove_mix_bundled_erts(rel_path, erts_work)
       update_start_erl_data(rel_path, erts_work)
 
-      files = collect_files(rel_path, erts_work, "release", "release/erts")
+      # Generate <app>.run entry point script
+      bata_config = Keyword.get(config, :batamanta, [])
+      exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
+      run_script = Batamanta.RunScript.generate(app_name, exec_mode, :release, erts_version)
+      run_script_path = Path.join([rel_path, "bin", "#{app_name}.run"])
+      File.write!(run_script_path, run_script)
+      File.chmod!(run_script_path, 0o755)
+
+      # ERTS goes at the same level as the release. No subdirectory prefix
+      # — this keeps erlexec's ROOTDIR resolution correct and avoids the
+      # need for --boot-var ROOTDIR overrides in bin/<app>.
+      files = collect_files(rel_path, erts_work, "release", "release")
 
       case :erl_tar.create(String.to_charlist(tar_path), files) do
         :ok ->
@@ -66,50 +81,36 @@ defmodule Batamanta.Packager do
 
   @spec prepare_erts(Path.t()) :: :ok
   defp prepare_erts(erts_path) do
-    # Flatten the nested `erts-X.Y/` subdirectory so that the OTP
-    # libs (kernel, stdlib, etc.) are directly under `<erts>/lib/`
-    # and `erlexec` is at `<erts>/bin/erlexec`. This ensures the
-    # boot script's `$ROOTDIR/lib/kernel-*` path resolves when
-    # ROOTDIR points to `<erts>` (needed for `include_erts: false`
-    # where the Mix release has no kernel in its own `lib/`).
-    flatten_nested_erts(erts_path)
+    # The ERTS cache has the standard OTP structure:
+    #   <erts_path>/erts-X.Y/bin/   ← VM binaries (erlexec, beam.smp)
+    #   <erts_path>/lib/            ← OTP libs (kernel, stdlib)
+    #   <erts_path>/bin/            ← Shell tools (erl, escript, boot files)
+    #
+    # We keep this structure intact — no flattening needed. The ERTS is
+    # packed alongside the release at the same level, so erlexec can
+    # compute ROOTDIR correctly from its own path, boot scripts resolve
+    # $ROOTDIR/lib/kernel-* to the right location, and no script patching
+    # is required.
     cleanup_erts(erts_path)
     ensure_executable_permissions(erts_path)
   end
 
-  defp flatten_nested_erts(erts_path) do
-    nested_erts = Path.wildcard(Path.join(erts_path, "erts-*"))
-
-    Enum.each(nested_erts, fn nested_dir ->
-      nested_bin = Path.join(nested_dir, "bin")
-      nested_erts_dir = Path.join(nested_dir, "erts")
-
-      if File.exists?(nested_bin) do
-        File.cp_r!(nested_bin, Path.join(erts_path, "bin"))
-      end
-
-      if File.exists?(nested_erts_dir) do
-        dest_erts = Path.join(erts_path, "erts")
-        File.mkdir_p!(dest_erts)
-        File.cp_r!(nested_erts_dir, dest_erts)
-      end
-
-      File.rm_rf!(nested_dir)
-    end)
-
-    :ok
-  end
-
   @spec cleanup_erts(Path.t()) :: :ok
   defp cleanup_erts(erts_path) do
+    # Remove ERTS src/docs/misc — not needed at runtime
     paths_to_remove = [
       Path.join(erts_path, "src"),
       Path.join(erts_path, "docs"),
-      Path.join(erts_path, "misc"),
-      Path.join(erts_path, Path.join("releases", "MANIFEST"))
+      Path.join(erts_path, "misc")
     ]
 
     Enum.each(paths_to_remove, &remove_if_exists/1)
+
+    # Remove ERTS releases/ — it conflicts with the release's own releases/
+    # at the same path in the payload. The release has the correct boot scripts,
+    # sys.config, and start_erl.data.
+    erts_releases = Path.join(erts_path, "releases")
+    remove_if_exists(erts_releases)
 
     lib_path = Path.join(erts_path, "lib")
 
@@ -134,7 +135,7 @@ defmodule Batamanta.Packager do
   defp ensure_executable_permissions(erts_path) do
     bin_dirs = [
       Path.join(erts_path, "bin"),
-      Path.join(erts_path, Path.join("erts", Path.join("*", "bin")))
+      Path.join(erts_path, "erts-*/bin")
     ]
 
     Enum.each(bin_dirs, fn pattern ->
@@ -352,7 +353,10 @@ defmodule Batamanta.Packager do
       |> Path.join("*")
       |> Path.wildcard()
 
-    Enum.each(bin_scripts, &relativize_bin_script/1)
+    Enum.each(bin_scripts, fn script ->
+      relativize_bin_script(script)
+      patch_bin_app_for_bundled_erlexec(script)
+    end)
 
     version_scripts =
       Path.wildcard(Path.join(rel_path_abs, "releases") <> "/*/*.script") ++
@@ -361,6 +365,63 @@ defmodule Batamanta.Packager do
     Enum.each(version_scripts, &relativize_script/1)
 
     :ok
+  end
+
+  # ============================================================================
+  # bin/<app> PATCHES FOR BUNDLED erlexec
+  # ============================================================================
+
+  # Patches the `bin/<app>` shell script to work with the bundled erlexec.
+  #
+  # The only patch needed is:
+  #
+  # 1. `--boot-var ROOT "$RELEASE_ROOT"` added after `--boot-var RELEASE_LIB`.
+  #    The boot script uses `$ROOT` for OTP app paths (kernel, stdlib). Without
+  #    this override, erlexec computes ROOT from its own path
+  #    (`release/erts-X.Y/`), but OTP libs are at `release/lib/kernel-*`.
+  #
+  # `--erl-config` does NOT need patching — the bundled `releases/<vsn>/elixir`
+  # script already handles it correctly by converting to `-config` for erl.
+  #
+  @spec patch_bin_app_for_bundled_erlexec(Path.t()) :: :ok
+  defp patch_bin_app_for_bundled_erlexec(script) do
+    if File.regular?(script) do
+      content = File.read!(script)
+
+      # Skip escripts — they have no bin/<app> shell script
+      if String.contains?(content, "--erl-config") do
+        patched = patch_boot_var_root(content)
+        File.write!(script, patched)
+      end
+    end
+
+    :ok
+  end
+
+  # Ensure --boot-var ROOT "$RELEASE_ROOT" is present after --boot-var RELEASE_LIB.
+  # The boot script uses $ROOT for OTP app paths (kernel, stdlib). erlexec
+  # computes ROOT from its own path (release/erts-X.Y/), but OTP libs are
+  # at release/lib/kernel-*. This override makes $ROOT point to the release
+  # root instead.
+  #
+  # Also removes the old (incorrect) --boot-var ROOTDIR "$RELEASE_ROOT/erts"
+  # that was added by previous versions of batamanta.
+  #
+  # Idempotent: skips if --boot-var ROOT is already present anywhere in the
+  # script (e.g., from a previous run of this patch).
+  @spec patch_boot_var_root(String.t()) :: String.t()
+  defp patch_boot_var_root(content) do
+    if String.contains?(content, "--boot-var ROOT ") do
+      content
+    else
+      # Replace: RELEASE_LIB line + optional old ROOTDIR line
+      #   → RELEASE_LIB line + new ROOT line with trailing backslash
+      String.replace(
+        content,
+        ~r/(--boot-var RELEASE_LIB "\$RELEASE_ROOT\/lib" \\\n)(?:\s*--boot-var ROOTDIR "\$RELEASE_ROOT\/erts"\n)?/,
+        "\\1        --boot-var ROOT \"$RELEASE_ROOT\" \\\n"
+      )
+    end
   end
 
   defp relativize_bin_script(script) do
@@ -461,6 +522,27 @@ defmodule Batamanta.Packager do
         apk add zstd
 
       """
+    end
+  end
+
+  @doc """
+  Extracts the ERTS numeric version (e.g., `"14.2"`) from an ERTS work
+  directory by looking for the `erts-*` subdirectory.
+
+  Must be called BEFORE `prepare_erts/1` flattens the structure.
+  """
+  @spec get_erts_version(Path.t()) :: String.t()
+  def get_erts_version(erts_path) do
+    case Path.wildcard(Path.join(erts_path, "erts-*")) do
+      [dir | _] ->
+        dir |> Path.basename() |> String.trim_leading("erts-")
+
+      [] ->
+        # Fallback: try to read from the top-level releases/ directory
+        case extract_erts_version(erts_path) do
+          nil -> raise "Cannot determine ERTS version from #{erts_path}"
+          otp_ver -> otp_ver
+        end
     end
   end
 

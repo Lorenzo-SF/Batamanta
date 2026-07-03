@@ -420,6 +420,7 @@ defmodule Mix.Tasks.Batamanta do
         {app_config, app_bata_config} = read_umbrella_app_config(app_name, app_path)
         app_binary_name = Keyword.get(app_bata_config, :binary_name)
         app_compression = app_bata_config[:compression] || compression
+        app_exec_mode = Keyword.get(app_bata_config, :execution_mode, :cli)
 
         build_env = EnvCleaner.build_env(erts_path)
 
@@ -453,7 +454,9 @@ defmodule Mix.Tasks.Batamanta do
               ">> 📦 Packaging Escript for #{app_name} (Zstd level #{app_compression})..."
             )
 
-            case EscriptPackager.package(escript_path, erts_path, payload_path, app_compression) do
+            case EscriptPackager.package(escript_path, erts_path, payload_path, app_compression,
+                   execution_mode: app_exec_mode
+                 ) do
               {:ok, _} ->
                 compile_wrapper(
                   :escript,
@@ -716,7 +719,12 @@ defmodule Mix.Tasks.Batamanta do
 
     Logger.info(banner_ctx, ">> 📦 Packaging Escript (Zstd level #{compression})...")
 
-    case EscriptPackager.package(escript_path, erts_path, payload_path, compression) do
+    bata_config = Keyword.get(config, :batamanta, [])
+    exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
+
+    case EscriptPackager.package(escript_path, erts_path, payload_path, compression,
+           execution_mode: exec_mode
+         ) do
       {:ok, _} ->
         compile_wrapper(
           :escript,
