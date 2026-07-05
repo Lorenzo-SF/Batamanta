@@ -5,26 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.6.1] - 2026-07-02
+## [1.6.1] - 2026-07-03
+
+### Added
+
+- **No-flatten ERTS for escript format**: escript payloads no longer
+  flatten the bundled ERTS — the `erts-X.Y/` directory structure is
+  kept intact and self-consistent. ERL_ROOTDIR is set in the `.run`
+  script (escript case) so `erl` finds `erlexec` in the bundled ERTS.
+  Boot files (`no_dot_erlang.boot`, `start.boot`) are copied to
+  `release/bin/` so `erlexec` finds them. Release format unchanged
+  (dyn_erl resolves ROOTDIR from its own path).
+- **`.run` entry point**: New `Batamanta.RunScript` module generates a
+  `.run` script at build time (Elixir side) that carries all
+  environment configuration — PATH, BINDIR, neutralisation,
+  `exec_mode` routing, escript/release dispatch. The Rust wrapper
+  is now a minimal ~100‑line binary that only extracts the payload
+  and `exec()`s the `.run` script. Changing environment variables no
+  longer requires recompiling Rust.
+- **`AGENTS.md` + `docs/AUDIT-rust-architecture.md`**: Architecture
+  decision records documenting the re-architecture rationale,
+  trade-offs, and the final payload layout.
 
 ### Fixed
 
-- Release-mode binaries now correctly load `sys.config` at boot. The
-  Rust wrapper was passing `--erl-config <path>` (without the
+- **Release-mode binaries now correctly load `sys.config` at boot**.
+  The Rust wrapper was passing `--erl-config <path>` (without the
   `.config` extension), a flag the bundled `erlexec` (OTP 28.4 /
   Erlang 16.3) does not recognise. Switched to the classic
   `-config <path-to-.config>` form, which works on every erlexec
   since OTP 17. Consumer apps were silently booting with no
   application env and crashing on first Postgres/Redis/etc. access
   with errors like `missing the :database key`.
-- CLI release binaries: `RELEASE_SYS_CONFIG` env var was being set
-  with the `.config` extension included. The Erlang `Config.Provider`
-  machinery appends `.config` automatically, so the provider tried
-  to read `sys.config.config` (double extension) and aborted boot.
-  Fix: pass the path without `.config` in `RELEASE_SYS_CONFIG`,
-  matching the convention of the standard Mix release `bin/app`
-  script. Affects every consumer app that has a `config_provider_init`
-  in its `sys.config` (i.e. uses `config/runtime.exs`).
+- **`RELEASE_SYS_CONFIG` double `.config` extension**: CLI release
+  binaries were setting `RELEASE_SYS_CONFIG` with `.config` included.
+  The Erlang `Config.Provider` machinery appends `.config`
+  automatically, so it tried to read `sys.config.config` (double
+  extension) and aborted boot. Fix: pass the path without `.config`
+  in `RELEASE_SYS_CONFIG`, matching the standard Mix release
+  `bin/app` script.
+- **OTP 28+ inets lazy loading crash**: On a fresh session (no cached
+  ERTS, no warm shell), `:httpc.handle_request/9` threw
+  `UndefinedFunctionError` for `:http_util.timestamp/0` because
+  OTP 28+ loads inets modules lazily and `:http_util` had not been
+  touched yet. `ensure_started/1` now `code:ensure_loaded`s the key
+  modules (`http_util`, `http_chunk`, `http_request`,
+  `http_response`) before the first download request.
+- **Rust wrapper cleaned up**: Removed 5 unused dependencies (sha2,
+  uuid, ctrlc, md5, libc). md5 replaced with inline hash of payload
+  prefix. `GENERATED_EXEC_MODE` and `GENERATED_FORMAT` removed from
+  `build.rs` — all configuration now lives in the `.run` script.
+  Reduced from ~435 to ~100 lines (just extract + exec).
+- **`Target.detect_host_or_default/0`**: Removed dead `:error` clause
+  that could never match.
+- **`EscriptPackager.get_erts_version/1`**: Fixed Credo nesting
+  warning.
 
 ## [1.6.0] - 2026-07-02
 
