@@ -743,6 +743,18 @@ defmodule Batamanta.ERTS.Fetcher do
 
   defp ensure_started(apps) do
     Enum.each(apps, &Application.ensure_all_started/1)
+
+    # OTP 28+ loads inets modules lazily. :httpc.handle_request/9 calls
+    # :http_util.timestamp() on a fresh session — if :http_util hasn't
+    # been touched yet, it raises "module is not available".
+    # Pin a few of inets' helper modules so they're in memory before
+    # the first HTTPS call. Without this, building from a clean slate
+    # (no cached ERTS, fresh `_build/`) reliably fails with:
+    #   (UndefinedFunctionError) :http_util.timestamp/0 ... not available
+    # while a warm shell sometimes papers over it.
+    Enum.each([:http_util, :http_chunk, :http_request, :http_response], fn mod ->
+      _ = :code.ensure_loaded(mod)
+    end)
   end
 
   defp log_info(msg) do

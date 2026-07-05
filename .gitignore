@@ -79,6 +79,9 @@ Thumbs.db
 /smoke_tests/*/test_tui-0.1.0*
 /smoke_tests/*/test_daemon-0.1.0*
 /smoke_tests/*/test_escript-0.1.0*
+/smoke_tests/*/test_escript
+/smoke_tests/*/test_release_cli-0.1.0*
+/smoke_tests/*/test_release_otp27-0.1.0*
 daemon*.txt
 test_escript-*
 .code-intel/embeddings/
