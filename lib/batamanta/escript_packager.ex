@@ -46,7 +46,7 @@ defmodule Batamanta.EscriptPackager do
   """
   @spec package(Path.t(), Path.t(), Path.t(), integer()) ::
           {:ok, Path.t()} | {:error, String.t()}
-  def package(escript_path, erts_path, output_path, compression_level \\ 3)
+  def package(escript_path, erts_path, output_path, compression_level \\ 3, opts \\ [])
       when is_integer(compression_level) and compression_level >= 1 and
              compression_level <= 19 do
     temp_dir = create_temp_directory()
@@ -66,8 +66,26 @@ defmodule Batamanta.EscriptPackager do
 
       File.cp!(escript_file, Path.join([release_dir, "bin", app_name]))
 
-      minimal_erts_path = Path.join([release_dir, "erts"])
+      # Capture ERTS version BEFORE prepare_minimal_erts flattens
+      erts_version = get_erts_version(erts_path)
+
+      minimal_erts_path = Path.join([release_dir, "erts-#{erts_version}"])
       prepare_minimal_erts(erts_path, minimal_erts_path)
+
+      # Copy boot files to release/bin/ so erlexec (which uses
+      # $ROOTDIR/bin/ for boot file resolution via ERL_ROOTDIR)
+      # can find no_dot_erlang.boot, start.boot, etc.
+      copy_boot_files_to_release_bin(
+        Path.join([minimal_erts_path, "bin"]),
+        Path.join([release_dir, "bin"])
+      )
+
+      # Generate <app>.run entry point script
+      exec_mode = Keyword.get(opts, :execution_mode, :cli)
+      run_script = Batamanta.RunScript.generate(app_name, exec_mode, :escript, erts_version)
+      run_script_path = Path.join([release_dir, "bin", "#{app_name}.run"])
+      File.write!(run_script_path, run_script)
+      File.chmod!(run_script_path, 0o755)
 
       tar_path = String.replace_trailing(output_path, ".tar.zst", ".tar")
 
@@ -185,6 +203,10 @@ defmodule Batamanta.EscriptPackager do
     :ok
   end
 
+  # Patches erl script to use BINDIR="$ROOTDIR/bin" instead of
+  # BINDIR="$ROOTDIR/erts-X.Y/bin". This pairs with ERL_ROOTDIR in the .run
+  # script (escript format only), which sets ROOTDIR to the ERTS root dir.
+  # Result: BINDIR → erts-X.Y/bin (correct location for bundled erlexec).
   defp patch_erl_script(bin_dest) do
     erl_script = Path.join(bin_dest, "erl")
 
@@ -272,6 +294,23 @@ defmodule Batamanta.EscriptPackager do
     if File.exists?(src_priv) do
       File.cp_r!(src_priv, dest_priv)
     end
+  end
+
+  # Copies boot files from ERTS bin dir to release/bin/ so erlexec can
+  # find them via $ROOTDIR/bin/ (used with ERL_ROOTDIR in the .run script).
+  # Standard OTP has symlinks $ROOTDIR/bin/no_dot_erlang.boot →
+  # ../erts-X.Y/bin/no_dot_erlang.boot; we copy them instead.
+  @spec copy_boot_files_to_release_bin(Path.t(), Path.t()) :: :ok
+  defp copy_boot_files_to_release_bin(erts_bin_dir, release_bin_dir) do
+    for boot_file <- ~w(no_dot_erlang.boot start.boot start_clean.boot) do
+      src = Path.join(erts_bin_dir, boot_file)
+
+      if File.exists?(src) do
+        File.cp!(src, Path.join(release_bin_dir, boot_file))
+      end
+    end
+
+    :ok
   end
 
   defp make_executable(path) do
@@ -382,5 +421,38 @@ defmodule Batamanta.EscriptPackager do
       end
     end)
     |> Enum.sum()
+  end
+
+  @doc """
+  Extracts the ERTS numeric version (e.g., `"14.2"`) from an ERTS cache
+  directory by looking for the `erts-*` subdirectory.
+  """
+  @spec get_erts_version(Path.t()) :: String.t()
+  def get_erts_version(erts_path) do
+    case Path.wildcard(Path.join(erts_path, "erts-*")) do
+      [dir | _] ->
+        dir |> Path.basename() |> String.trim_leading("erts-")
+
+      [] ->
+        release_in_erts = find_first_subdir(Path.join(erts_path, "releases"))
+
+        case release_in_erts do
+          nil -> raise("Cannot determine ERTS version from #{erts_path}")
+          dir -> dir
+        end
+    end
+  end
+
+  defp find_first_subdir(path) do
+    with true <- File.exists?(path),
+         {:ok, entries} <- File.ls(path) do
+      entries
+      |> Enum.find(fn entry ->
+        full = Path.join(path, entry)
+        File.dir?(full) and entry not in [".", ".."]
+      end)
+    else
+      _ -> nil
+    end
   end
 end
