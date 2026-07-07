@@ -11,6 +11,8 @@ defmodule Batamanta.RustTemplate do
   - Windows: x86_64-pc-windows-msvc (coming soon)
   """
 
+  alias Batamanta.KeeperConfig
+
   @doc """
   Initializes a temporary directory with the Rust dispenser template.
   """
@@ -84,15 +86,17 @@ defmodule Batamanta.RustTemplate do
     mode_str = Atom.to_string(Keyword.get(bata_config, :execution_mode, :cli))
     app_name_str = to_string(Keyword.get(config, :app, "app"))
     format_str = Atom.to_string(format)
+    keeper_config = KeeperConfig.from_config(Keyword.get(bata_config, :beam_alive))
 
     current_env = System.get_env() |> Enum.map(fn {k, v} -> {k, v} end)
 
-    additional_env = [
-      {"BATAMANTA_EXEC_MODE", mode_str},
-      {"BATAMANTA_APP_NAME", app_name_str},
-      {"BATAMANTA_FORMAT", format_str},
-      {"CARGO_TARGET_DIR", cargo_target_dir}
-    ]
+    additional_env =
+      [
+        {"BATAMANTA_EXEC_MODE", mode_str},
+        {"BATAMANTA_APP_NAME", app_name_str},
+        {"BATAMANTA_FORMAT", format_str},
+        {"CARGO_TARGET_DIR", cargo_target_dir}
+      ] ++ KeeperConfig.to_env_vars(keeper_config)
 
     env = current_env ++ additional_env
 
