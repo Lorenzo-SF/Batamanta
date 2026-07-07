@@ -11,6 +11,9 @@ defmodule Batamanta.Packager do
   - **Boot File Preparation**: Ensures correct .boot file for target platform
   """
 
+  alias Batamanta.Keeper
+  alias Batamanta.KeeperConfig
+
   @doc """
   Packages the release and the ERTS into a single compressed tarball.
 
@@ -28,6 +31,8 @@ defmodule Batamanta.Packager do
     temp = Path.join(System.tmp_dir!(), "bat_pkg_#{:erlang.unique_integer([:positive])}")
     config = Mix.Project.config()
     app_name = config[:app] |> to_string()
+    bata_config = Keyword.get(config, :batamanta, [])
+    keeper_config = KeeperConfig.from_config(Keyword.get(bata_config, :beam_alive))
 
     try do
       File.mkdir_p!(temp)
@@ -50,8 +55,20 @@ defmodule Batamanta.Packager do
       remove_mix_bundled_erts(rel_path, erts_work)
       update_start_erl_data(rel_path, erts_work)
 
+      # T-008 Fase 2: compile BEAM alive mode keeper if enabled.
+      # The compiled .beam files are added to the release's lib/ tree so
+      # they end up in the payload. They are *not* auto-started by the
+      # release; the wrapper Rust will load them on demand in Phase 4.
+      if KeeperConfig.enabled?(keeper_config) do
+        case Keeper.compile(rel_path, erts_path) do
+          :ok -> :ok
+          :skip -> :ok
+          {:error, reason} ->
+            raise "Failed to compile BEAM keeper: #{reason}"
+        end
+      end
+
       # Generate <app>.run entry point script
-      bata_config = Keyword.get(config, :batamanta, [])
       exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
       run_script = Batamanta.RunScript.generate(app_name, exec_mode, :release, erts_version)
       run_script_path = Path.join([rel_path, "bin", "#{app_name}.run"])

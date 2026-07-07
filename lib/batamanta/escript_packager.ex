@@ -33,6 +33,9 @@ defmodule Batamanta.EscriptPackager do
   - Reproducible builds with fixed ownership and timestamps
   """
 
+  alias Batamanta.Keeper
+  alias Batamanta.KeeperConfig
+
   @doc """
   Packages an escript with minimal ERTS into a compressed tarball.
 
@@ -51,6 +54,8 @@ defmodule Batamanta.EscriptPackager do
              compression_level <= 19 do
     temp_dir = create_temp_directory()
     app_name = Path.basename(escript_path, ".escript")
+    bata_config = Keyword.get(Mix.Project.config(), :batamanta, [])
+    keeper_config = KeeperConfig.from_config(Keyword.get(bata_config, :beam_alive))
 
     try do
       release_dir = Path.join([temp_dir, "release"])
@@ -79,6 +84,17 @@ defmodule Batamanta.EscriptPackager do
         Path.join([minimal_erts_path, "bin"]),
         Path.join([release_dir, "bin"])
       )
+
+      # T-008 Fase 2: compile BEAM alive mode keeper if enabled.
+      # Same rationale as in `Batamanta.Packager`.
+      if KeeperConfig.enabled?(keeper_config) do
+        case Keeper.compile(release_dir, erts_path) do
+          :ok -> :ok
+          :skip -> :ok
+          {:error, reason} ->
+            raise "Failed to compile BEAM keeper: #{reason}"
+        end
+      end
 
       # Generate <app>.run entry point script
       exec_mode = Keyword.get(opts, :execution_mode, :cli)
