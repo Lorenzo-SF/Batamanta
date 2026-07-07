@@ -35,6 +35,7 @@
 - **Robust downloads**: Automatic retry with exponential backoff on network failures
 - **Concurrent-safe caching**: File-based locking prevents race conditions in multi-process builds
 - **Clear error messages**: Specific error codes for disk full, permission denied, corrupted archives
+- **BEAM Alive Mode (opt-in)**: Keep the BEAM warm across invocations to skip the per-call boot cost. Per-binary UUID isolation, configurable TTL via env var, FIFO/1 concurrency. Spec: [RFC-0008](rfcs/0008-beam-alive-mode.md).
 
 ---
 
@@ -659,6 +660,27 @@ docker run --rm -v $(pwd):/app -w /app elixir:1.18-alpine ...
 4. **Package**: Bundle release + ERTS with Zstd compression
 5. **Compile**: Build Rust dispenser that embeds the payload
 6. **Run**: Dispenser extracts payload and spawns Erlang VM
+
+### Upcoming: BEAM Alive Mode
+
+When `batamanta: [beam_alive: [enabled: true]]` is set, the embedded Rust
+dispenser can keep the BEAM warm across invocations. Activate at runtime by
+setting the (per-binary, baked) env var to a TTL in milliseconds:
+
+```elixir
+batamanta: [beam_alive: [enabled: true, var: "MY_CLI_BEAM_ALIVE", default_ms: 0]]
+```
+
+```bash
+MY_CLI_BEAM_ALIVE=30000 ./my_cli   # BEAM stays alive 30s after the last call
+unset MY_CLI_BEAM_ALIVE && ./my_cli # same as legacy single-shot
+```
+
+Each binary has a UUID v4 baked at build time; the keeper's runtime dir,
+Unix socket, and lock files all hang from `$XDG_RUNTIME_DIR` (fallback
+`/tmp`)/`batamanta-<UUID>/`. Two different binaries never share resources
+even if they originate from the same project. Full design rationale in
+[RFC-0008](doc/rfcs/0008-beam-alive-mode.md).
 
 ---
 

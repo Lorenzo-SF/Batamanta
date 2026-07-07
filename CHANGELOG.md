@@ -2,8 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- **BEAM Alive Mode (opt-in)**: keep the BEAM warm across invocations. Per-binary
+  UUID v4 isolation, Unix-socket protocol, FIFO/1 concurrency. Design in
+  [RFC-0008](rfcs/0008-beam-alive-mode.md). Implementation in progress
+  (T-008, see `AGENTS.md` for phase tracker). Disabled by default — opt-in via
+  `batamanta: [beam_alive: [enabled: true, ...]]`.
+
+### Changed
+- Regenerated `priv/rust_template/Cargo.lock` to match current `Cargo.toml`
+  (removed drift: dead deps `uuid`, `ctrlc`, `libc`, `md5`, `sha2`, `tempfile`
+  were no longer in `Cargo.toml`).
 
 ## [1.6.1] - 2026-07-03
 

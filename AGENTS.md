@@ -31,9 +31,24 @@ Re-arquitecturar batamanta: wrapper Rust minimalista (~100 líneas, solo extraer
   - **Solución escript**: `ERL_ROOTDIR="$ERTS_DIR"` en el `.run` script (escript case only) + `patch_erl_script` que cambia BINDIR a `"$ROOTDIR/bin"` → BINDIR = `erts-X.Y/bin/` (correcto). + `copy_boot_files_to_release_bin` copia `no_dot_erlang.boot` etc a `release/bin/` para que erlexec los encuentre vía `$ROOTDIR/bin/`.
   - **Release format**: no necesita cambios — dyn_erl resuelve ROOTDIR correctamente, erl script no se invoca en el path release.
   - Limpiadas dependencias Rust muertas: `sha2`, `uuid`, `ctrlc`, `md5`, `libc`. md5 reemplazado por hash inline del prefijo del payload.
+- T-008: BEAM Alive Mode. RFC completo en `rfcs/0008-beam-alive-mode.md` (estado: aceptado). Implementación en fases en curso (ver §"T-008 Fase tracker" abajo).
 
 ### Blocked
 - (ninguno)
+
+## T-008 Fase tracker
+
+| Fase | Estado | Branch commit | Criterio de éxito |
+|------|--------|---------------|-------------------|
+| 0 — Baseline + RFC publicado | en curso | TBD | drift de Cargo.lock limpio, RFC con decisiones finales, AGENTS.md y README enlazados |
+| 1 — UUID bakeado (sin alive mode) | pendiente | TBD | `mix test` pasa, ejecutable 2 veces → mismo `/tmp/batamanta-<UUID>/` |
+| 2 — Keeper config + compile `.beam` | pendiente | TBD | payload contiene `release/lib/batamanta_keeper-0.1.0/ebin/*.beam` cuando `enabled: true`; smoke test legacy pasa |
+| 3 — Wrapper con IPC dispatch (fallback legacy) | pendiente | TBD | con `BATAMANTA_BEAM_ALIVE_VAR=N`, wrapper intenta connect → falla → warning → fallback legacy |
+| 4 — Keeper mínimo (echo + inactivity) | pendiente | TBD | keeper arranca, bind sock, acepta una request con "not implemented", sale tras inactividad |
+| 5 — Runner real (user app + IO capture) | pendiente | TBD | `MyApp.CLI.main(["hello"])` ejecuta, propaga stdout/stderr/exit, persiste entre invocaciones dentro del TTL |
+| 6 — Señales + recovery | pendiente | TBD | Ctrl+C → SIGINT al keeper, app del usuario lo recibe. `kill -9 keeper` → siguiente cliente arranca uno nuevo |
+| 7 — Cola FIFO + concurrencia | pendiente | TBD | 3 invocaciones simultáneas completan sin mezclarse |
+| 8 — Docs + smoke test nuevo | pendiente | TBD | smoke test pasa, banner muestra feature disponible |
 
 ## Key Decisions
 - **Wrapper minimalista** (~100 líneas): extraer payload + exec `release/bin/<app>.run`. Toda la lógica de entorno vive en el script `.run` generado por Elixir.
@@ -44,12 +59,14 @@ Re-arquitecturar batamanta: wrapper Rust minimalista (~100 líneas, solo extraer
 - **`--boot-var ROOTDIR` eliminado**: erlexec computa ROOTDIR correctamente desde su path (`release/erts-14.2/bin/erlexec` → ROOTDIR = `release/erts-14.2/`).
 - **ERTS `releases/` eliminado** del working copy: el release tiene su propio `releases/` con boot scripts y config; el ERTS solo aporta `start_erl.data` que ya es sobrescrito por `update_start_erl_data`.
 - **No aumentar carga cognitiva**: si no es necesario para el core, no se toca (banner.ex, env_cleaner.ex, target.ex, erts/fetcher.ex se quedan como están).
+- **BEAM Alive Mode (T-008)**: BEAM keeper como app Erlang sidecar, identificada por UUID v4 bakeado en el binario. Unix socket AF_UNIX con protocolo línea-a-línea. FIFO con concurrencia 1 + timeout por request + spawn_monitor (decisión OQ-2). Fork sin setsid + killpg(getpgrp(), sig) (decisión OQ-3). XDG_RUNTIME_DIR con fallback `/tmp`. Hot reload fuera de scope por diseño (Batamanta es la frontera final del dev process).
 
 ## Next Steps
 1. T-005: limpiar DEBUG prints en packager.ex.
 2. T-006: revisar build.rs — si el .run script lleva toda la configuración inline, `GENERATED_EXEC_MODE` y `GENERATED_FORMAT` pueden eliminarse.
 3. T-007: refactorizar `main.rs` a ~100 líneas — eliminar `build_isolated_env`, `find_file`, `get_release_version`, `derive_cli_module`. Solo `extract_payload` + `exec(".run")`.
-4. Revisión final: reanalizar el proyecto entero para detectar faltantes.
+4. T-008 Fase 0 (en curso): baseline + RFC publicado. Tras commit, continuar con Fases 1-8 según tracker.
+5. Revisión final: reanalizar el proyecto entero para detectar faltantes.
 
 ## Critical Context
 - **Bug confirmado**: `patch_erl_script_content` buscaba `erts-16.3` (hardcoded) → no parcheaba nada con ERTS 14.2. Código eliminado en T-004.
