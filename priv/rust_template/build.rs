@@ -4,6 +4,11 @@ use std::path::Path;
 fn main() {
     let app_name = std::env::var("BATAMANTA_APP_NAME").unwrap_or_else(|_| "app".to_string());
 
+    // Generate a UUID v4 for this binary. Per-binary isolation: every build
+    // produces a distinct instance ID, so runtime resources (`/tmp/batamanta-<UUID>/`)
+    // never collide between binaries that share payload content.
+    let instance_id = uuid::Uuid::new_v4().to_string();
+
     // Write config to a generated file
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("generated_config.rs");
@@ -13,8 +18,9 @@ fn main() {
         format!(
             "// Generated at compile time
 pub const GENERATED_APP_NAME: &str = \"{}\";
+pub const GENERATED_INSTANCE_ID: &str = \"{}\";
 ",
-            app_name
+            app_name, instance_id
         ),
     )
     .unwrap();

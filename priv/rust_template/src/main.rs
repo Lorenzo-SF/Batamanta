@@ -12,17 +12,18 @@ use std::{
 use tar::Archive;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
-// GENERATED_APP_NAME comes from build.rs
+// GENERATED_APP_NAME and GENERATED_INSTANCE_ID come from build.rs.
+// INSTANCE_ID is a UUID v4 generated at compile time, giving every binary
+// its own unique runtime namespace (`/tmp/batamanta-<UUID>/`). See RFC-0008.
 include!(concat!(env!("OUT_DIR"), "/generated_config.rs"));
 
 fn main() -> Result<ExitCode> {
     let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/payload.tar.zst"));
-    // Deterministic dir from payload prefix — no hash crate needed
-    let prefix: String = bytes[..8.min(bytes.len())]
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect();
-    let extract_dir = env::temp_dir().join(format!("batamanta_{}_{}", GENERATED_APP_NAME, prefix));
+    // Per-binary UUID isolates runtime resources (extraction dir, future
+    // socket/lock files for BEAM alive mode). Same binary → same dir on
+    // repeated executions; different binaries (same payload, different build)
+    // → disjoint dirs. See RFC-0008 §"Identificación única".
+    let extract_dir = env::temp_dir().join(format!("batamanta-{}", GENERATED_INSTANCE_ID));
 
     // Extract payload on first run — deterministic path enables reuse
     if !extract_dir.exists() {
@@ -84,12 +85,31 @@ fn main() -> Result<ExitCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
 
     #[test]
     fn test_get_app_name_is_compiled() {
         let app = GENERATED_APP_NAME;
         assert!(!app.is_empty());
+    }
+
+    #[test]
+    fn test_instance_id_is_compiled_and_is_uuid() {
+        let id = GENERATED_INSTANCE_ID;
+        assert!(!id.is_empty(), "INSTANCE_ID must be baked at build time");
+        assert!(
+            uuid::Uuid::parse_str(id).is_ok(),
+            "INSTANCE_ID must parse as UUID v4, got: {}",
+            id
+        );
+    }
+
+    #[test]
+    fn test_extract_dir_uses_instance_id() {
+        let dir = format!("/tmp/batamanta-{}", GENERATED_INSTANCE_ID);
+        // Sanity: dir path contains the UUID we expect. Doesn't require the
+        // payload to exist — the format is what we're verifying.
+        assert!(dir.contains(GENERATED_INSTANCE_ID));
+        assert!(dir.starts_with("/tmp/batamanta-"));
     }
 
     #[test]

@@ -852,7 +852,6 @@ defmodule Mix.Tasks.Batamanta do
       on_error_image: "batamantaman_sad.png"
     )
   end
-
   defp cleanup_temporaries(_ctx) do
     cargo_target_dir = Path.join(System.tmp_dir!(), "bat_cargo_cache")
 
@@ -870,8 +869,15 @@ defmodule Mix.Tasks.Batamanta do
     |> Path.wildcard()
     |> Enum.each(&File.rm_rf/1)
 
+    # Legacy extraction pattern (pre-UUID): "batamanta_<app>_<hash>".
     System.tmp_dir!()
     |> Path.join("batamanta_*")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm_rf/1)
+
+    # UUID-based extraction pattern (T-008 Phase 1+): "batamanta-<UUID>".
+    System.tmp_dir!()
+    |> Path.join("batamanta-*")
     |> Path.wildcard()
     |> Enum.each(&File.rm_rf/1)
   end
@@ -879,13 +885,18 @@ defmodule Mix.Tasks.Batamanta do
   defp cleanup_stale_temporaries do
     temp_base = System.tmp_dir!()
 
+    # Note: the legacy `batamanta_*` (underscore) pattern and the new
+    # `batamanta-*` (dash, UUID-based) pattern are kept separate so we don't
+    # accidentally delete unrelated dirs that happen to start with "batamanta".
     patterns = [
       "bat_pkg_*",
       "bat_build_*",
       "bat_cargo_cache",
       "batamanta_*",
+      "batamanta-*",
       "batamanta_escript_wrapper_*"
     ]
+
 
     Enum.each(patterns, fn pattern ->
       temp_base
