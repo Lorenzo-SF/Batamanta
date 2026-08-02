@@ -4,10 +4,15 @@ defmodule Batamanta.ERTS.Fetcher do
 
   Flow:
   1. Auto-detect platform (or use specified target)
-  2. Download MANIFEST.json from remote URL (with local cache)
-  3. If download fails, use local MANIFEST.json from priv/
+  2. Download MANIFEST.json from the official mirror
+     (`Lorenzo-SF/Batamanta---ERTS-repository`, raw URL pinned to `main`)
+  3. If download fails, use the cached or priv/ fallback MANIFEST.json
   4. Look up ERTS URL in MANIFEST for the OTP version and platform
-  5. Download and extract ERTS
+  5. Download the asset (`.tar.gz` for Linux/macOS, `.zip` for Windows) and
+     extract it. The remote mirror's manifest_key naming convention is
+     `"{libc?}-{os}-{arch}"` (libc segment omitted for macOS/Windows),
+     e.g. `"linux-glibc-amd64"`, `"darwin-arm64"`, `"windows-amd64"`.
+     We delegate the actual key generation to `Batamanta.Target.manifest_key/1`.
 
 
   - `:explicit` (user-specified) - Uses exact version match only. Fails if not found.
@@ -18,6 +23,7 @@ defmodule Batamanta.ERTS.Fetcher do
   """
 
   alias Batamanta.ERTS.LibcDetector
+  alias Batamanta.Target
 
   @manifest_url "https://raw.githubusercontent.com/Lorenzo-SF/Batamanta---ERTS-repository/main/MANIFEST.json"
   @cache_dir_name "batamanta"
@@ -69,7 +75,9 @@ defmodule Batamanta.ERTS.Fetcher do
   defp fetch_for_platform(otp_version, target, opts) do
     version_mode = Keyword.get(opts, :version_mode, :auto)
     otp_vsn = normalize_otp_version(otp_version)
-    platform_key = build_platform_key(target)
+    target_atom = string_to_target_atom(target)
+    platform_key = Target.manifest_key(target_atom)
+    asset_ext = Target.asset_ext(target_atom)
     platform_key = maybe_fallback_to_x86(otp_vsn, platform_key, version_mode)
 
     log_info(">> Fetching ERTS for OTP #{otp_vsn} (#{platform_key})...")
@@ -81,7 +89,7 @@ defmodule Batamanta.ERTS.Fetcher do
           {:ok, cached_path}
 
         :not_found ->
-          fetch_erts_with_manifest(otp_vsn, platform_key, version_mode)
+          fetch_erts_with_manifest(otp_vsn, platform_key, version_mode, asset_ext)
       end
     end)
   end
@@ -127,7 +135,7 @@ defmodule Batamanta.ERTS.Fetcher do
     end
   end
 
-  defp fetch_erts_with_manifest(otp_vsn, platform_key, version_mode) do
+  defp fetch_erts_with_manifest(otp_vsn, platform_key, version_mode, asset_ext) do
     case find_erts_url(otp_vsn, platform_key, version_mode) do
       nil when version_mode == :explicit ->
         log_error(">> ❌ ERTS version '#{otp_vsn}' not found in MANIFEST (explicit mode)")
@@ -139,7 +147,7 @@ defmodule Batamanta.ERTS.Fetcher do
 
       erts_url ->
         log_info(">> Found ERTS URL: #{erts_url}")
-        download_and_extract(erts_url, otp_vsn, platform_key)
+        download_and_extract(erts_url, otp_vsn, platform_key, asset_ext)
     end
   end
 
@@ -221,26 +229,39 @@ defmodule Batamanta.ERTS.Fetcher do
   @spec target_atom_to_platform(atom()) :: map()
   def target_atom_to_platform(target), do: target_atom_to_platform_impl(target)
 
-  defp string_to_target_atom(%{os: "linux", arch: "x86_64", libc: libc})
-       when libc in ["gnu", :gnu],
-       do: :ubuntu_22_04_x86_64
+  defp string_to_target_atom(platform) do
+    case string_to_target_atom_safe(platform) do
+      nil -> raise "Unsupported platform: #{inspect(platform)}"
+      atom -> atom
+    end
+  end
 
-  defp string_to_target_atom(%{os: "linux", arch: "x86_64", libc: libc})
-       when libc in ["musl", :musl],
-       do: :alpine_3_19_x86_64
+  # Non-raising variant — returns nil when the platform isn't in the matrix.
+  # Used by build_platform_key/1, which needs to handle unknown platforms
+  # gracefully (returning nil instead of raising).
+  #
+  # `detect_platform/0` reports `libc: nil` for Windows and macOS, but the
+  # target matrix stores `libc: "msvc"` for Windows (so the rust_target
+  # selector has a real value to choose from). We accept either side of
+  # the disagreement by trying both libc variants when `libc` is nil and
+  # the OS is Windows. For macOS the matrix has `libc: nil` too, so the
+  # single-variant path is enough.
+  defp string_to_target_atom_safe(%{os: os, arch: arch, libc: libc}) do
+    libc_variants =
+      case {os, libc} do
+        {"windows", nil} -> [nil, "msvc"]
+        _ -> [libc]
+      end
 
-  defp string_to_target_atom(%{os: "linux", arch: "aarch64", libc: libc})
-       when libc in ["gnu", :gnu],
-       do: :ubuntu_22_04_arm64
-
-  defp string_to_target_atom(%{os: "linux", arch: "aarch64", libc: libc})
-       when libc in ["musl", :musl],
-       do: :alpine_3_19_arm64
-
-  defp string_to_target_atom(%{os: "macos", arch: "x86_64", libc: _libc}), do: :macos_12_x86_64
-  defp string_to_target_atom(%{os: "macos", arch: "aarch64", libc: _libc}), do: :macos_12_arm64
-  defp string_to_target_atom(%{os: "windows", arch: "x86_64", libc: _libc}), do: :windows_x86_64
-  defp string_to_target_atom(%{os: "windows", arch: "aarch64", libc: _libc}), do: :windows_arm64
+    Enum.find_value(libc_variants, fn l ->
+      Enum.find_value(Target.valid_targets(), fn atom ->
+        case Target.get_target_info(atom) do
+          %{os: ^os, arch: ^arch, libc: ^l} -> atom
+          _ -> nil
+        end
+      end)
+    end)
+  end
 
   defp target_atom_to_platform_impl(:ubuntu_22_04_x86_64),
     do: %{os: "linux", arch: "x86_64", libc: "gnu"}
@@ -270,10 +291,24 @@ defmodule Batamanta.ERTS.Fetcher do
 
   @doc """
   Returns the user's cache directory for Batamanta.
+
+  Note: `:filename.basedir(:user_cache, "batamanta")` returns a different
+  shape depending on the OTP version:
+    * OTP 27 and earlier: `<user_cache>/batamanta`
+    * OTP 28+: `<user_cache>/batamanta/Cache`  (a /Cache subdir is added)
+
+  We strip the trailing `/Cache` (or `\Cache` on Windows) so the cache
+  layout is stable across OTP versions, otherwise locks and ERTS extracts
+  would land in different directories after an OTP upgrade.
   """
   @spec get_cache_dir() :: Path.t()
   def get_cache_dir do
-    :filename.basedir(:user_cache, @cache_dir_name) |> Path.expand()
+    base =
+      :filename.basedir(:user_cache, @cache_dir_name)
+      |> Path.expand()
+      |> String.replace(~r{[\\/]Cache\z}, "")
+
+    base
   end
 
   @doc """
@@ -564,71 +599,83 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   @doc """
-  Builds the platform key string from a platform map.
-  Examples: "amd64-glibc", "amd64-musl", "darwin-arm64", etc.
+  Builds the manifest_key string from a platform map. This is the key used
+  to look up the asset URL in the remote MANIFEST.json.
+
+  Naming convention: "{libc?}-{os}-{arch}", libc omitted for macOS/Windows.
+  Examples: "linux-glibc-amd64", "darwin-arm64", "windows-amd64".
+
+  Delegates to `Batamanta.Target.manifest_key/1` after resolving the
+  matching target atom from the platform map.
   """
   @spec build_platform_key(map()) :: String.t() | nil
-  def build_platform_key(%{os: os, arch: arch, libc: libc}) do
-    libc_str = to_string(libc)
-
-    case {os, arch, libc_str} do
-      {"linux", "x86_64", "gnu"} -> "amd64-glibc"
-      {"linux", "x86_64", "musl"} -> "amd64-musl"
-      {"linux", "aarch64", "gnu"} -> "arm64-glibc"
-      {"linux", "aarch64", "musl"} -> "arm64-musl"
-      {"macos", "x86_64", _} -> "darwin-amd64"
-      {"macos", "aarch64", _} -> "darwin-arm64"
-      {"windows", "x86_64", _} -> "windows-amd64"
-      _ -> nil
+  def build_platform_key(platform) do
+    case string_to_target_atom_safe(platform) do
+      nil -> nil
+      atom -> Target.manifest_key(atom)
     end
   end
 
   # ============================================================================
   # ============================================================================
 
-  defp download_and_extract(url, otp_version, platform_key) do
+  defp download_and_extract(url, otp_version, platform_key, asset_ext) do
     extract_dir = Path.join(get_cache_dir(), "erts-#{otp_version}-#{platform_key}")
-    cache_filename = "erts-#{otp_version}-#{platform_key}.tar.gz"
+    cache_filename = "erts-#{otp_version}-#{platform_key}#{asset_ext}"
     cache_path = Path.join(get_cache_dir(), cache_filename)
 
     log_info(">>    Downloading ERTS...")
 
     case download_with_retry(fn -> download_file(url, cache_path) end) do
       :ok ->
-        extract_erts(cache_path, extract_dir, otp_version)
+        extract_erts(cache_path, extract_dir, otp_version, asset_ext)
 
       {:error, reason} ->
         {:error, "Download failed after #{@max_download_retries} retries: #{reason}"}
     end
   end
 
-  defp extract_erts(cache_path, extract_dir, otp_version) do
+  defp extract_erts(cache_path, extract_dir, otp_version, asset_ext) do
     File.mkdir_p!(extract_dir)
 
     {output, exit_code} =
-      System.cmd(
-        "tar",
-        [
-          "-xzf",
-          cache_path,
-          "-C",
-          extract_dir,
-          "--no-same-owner"
-        ],
-        stderr_to_stdout: true
-      )
+      case asset_ext do
+        ".zip" ->
+          # Erlang/OTP publishes Windows builds as zip files.
+          # `unzip -q` is quiet; the zip layout puts files at the root
+          # (or in a single versioned directory we handle below).
+          System.cmd("unzip", ["-q", "-o", cache_path, "-d", extract_dir], stderr_to_stdout: true)
+
+        _ ->
+          # Everything else (Linux, macOS) is a tarball.
+          System.cmd(
+            "tar",
+            [
+              "-xzf",
+              cache_path,
+              "-C",
+              extract_dir,
+              "--no-same-owner"
+            ],
+            stderr_to_stdout: true
+          )
+      end
 
     result =
       if exit_code == 0 do
         :ok
       else
-        {:error, parse_tar_error(output)}
+        {:error, parse_extract_error(output, asset_ext)}
       end
 
     case result do
       :ok ->
-        if erts_valid?(extract_dir, otp_version) do
-          {:ok, extract_dir}
+        # Some upstream tarballs/zip wrap their contents in a single
+        # versioned subdirectory (e.g. "otp_src_28.4/"). If so, flatten it
+        # so the cache dir always looks the same.
+        flat_dir = flatten_single_subdir(extract_dir)
+        if erts_valid?(flat_dir, otp_version) do
+          {:ok, flat_dir}
         else
           File.rm_rf(extract_dir)
           {:error, "ERTS validation failed: missing required files"}
@@ -636,7 +683,7 @@ defmodule Batamanta.ERTS.Fetcher do
 
       {:error, reason} ->
         File.rm_rf(extract_dir)
-        {:error, "Tar extraction failed: #{reason}"}
+        {:error, "Extraction failed: #{reason}"}
     end
   rescue
     e ->
@@ -644,7 +691,45 @@ defmodule Batamanta.ERTS.Fetcher do
       {:error, "Failed to extract: #{inspect(e)}"}
   end
 
-  defp parse_tar_error(output) do
+  defp flatten_single_subdir(dir) do
+    case File.ls(dir) do
+      {:ok, [single]} ->
+        single_path = Path.join(dir, single)
+        case File.stat(single_path) do
+          {:ok, %File.Stat{type: :directory}} ->
+            # Move everything up one level and remove the now-empty wrapper.
+            tmp = dir <> ".flat"
+            File.rename!(single_path, tmp)
+            File.rm_rf!(dir)
+            File.rename!(tmp, dir)
+            dir
+          _ ->
+            dir
+        end
+      _ ->
+        dir
+    end
+  rescue
+    _ -> dir
+  end
+
+  defp parse_extract_error(output, ".zip") do
+    cond do
+      matches_any?(output, ["Permission denied"]) ->
+        "Permission denied: cannot extract archive. Check file permissions."
+
+      matches_any?(output, ["No space left", "No space left on device"]) ->
+        "Disk full: no space left on device. Free up space and try again."
+
+      matches_any?(output, ["Cannot open", "cannot open", "cannot find"]) ->
+        "Archive corrupted or missing: cannot open the archive file."
+
+      true ->
+        "unzip command failed: #{String.trim(output)}"
+    end
+  end
+
+  defp parse_extract_error(output, _ext) do
     cond do
       matches_any?(output, ["Permission denied"]) ->
         "Permission denied: cannot extract archive. Check file permissions."

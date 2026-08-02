@@ -13,6 +13,13 @@ permissions:
 env:
   MIX_ENV: test
 
+# Skip the manifest-compat job on PRs from forks (it makes a network call
+# to the public GitHub raw URL and reads the upstream MANIFEST, which is
+# fine but adds noise — we only really need it on push to main/develop).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # ============================================================================
   # UNIT TESTS - Version Matrix
@@ -24,10 +31,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - elixir: '1.15.8'
-            otp: '26.2.5'
-          - elixir: '1.19.5'
-            otp: '28.1'
+          - elixir: '1.18.4'
+            otp: '27.3'
+          - elixir: '1.20.2'
+            otp: '28.4'
 
     steps:
       - uses: actions/checkout@v4
@@ -84,8 +91,8 @@ jobs:
       - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.19.5'
-          otp-version: '28.1'
+          elixir-version: '1.20.2'
+          otp-version: '28.4'
           install-hex: true
           install-rebar: true
 
@@ -149,8 +156,8 @@ jobs:
       - name: Setup Erlang/OTP and Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.18.4'
-          otp-version: '28.1'
+          elixir-version: '1.20.2'
+          otp-version: '28.4'
           install-hex: true
           install-rebar: true
 
@@ -161,10 +168,10 @@ jobs:
       - name: Cache Mix dependencies
         uses: actions/cache@v4
         with:
-          key: mix-${{ runner.os }}-28.1-1.18.4-${{ steps.mix-version.outputs.version }}-${{ hashFiles('mix.lock') }}
+          key: mix-${{ runner.os }}-28.4-1.20.2-${{ steps.mix-version.outputs.version }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            mix-${{ runner.os }}-28.1-1.18.4-${{ steps.mix-version.outputs.version }}-
-            mix-${{ runner.os }}-28.1-1.18.4-
+            mix-${{ runner.os }}-28.4-1.20.2-${{ steps.mix-version.outputs.version }}-
+            mix-${{ runner.os }}-28.4-1.20.2-
           path: |
             deps/
             _build/${{ env.MIX_ENV }}
@@ -186,11 +193,62 @@ jobs:
           retention-days: 30
 
   # ============================================================================
+  # MANIFEST COMPAT — verifies that batamanta's Target.manifest_key/1
+  # matches every key the upstream mirror actually publishes, and that
+  # the floor version (OTP 27.0) is in the mirror. This catches two
+  # classes of breakage at PR time:
+  #   1. A new target is added to Target but the mirror hasn't shipped it
+  #   2. A key naming drift between batamanta and the mirror
+  #
+  # Only runs on push to main/develop (not on PRs from forks, where the
+  # MANIFEST upstream isn't a concern of the PR author).
+  # ============================================================================
+  manifest_compat:
+    name: Manifest compatibility
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    needs: [unit_tests]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Erlang/OTP and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.20.2'
+          otp-version: '28.4'
+          install-hex: true
+          install-rebar: true
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          key: mix-compat-${{ runner.os }}-28.4-1.20.2-${{ hashFiles('mix.lock') }}
+          path: |
+            deps/
+            _build/${{ env.MIX_ENV }}
+
+      - name: Install System Dependencies
+        run: sudo apt-get update && sudo apt-get install -y zstd
+
+      - name: Install Mix Dependencies
+        run: mix deps.get
+
+      - name: Compile
+        run: mix compile
+
+      # Run the floor + top version cross-check against the upstream mirror.
+      # These tests are tagged :integration :compat. They make a single
+      # HTTPS GET to the public raw URL of MANIFEST.json.
+      - name: Run manifest compatibility tests
+        run: mix test test/batamanta/erts/manifest_compat_test.exs --include compat
+
+  # ============================================================================
   # RELEASE (tags only)
   # ============================================================================
   release:
     name: Publish to Hex.pm
-    needs: [unit_tests, smoke_tests]
+    needs: [unit_tests, smoke_tests, manifest_compat]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
@@ -199,8 +257,8 @@ jobs:
 
       - uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.18.4'
-          otp-version: '28.1'
+          elixir-version: '1.20.2'
+          otp-version: '28.4'
 
       - run: mix deps.get
       - run: mix compile

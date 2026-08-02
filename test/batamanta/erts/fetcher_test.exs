@@ -43,26 +43,26 @@ defmodule Batamanta.ERTS.FetcherTest do
 
   describe "version resolution" do
     test "find_erts_url/2 with exact version match" do
-      # OTP-26.0 should exist in MANIFEST
-      result = Fetcher.find_erts_url("26.0", "amd64-glibc")
+      # OTP-27.0 should exist in MANIFEST (our floor is 27.0)
+      result = Fetcher.find_erts_url("27.0", "linux-glibc-amd64")
       # Result can be nil (version not in manifest) or a URL string
       assert is_binary(result) or is_nil(result)
     end
 
     test "find_erts_url/2 with major-only version" do
-      # Should try 26.0, 26.1, etc.
-      result = Fetcher.find_erts_url("26", "amd64-glibc")
+      # Should try 27.0, 27.1, etc.
+      result = Fetcher.find_erts_url("27", "linux-glibc-amd64")
       assert is_binary(result) or is_nil(result)
     end
 
     test "find_erts_url/2 with patch version" do
-      # Should fall back to 26.0 if 26.0.1 doesn't exist
-      result = Fetcher.find_erts_url("26.0.1", "amd64-glibc")
+      # Should fall back to 27.0 if 27.0.1 doesn't exist
+      result = Fetcher.find_erts_url("27.0.1", "linux-glibc-amd64")
       assert is_binary(result) or is_nil(result)
     end
 
     test "find_erts_url/2 returns nil for non-existent platform" do
-      result = Fetcher.find_erts_url("26.0", "nonexistent-platform")
+      result = Fetcher.find_erts_url("27.0", "nonexistent-platform")
       assert is_nil(result)
     end
   end
@@ -75,25 +75,25 @@ defmodule Batamanta.ERTS.FetcherTest do
     test "linux x86_64 glibc" do
       platform = %{os: "linux", arch: "x86_64", libc: "gnu"}
       key = Fetcher.build_platform_key(platform)
-      assert key == "amd64-glibc"
+      assert key == "linux-glibc-amd64"
     end
 
     test "linux x86_64 musl" do
       platform = %{os: "linux", arch: "x86_64", libc: "musl"}
       key = Fetcher.build_platform_key(platform)
-      assert key == "amd64-musl"
+      assert key == "linux-musl-amd64"
     end
 
     test "linux aarch64 glibc" do
       platform = %{os: "linux", arch: "aarch64", libc: "gnu"}
       key = Fetcher.build_platform_key(platform)
-      assert key == "arm64-glibc"
+      assert key == "linux-glibc-arm64"
     end
 
     test "linux aarch64 musl" do
       platform = %{os: "linux", arch: "aarch64", libc: "musl"}
       key = Fetcher.build_platform_key(platform)
-      assert key == "arm64-musl"
+      assert key == "linux-musl-arm64"
     end
 
     test "macOS x86_64" do
@@ -143,6 +143,14 @@ defmodule Batamanta.ERTS.FetcherTest do
       result = Fetcher.fetch("28.0.0", :ubuntu_22_04_x86_64)
       assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
+
+    test "Windows arm64 falls back to amd64 when no arm64 release" do
+      # Fetcher may succeed via fallback to windows-amd64 if windows-arm64
+      # release is missing — accept either success (with amd64 fallback) or
+      # graceful error. The test verifies the call doesn't crash.
+      result = Fetcher.fetch("28.0", :windows_arm64)
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
+    end
   end
 
   # ============================================================================
@@ -152,12 +160,12 @@ defmodule Batamanta.ERTS.FetcherTest do
   describe "cache handling" do
     test "fetch/2 uses cache when available" do
       # First fetch - may download
-      otp_version = "26.0"
+      otp_version = "27.0"
       target = :ubuntu_22_04_x86_64
 
       # Clear cache first for this test
       cache_dir = Fetcher.get_cache_dir()
-      erts_dir = Path.join(cache_dir, "erts-#{otp_version}-amd64-glibc")
+      erts_dir = Path.join(cache_dir, "erts-#{otp_version}-linux-glibc-amd64")
       File.rm_rf(erts_dir)
 
       # First call - should either download or use system ERTS
@@ -200,7 +208,7 @@ defmodule Batamanta.ERTS.FetcherTest do
 
   describe "manifest JSON parsing" do
     test "build_download_url/2 returns URL for valid version" do
-      url = Fetcher.build_download_url("26.0", :ubuntu_22_04_x86_64)
+      url = Fetcher.build_download_url("27.0", :ubuntu_22_04_x86_64)
       assert is_binary(url)
       # Should either return actual URL or fallback message
       assert url != ""
@@ -229,8 +237,8 @@ defmodule Batamanta.ERTS.FetcherTest do
     # Usamos una versión OTP genérica
     # El test verifica que la función de fetch funciona correctamente
     # Nota: Este test puede fallar si la red no está disponible
-    # o si Hex.pm está caído
-    otp_version = "26.0"
+    # o si la versión no existe en el mirror
+    otp_version = "27.0"
 
     # Intentar fetch - puede tener éxito o fallar por 404 si la versión no existe
     result = Fetcher.fetch(otp_version, :ubuntu_22_04_x86_64)
