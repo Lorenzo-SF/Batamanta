@@ -26,23 +26,14 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
     [sample_version | _] = manifest_versions(manifest)
 
     for target_atom <- Target.valid_targets() do
-      # windows-arm64 is a special case: the Erlang/OTP project does not
-      # ship Windows arm64 binaries as of 2026-08, so the upstream mirror
-      # has no entry for it. The Fetcher handles that with a fallback to
-      # windows-amd64 (see Fetcher.maybe_fallback_to_x86/3). Skip the
-      # presence check for this target.
-      if target_atom == :windows_arm64 do
-        :ok
-      else
-        key = Target.manifest_key(target_atom)
-        entry = Map.get(manifest, "OTP-#{sample_version}") || %{}
-        assert Map.has_key?(entry, key),
-               "manifest_key #{inspect(key)} (for #{inspect(target_atom)}) is missing " <>
-                 "from the upstream MANIFEST.json under OTP-#{sample_version}. " <>
-                 "Either the upstream build pipeline hasn't shipped this target yet, " <>
-                 "or the key naming has drifted. Update `Target.manifest_key/1` or " <>
-                 "the upstream pipeline to align them."
-      end
+      key = Target.manifest_key(target_atom)
+      entry = Map.get(manifest, "OTP-#{sample_version}") || %{}
+      assert Map.has_key?(entry, key),
+             "manifest_key #{inspect(key)} (for #{inspect(target_atom)}) is missing " <>
+               "from the upstream MANIFEST.json under OTP-#{sample_version}. " <>
+               "Either the upstream build pipeline hasn't shipped this target yet, " <>
+               "or the key naming has drifted. Update `Target.manifest_key/1` or " <>
+               "the upstream pipeline to align them."
     end
   end
 
@@ -67,15 +58,26 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
       key = Fetcher.build_platform_key(platform)
       assert is_binary(key), "#{inspect(target_atom)} produced nil key"
 
-      if target_atom == :windows_arm64 do
-        # Skip: the Fetcher falls back to windows-amd64 at fetch time
-        # because upstream OTP doesn't ship arm64 Windows binaries.
-        :ok
-      else
-        url = Fetcher.find_erts_url(@floor_version, key, :explicit)
-        assert is_binary(url),
-               "No URL for #{target_atom} (key=#{key}) at OTP-#{@floor_version} in upstream MANIFEST"
-      end
+      url = Fetcher.find_erts_url(@floor_version, key, :explicit)
+      assert is_binary(url),
+             "No URL for #{target_atom} (key=#{key}) at OTP-#{@floor_version} in upstream MANIFEST"
+    end
+  end
+
+  @tag :integration
+  @tag :compat
+  test "fetcher resolves a real URL for each target at the latest version" do
+    alias Batamanta.ERTS.Fetcher
+
+    manifest = fetch_manifest!()
+    [latest_version | _] = manifest_versions(manifest)
+
+    for target_atom <- Target.valid_targets() do
+      platform = Fetcher.target_atom_to_platform(target_atom)
+      key = Fetcher.build_platform_key(platform)
+      url = Fetcher.find_erts_url(latest_version, key, :explicit)
+      assert is_binary(url),
+             "No URL for #{target_atom} (key=#{key}) at OTP-#{latest_version} (latest) in upstream MANIFEST"
     end
   end
 

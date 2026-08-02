@@ -21,7 +21,11 @@ defmodule Batamanta.Target do
   | `:macos_12_x86_64` | macOS | x86_64 | - | x86_64-apple-darwin |
   | `:macos_12_arm64` | macOS | aarch64 | - | aarch64-apple-darwin |
   | `:windows_x86_64` | Windows | x86_64 | msvc | x86_64-pc-windows-msvc |
-  | `:windows_arm64` | Windows | aarch64 | msvc | aarch64-pc-windows-msvc |
+
+  Windows arm64 is intentionally not supported: the upstream `erlang/otp`
+  project does not publish precompiled arm64 Windows binaries, so we have
+  no reliable source to mirror. Use `windows_x86_64` (works on Windows arm64
+  via the x86_64 emulation layer) until upstream changes this.
 
   """
 
@@ -126,17 +130,6 @@ defmodule Batamanta.Target do
       erts_arch: "x86_64",
       display: "Windows x86_64",
       manifest_key: "windows-amd64",
-      asset_ext: ".zip"
-    },
-    windows_arm64: %{
-      os: "windows",
-      arch: "aarch64",
-      libc: "msvc",
-      rust_target: "aarch64-pc-windows-msvc",
-      erts_os: "windows-2022",
-      erts_arch: "aarch64",
-      display: "Windows arm64",
-      manifest_key: "windows-arm64",
       asset_ext: ".zip"
     }
   }
@@ -455,7 +448,10 @@ defmodule Batamanta.Target do
   defp do_build_target("macos", "x86_64", _), do: {:ok, :macos_12_x86_64}
   defp do_build_target("macos", "aarch64", _), do: {:ok, :macos_12_arm64}
   defp do_build_target("windows", "x86_64", _), do: {:ok, :windows_x86_64}
-  defp do_build_target("windows", "aarch64", _), do: {:ok, :windows_arm64}
+  # Windows arm64 is intentionally not a target — see moduledoc. Mapping
+  # it to windows_x86_64 keeps legacy callers (who pass force_arch: "aarch64"
+  # on a Windows host) functional via the x86_64 emulation layer.
+  defp do_build_target("windows", "aarch64", _), do: {:ok, :windows_x86_64}
   defp do_build_target(_, _, _), do: {:error, "Could not resolve target from overrides"}
 
   @doc """
@@ -487,8 +483,11 @@ defmodule Batamanta.Target do
       {"windows", "x86_64"} ->
         :windows_x86_64
 
-      {"windows", "aarch64"} ->
-        :windows_arm64
+      # Windows arm64 is intentionally unsupported — see the moduledoc
+      # for the rationale. We don't have an entry for `aarch64` Windows
+      # here, so legacy callers asking for it will fall through to the
+      # default branch and get `:windows_x86_64` (which is the closest
+      # thing we ship and runs on arm64 via emulation).
 
       _ ->
         :ubuntu_22_04_x86_64

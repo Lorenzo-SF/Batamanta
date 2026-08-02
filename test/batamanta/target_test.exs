@@ -68,10 +68,6 @@ defmodule Batamanta.TargetTest do
       assert Target.manifest_key(:windows_x86_64) == "windows-amd64"
     end
 
-    test "returns windows-arm64 for windows_arm64" do
-      assert Target.manifest_key(:windows_arm64) == "windows-arm64"
-    end
-
     test "raises for unknown target" do
       assert_raise RuntimeError, ~r/Invalid ERTS target/, fn ->
         Target.manifest_key(:unknown)
@@ -92,7 +88,6 @@ defmodule Batamanta.TargetTest do
 
     test "returns .zip for Windows targets" do
       assert Target.asset_ext(:windows_x86_64) == ".zip"
-      assert Target.asset_ext(:windows_arm64) == ".zip"
     end
 
     test "asset_filename concatenates manifest_key + asset_ext" do
@@ -133,11 +128,14 @@ defmodule Batamanta.TargetTest do
     test "returns list of all supported targets" do
       targets = Target.valid_targets()
       assert is_list(targets)
-      assert length(targets) >= 7
+      # 4 Linux + 2 macOS + 1 Windows = 7 (windows-arm64 is intentionally
+      # not a target; see Target moduledoc)
+      assert length(targets) == 7
       assert :ubuntu_22_04_x86_64 in targets
       assert :alpine_3_19_x86_64 in targets
       assert :macos_12_arm64 in targets
       assert :windows_x86_64 in targets
+      refute :windows_arm64 in targets
     end
   end
 end
