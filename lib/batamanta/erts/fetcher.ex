@@ -240,17 +240,19 @@ defmodule Batamanta.ERTS.Fetcher do
   # Used by build_platform_key/1, which needs to handle unknown platforms
   # gracefully (returning nil instead of raising).
   #
-  # `detect_platform/0` reports `libc: nil` for Windows and macOS, but the
-  # target matrix stores `libc: "msvc"` for Windows (so the rust_target
-  # selector has a real value to choose from). We accept either side of
-  # the disagreement by trying both libc variants when `libc` is nil and
-  # the OS is Windows. For macOS the matrix has `libc: nil` too, so the
-  # single-variant path is enough.
+  # Accepts both `libc: "gnu"` (string) and `libc: :gnu` (atom) for the
+  # libc field — the rest of the codebase stores strings, but the
+  # runtime LibcDetector returns atoms. The matrix stores
+  # `libc: "msvc"` for Windows (so the rust_target selector has a real
+  # value to choose from), but `detect_platform/0` reports nil for it.
+  # For macOS the matrix has `libc: nil` too, so the single-variant
+  # path is enough.
   defp string_to_target_atom_safe(%{os: os, arch: arch, libc: libc}) do
+    libc_str = libc && to_string(libc)
     libc_variants =
-      case {os, libc} do
+      case {os, libc_str} do
         {"windows", nil} -> [nil, "msvc"]
-        _ -> [libc]
+        _ -> [libc_str]
       end
 
     Enum.find_value(libc_variants, fn l ->
