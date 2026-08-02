@@ -9,6 +9,16 @@ defmodule Batamanta.ERTS.FetcherIntegrationTest do
   use ExUnit.Case, async: false
   alias Batamanta.ERTS.Fetcher
 
+  # The test_helper.exs loads test_httpc.exs (the httpc mock) and
+  # runner_mock.exs, but in the GitHub Actions CI the parallel compiler
+  # sometimes tries to compile this test file before the mocks are
+  # present on disk, leading to a `MatchError` in
+  # Kernel.ParallelCompiler.require_file/2. Eagerly requiring both here
+  # makes the dependency explicit and forces the test runner to load
+  # them before reaching the assertions.
+  Code.require_file("../test_httpc.exs", __DIR__)
+  Code.require_file("../support/runner_mock.exs", __DIR__)
+
   @tag :integration
   test "fetch/2 with :auto detects host target" do
     {:ok, target} = Fetcher.detect_host_target()
