@@ -1,15 +1,16 @@
 defmodule Batamanta.MixProject do
   use Mix.Project
 
-  @version "1.6.1"
+  @version "2.0.0-dev"
   @source_url "https://github.com/Lorenzo-SF/Batamanta"
-  @elixir_vsn "~> 1.15"
+  @elixir_vsn "~> 1.18"
 
   def project do
     [
       app: :batamanta,
       version: @version,
       elixir: @elixir_vsn,
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       description: description(),
       package: package(),
@@ -27,20 +28,15 @@ defmodule Batamanta.MixProject do
           threshold: 100
         ]
       ]
-    ] ++ optional_test_config()
+    ]
   end
 
   defp description do
-    "Encapsulates Elixir releases alongside their ERTS into self-contained executable binaries. Downloads ERTS from Hex.pm with fallback to system ERTS if unavailable."
+    "Encapsulates Elixir releases alongside their ERTS into self-contained executable binaries. Downloads ERTS from the official mirror (Lorenzo-SF/Batamanta---ERTS-repository) with fallback to system ERTS if unavailable."
   end
 
-  defp optional_test_config do
-    if Version.match?(System.version(), ">= 1.19.0") do
-      [test_ignore_filters: [~r/test\/support\/runner_mock\.exs/, ~r/test\/test_httpc\.exs/]]
-    else
-      []
-    end
-  end
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   defp docs do
     [

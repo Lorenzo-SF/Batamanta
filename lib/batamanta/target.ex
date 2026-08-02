@@ -32,10 +32,22 @@ defmodule Batamanta.Target do
           arch: String.t(),
           libc: String.t() | nil,
           rust_target: rust_target(),
-          display: String.t()
+          display: String.t(),
+          manifest_key: String.t(),
+          asset_ext: String.t()
         }
 
   # ============================================================================
+  # ============================================================================
+  #
+  #  manifest_key is the key used in the remote MANIFEST.json (from
+  #  Lorenzo-SF/Batamanta---ERTS-repository). Naming convention is
+  #  "{libc?}-{os}-{arch}" with the libc segment omitted for macOS/Windows
+  #  (e.g. "linux-glibc-amd64", "darwin-arm64", "windows-amd64").
+  #
+  #  asset_ext is the file extension of the published asset: ".tar.gz" for
+  #  everything except Windows which uses ".zip" (the Erlang/OTP team
+  #  publishes Windows builds as zip files).
   # ============================================================================
 
   @target_matrix %{
@@ -46,7 +58,9 @@ defmodule Batamanta.Target do
       rust_target: "x86_64-unknown-linux-gnu",
       erts_os: "linux",
       erts_arch: "x86_64",
-      display: "Linux x86_64 (glibc)"
+      display: "Linux x86_64 (glibc)",
+      manifest_key: "linux-glibc-amd64",
+      asset_ext: ".tar.gz"
     },
     ubuntu_22_04_arm64: %{
       os: "linux",
@@ -55,7 +69,9 @@ defmodule Batamanta.Target do
       rust_target: "aarch64-unknown-linux-gnu",
       erts_os: "linux",
       erts_arch: "aarch64",
-      display: "Linux aarch64 (glibc)"
+      display: "Linux aarch64 (glibc)",
+      manifest_key: "linux-glibc-arm64",
+      asset_ext: ".tar.gz"
     },
     alpine_3_19_x86_64: %{
       os: "linux",
@@ -64,7 +80,9 @@ defmodule Batamanta.Target do
       rust_target: "x86_64-unknown-linux-musl",
       erts_os: "linux",
       erts_arch: "x86_64",
-      display: "Linux x86_64 (musl)"
+      display: "Linux x86_64 (musl)",
+      manifest_key: "linux-musl-amd64",
+      asset_ext: ".tar.gz"
     },
     alpine_3_19_arm64: %{
       os: "linux",
@@ -73,7 +91,9 @@ defmodule Batamanta.Target do
       rust_target: "aarch64-unknown-linux-musl",
       erts_os: "linux",
       erts_arch: "aarch64",
-      display: "Linux aarch64 (musl)"
+      display: "Linux aarch64 (musl)",
+      manifest_key: "linux-musl-arm64",
+      asset_ext: ".tar.gz"
     },
     macos_12_x86_64: %{
       os: "macos",
@@ -82,7 +102,9 @@ defmodule Batamanta.Target do
       rust_target: "x86_64-apple-darwin",
       erts_os: "macos",
       erts_arch: "x86_64",
-      display: "macOS x86_64 (Intel)"
+      display: "macOS x86_64 (Intel)",
+      manifest_key: "darwin-amd64",
+      asset_ext: ".tar.gz"
     },
     macos_12_arm64: %{
       os: "macos",
@@ -91,7 +113,9 @@ defmodule Batamanta.Target do
       rust_target: "aarch64-apple-darwin",
       erts_os: "macos",
       erts_arch: "aarch64",
-      display: "macOS aarch64 (Apple Silicon)"
+      display: "macOS aarch64 (Apple Silicon)",
+      manifest_key: "darwin-arm64",
+      asset_ext: ".tar.gz"
     },
     windows_x86_64: %{
       os: "windows",
@@ -100,7 +124,9 @@ defmodule Batamanta.Target do
       rust_target: "x86_64-pc-windows-msvc",
       erts_os: "windows-2019",
       erts_arch: "x86_64",
-      display: "Windows x86_64"
+      display: "Windows x86_64",
+      manifest_key: "windows-amd64",
+      asset_ext: ".zip"
     },
     windows_arm64: %{
       os: "windows",
@@ -109,7 +135,9 @@ defmodule Batamanta.Target do
       rust_target: "aarch64-pc-windows-msvc",
       erts_os: "windows-2022",
       erts_arch: "aarch64",
-      display: "Windows arm64"
+      display: "Windows arm64",
+      manifest_key: "windows-arm64",
+      asset_ext: ".zip"
     }
   }
 
@@ -154,6 +182,42 @@ defmodule Batamanta.Target do
       {:ok, info} -> info.rust_target
       {:error, _} -> raise "Invalid ERTS target: #{inspect(erts_target)}"
     end
+  end
+
+  @doc """
+  Returns the manifest_key for a target — the key used in the remote
+  MANIFEST.json to look up download URLs.
+
+  Naming convention: "{libc?}-{os}-{arch}", libc omitted for macOS/Windows.
+  Examples: "linux-glibc-amd64", "darwin-arm64", "windows-amd64".
+  """
+  @spec manifest_key(erts_target()) :: String.t()
+  def manifest_key(erts_target) do
+    case resolve(erts_target) do
+      {:ok, info} -> info.manifest_key
+      {:error, _} -> raise "Invalid ERTS target: #{inspect(erts_target)}"
+    end
+  end
+
+  @doc """
+  Returns the asset file extension for a target — ".tar.gz" for everything
+  except Windows which uses ".zip".
+  """
+  @spec asset_ext(erts_target()) :: String.t()
+  def asset_ext(erts_target) do
+    case resolve(erts_target) do
+      {:ok, info} -> info.asset_ext
+      {:error, _} -> raise "Invalid ERTS target: #{inspect(erts_target)}"
+    end
+  end
+
+  @doc """
+  Builds the asset filename (e.g. "linux-glibc-amd64.tar.gz" or
+  "windows-amd64.zip") for a target.
+  """
+  @spec asset_filename(erts_target()) :: String.t()
+  def asset_filename(erts_target) do
+    manifest_key(erts_target) <> asset_ext(erts_target)
   end
 
   @doc """
