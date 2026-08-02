@@ -102,7 +102,7 @@ defmodule Batamanta.Target do
       rust_target: "x86_64-apple-darwin",
       erts_os: "macos",
       erts_arch: "x86_64",
-      display: "macOS x86_64 (Intel)",
+      display: "macOS x86_64",
       manifest_key: "darwin-amd64",
       asset_ext: ".tar.gz"
     },
