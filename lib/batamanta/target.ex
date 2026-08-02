@@ -21,6 +21,7 @@ defmodule Batamanta.Target do
   | `:macos_12_x86_64` | macOS | x86_64 | - | x86_64-apple-darwin |
   | `:macos_12_arm64` | macOS | aarch64 | - | aarch64-apple-darwin |
   | `:windows_x86_64` | Windows | x86_64 | msvc | x86_64-pc-windows-msvc |
+  | `:windows_arm64` | Windows | aarch64 | msvc | aarch64-pc-windows-msvc |
 
   """
 
@@ -81,7 +82,7 @@ defmodule Batamanta.Target do
       rust_target: "x86_64-apple-darwin",
       erts_os: "macos",
       erts_arch: "x86_64",
-      display: "macOS x86_64"
+      display: "macOS x86_64 (Intel)"
     },
     macos_12_arm64: %{
       os: "macos",
@@ -100,6 +101,15 @@ defmodule Batamanta.Target do
       erts_os: "windows-2019",
       erts_arch: "x86_64",
       display: "Windows x86_64"
+    },
+    windows_arm64: %{
+      os: "windows",
+      arch: "aarch64",
+      libc: "msvc",
+      rust_target: "aarch64-pc-windows-msvc",
+      erts_os: "windows-2022",
+      erts_arch: "aarch64",
+      display: "Windows arm64"
     }
   }
 
@@ -381,6 +391,7 @@ defmodule Batamanta.Target do
   defp do_build_target("macos", "x86_64", _), do: {:ok, :macos_12_x86_64}
   defp do_build_target("macos", "aarch64", _), do: {:ok, :macos_12_arm64}
   defp do_build_target("windows", "x86_64", _), do: {:ok, :windows_x86_64}
+  defp do_build_target("windows", "aarch64", _), do: {:ok, :windows_arm64}
   defp do_build_target(_, _, _), do: {:error, "Could not resolve target from overrides"}
 
   @doc """
@@ -411,6 +422,9 @@ defmodule Batamanta.Target do
 
       {"windows", "x86_64"} ->
         :windows_x86_64
+
+      {"windows", "aarch64"} ->
+        :windows_arm64
 
       _ ->
         :ubuntu_22_04_x86_64
