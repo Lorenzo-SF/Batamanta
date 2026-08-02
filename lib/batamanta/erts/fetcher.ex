@@ -78,7 +78,6 @@ defmodule Batamanta.ERTS.Fetcher do
     target_atom = string_to_target_atom(target)
     platform_key = Target.manifest_key(target_atom)
     asset_ext = Target.asset_ext(target_atom)
-    platform_key = maybe_fallback_to_x86(otp_vsn, platform_key, version_mode)
 
     log_info(">> Fetching ERTS for OTP #{otp_vsn} (#{platform_key})...")
 
@@ -148,23 +147,6 @@ defmodule Batamanta.ERTS.Fetcher do
       erts_url ->
         log_info(">> Found ERTS URL: #{erts_url}")
         download_and_extract(erts_url, otp_vsn, platform_key, asset_ext)
-    end
-  end
-
-  # Falls back from `windows-arm64` to `windows-amd64` when the manifest
-  # doesn't yet carry an arm64 Windows asset (which is the current state of
-  # `erlang/otp` releases as of 2026-08). Once upstream starts publishing
-  # arm64 Windows binaries, this becomes a no-op.
-  @spec maybe_fallback_to_x86(String.t(), String.t(), atom()) :: String.t()
-  defp maybe_fallback_to_x86(_otp_vsn, platform_key, _version_mode) when platform_key != "windows-arm64",
-    do: platform_key
-
-  defp maybe_fallback_to_x86(otp_vsn, "windows-arm64", version_mode) do
-    if find_erts_url(otp_vsn, "windows-arm64", version_mode) do
-      "windows-arm64"
-    else
-      log_info(">> ⚠️  No windows-arm64 entry for OTP #{otp_vsn} — falling back to windows-amd64")
-      "windows-amd64"
     end
   end
 
@@ -285,9 +267,6 @@ defmodule Batamanta.ERTS.Fetcher do
 
   defp target_atom_to_platform_impl(:windows_x86_64),
     do: %{os: "windows", arch: "x86_64", libc: nil}
-
-  defp target_atom_to_platform_impl(:windows_arm64),
-    do: %{os: "windows", arch: "aarch64", libc: nil}
 
   defp target_atom_to_platform_impl(_), do: %{os: "linux", arch: "x86_64", libc: "gnu"}
 
