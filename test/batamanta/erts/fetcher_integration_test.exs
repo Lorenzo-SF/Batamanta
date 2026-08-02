@@ -16,8 +16,8 @@ defmodule Batamanta.ERTS.FetcherIntegrationTest do
   # Kernel.ParallelCompiler.require_file/2. Eagerly requiring both here
   # makes the dependency explicit and forces the test runner to load
   # them before reaching the assertions.
-  Code.require_file("../test_httpc.exs", __DIR__)
-  Code.require_file("../support/runner_mock.exs", __DIR__)
+  Code.require_file("../../test_httpc.exs", __DIR__)
+  Code.require_file("../../support/runner_mock.exs", __DIR__)
 
   @tag :integration
   test "fetch/2 with :auto detects host target" do
