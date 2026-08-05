@@ -5,8 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.6.1] - 2026-07-03
+## [2.0.0-dev] - Unreleased
 
+### Changed
+
+- **`@version` bumped to `2.0.0-dev`**: `lib/batamanta.ex` had drifted
+  from `mix.exs` (`1.5.2` vs `2.0.0-dev`); both now read
+  `2.0.0-dev` consistently.
+- **MANIFEST naming aligned with upstream**:
+  `priv/erts_repository/MANIFEST.json` regenerated from
+  `Lorenzo-SF/Batamanta---ERTS-repository` to use the new asset key
+  names (`linux-glibc-amd64`, `linux-musl-amd64`, `darwin-arm64`,
+  `windows-amd64`). The previous keys (`amd64-glibc`, `amd64-musl`,
+  `arm64-glibc`, `arm64-musl`) are no longer published by the upstream
+  mirror - they pointed at assets that haven't existed on the release
+  page since the manifest rename.
+- **`manifest_compat_test.exs`**: added `latest_full_version/1` helper
+  that picks the most recent OTP version in the manifest that has every
+  target's `manifest_key` present. As of OTP 28.4.2 the upstream Erlang
+  team dropped the prebuilt musl tarballs, so the absolute-latest
+  version is no longer suitable for full-matrix coverage tests. Both
+  the "every `Target.manifest_key` is present" test and the "fetcher
+  resolves a real URL for each target at the latest version" test now
+  use the helper.
+
+### Documented
+
+- **`Target` moduledoc**: added a "Targets whose upstream release is
+  not currently published" section noting that `:macos_12_x86_64`
+  resolves via the system-installed ERTS at runtime - no
+  `darwin-amd64.tar.gz` releases are currently published by the
+  upstream mirror (no Mac with an Intel CPU is available in the
+  maintainer's fleet to keep the build pipeline running).
+- **`Fetcher` test (`windows_arm64`)**: renamed to "unknown target
+  atom falls back gracefully" and the comment updated to reflect that
+  `:windows_arm64` is not a valid target (it was the old name of the
+  test when `:windows_arm64` was still a target - the target was
+  dropped in `409e24d` because upstream Erlang/OTP does not publish
+  arm64 Windows binaries).
+
+## [1.6.1] - 2026-07-03
 ### Added
 
 - **No-flatten ERTS for escript format**: escript payloads no longer

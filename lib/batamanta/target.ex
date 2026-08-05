@@ -27,6 +27,21 @@ defmodule Batamanta.Target do
   no reliable source to mirror. Use `windows_x86_64` (works on Windows arm64
   via the x86_64 emulation layer) until upstream changes this.
 
+  ## Targets whose upstream release is not currently published
+
+  The following atoms are still valid `:erts_target` values and the
+  Fetcher can resolve them, but the corresponding asset is **not**
+  currently published by the upstream mirror
+  (`Lorenzo-SF/Batamanta---ERTS-repository`), so they fall back to the
+  system-installed ERTS at runtime rather than downloading a packaged
+  tarball:
+
+  * `:macos_12_x86_64` — manifest key would be `darwin-amd64`. No
+    releases are currently published because maintaining an Intel-Mac
+    build pipeline is not justified by the current user base. Re-enable
+    by adding the target back to the upstream pipeline and re-releasing
+    the matching `darwin-amd64.tar.gz` assets.
+
   """
 
   @type erts_target :: atom()
