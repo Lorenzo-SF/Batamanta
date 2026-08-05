@@ -868,17 +868,19 @@ defmodule Batamanta.ERTS.Fetcher do
   # dir directly. In the `Mix.Task` context that `mix batamanta` runs
   # under (or with older ERTS versions), the code path is restricted and
   # `code:lib_dir/1` returns `{:error, :bad_name}` even though the app
-  # is loaded. We fall back to `code:where_is_file/1` to find the path.
+  # is loaded. We fall back to deriving the path from the beam
+  # location: we force-load the module, then use `code:which/1` to
+  # find the beam file, then its parent directory is the ebin.
   defp public_key_ebin do
     case :code.lib_dir(:public_key) do
       dir when is_binary(dir) or is_list(dir) ->
         Path.join(dir, "ebin")
 
       {:error, _} ->
-        # The :public_key.app file is in the lib dir; derive the ebin from it.
-        case :code.where_is_file("public_key.app") do
-          path when is_binary(path) ->
-            path |> Path.dirname() |> Path.join("ebin")
+        _ = :code.ensure_loaded(:public_key)
+        case :code.which(:public_key) do
+          beam when is_list(beam) ->
+            beam |> Path.dirname() |> Path.expand()
 
           _ ->
             raise "public_key not found in code path; cannot derive ebin"
