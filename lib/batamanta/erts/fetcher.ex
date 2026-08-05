@@ -382,26 +382,26 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp download_manifest do
-    IO.puts("[FETCHER-MARKER] download_manifest called at #{System.os_time(:millisecond)}")
     # `:public_key` provides `cacerts_get/0` and
-    # `pkix_verify_hostname_match_fun/1`, which we call below. On some
-    # hosts (notably Erlang/OTP 29 on Windows under `mix batamanta`)
-    # the `:public_key` BEAM is not loaded into the current process
-    # even though the app is started. We try three different load
-    # strategies to cover the cases we've seen: explicit
-    # `Application.load/1` (loads the .app file), then
-    # `Application.ensure_all_started/1` (starts the supervisor and
-    # its dependencies), then `:code.ensure_loaded/1` which actually
-    # pulls the BEAM into the code server.
-    IO.puts("[FETCHER-MARKER] before Application.load, is_loaded?=#{inspect(:code.is_loaded(:public_key))}")
-    r1 = Application.load(:public_key)
-    IO.puts("[FETCHER-MARKER] load result=#{inspect(r1)}, is_loaded?=#{inspect(:code.is_loaded(:public_key))}")
-    r2 = Application.ensure_all_started(:public_key)
-    IO.puts("[FETCHER-MARKER] ensure_all_started=#{inspect(r2)}, is_loaded?=#{inspect(:code.is_loaded(:public_key))}")
-    r3 = :code.ensure_loaded(:public_key)
-    IO.puts("[FETCHER-MARKER] ensure_loaded=#{inspect(r3)}")
-    cacerts = :public_key.cacerts_get()
-    IO.puts("[FETCHER-MARKER] cacerts_get returned #{length(cacerts)} certs")
+    # `pkix_verify_hostname_match_fun/1`. On some hosts (notably
+    # Erlang/OTP 29 on Windows when invoked through `mix batamanta`),
+    # the `:public_key` app is loaded but the code server has not
+    # added its `ebin` directory to the search path, so
+    # `:code.ensure_loaded/1` returns `{:error, :nofile}` even though
+    # the app is "already loaded". We work around that by explicitly
+    # adding the public_key lib dir to the code path before asking
+    # the code server to load the module.
+    public_key_ebin = Path.join(:code.lib_dir(:public_key), "ebin")
+    :code.add_path(to_charlist(public_key_ebin))
+    :code.ensure_loaded(:public_key)
+
+    ssl_opts = [
+      verify: :verify_peer,
+      cacerts: :public_key.cacerts_get(),
+      customize_hostname_check: [
+        match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
+      ]
+    ]
 
     ssl_opts = [
       verify: :verify_peer,
@@ -721,7 +721,8 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp download_file(url, cache_path) do
-    ensure_started([:inets, :ssl, :public_key])
+    public_key_ebin = Path.join(:code.lib_dir(:public_key), "ebin")
+    :code.add_path(to_charlist(public_key_ebin))
     :code.ensure_loaded(:public_key)
 
     ssl_opts = [
