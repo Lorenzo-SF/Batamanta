@@ -780,34 +780,31 @@ defmodule Batamanta.ERTS.Fetcher do
     # 3 is a third variant that some Erlang/OTP Windows prebuilt zips use —
     # we accept it by checking for `erl.exe` + at least one `*.boot` file
     # at the root.
+    # The 2-check threshold is what makes a layout "self-consistent" — a
+    # single hit (e.g. only `lib/`) is not enough to call it valid, but
+    # two strongly-correlated hits (e.g. `bin/erlexec` + `releases/<vsn>/`)
+    # describe a complete release-style tree. For the raw Windows layout
+    # (everything at the root, no subdirs) we count each top-level
+    # executable / boot file as its own check, so a healthy raw layout
+    # passes 4+ of them.
     checks = [
-      # Linux/Mac release
+      # --- Linux/Mac release-style ---
       File.exists?(Path.join(extract_dir, "bin/erlexec")),
-      # Linux/Mac release (alt path)
       File.exists?(Path.join(extract_dir, "releases/#{otp_version}/OTP_VERSION")),
-      # Windows release-style
+      # --- Windows release-style (re-packaged from erlang/otp prebuilt) ---
       File.exists?(Path.join(extract_dir, "bin/erl.exe")),
-      # Windows release (alt path)
       File.exists?(Path.join(extract_dir, "releases/#{otp_version}/erl.exe")),
       has_valid_release_dir?(extract_dir),
-      # Any of the three layouts
+      # --- Shared: present in both release-style and some raw zips ---
       File.dir?(Path.join(extract_dir, "lib")),
-      # Windows raw-style: erl.exe + a *.boot file at the root
-      raw_windows_erts?(extract_dir)
+      # --- Windows raw-style (everything at the root, no bin/ or releases/) ---
+      File.regular?(Path.join(extract_dir, "erl.exe")),
+      File.regular?(Path.join(extract_dir, "erlc.exe")),
+      File.regular?(Path.join(extract_dir, "werl.exe")),
+      File.regular?(Path.join(extract_dir, "start.boot"))
     ]
 
     Enum.count(checks, & &1) >= 2
-  end
-
-  defp raw_windows_erts?(extract_dir) do
-    erl = Path.join(extract_dir, "erl.exe")
-    boots =
-      case File.ls(extract_dir) do
-        {:ok, files} -> Enum.filter(files, &String.ends_with?(&1, ".boot"))
-        _ -> []
-      end
-
-    File.regular?(erl) and boots != []
   end
 
   defp has_valid_release_dir?(extract_dir) do
