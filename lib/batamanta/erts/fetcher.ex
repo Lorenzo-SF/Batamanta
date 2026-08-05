@@ -382,6 +382,7 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp download_manifest do
+    IO.puts("[FETCHER-MARKER] download_manifest called at #{System.os_time(:millisecond)}")
     # `:public_key` provides `cacerts_get/0` and
     # `pkix_verify_hostname_match_fun/1`, which we call below. On some
     # hosts (notably Erlang/OTP 29 on Windows under `mix batamanta`)
@@ -392,13 +393,19 @@ defmodule Batamanta.ERTS.Fetcher do
     # `Application.ensure_all_started/1` (starts the supervisor and
     # its dependencies), then `:code.ensure_loaded/1` which actually
     # pulls the BEAM into the code server.
-    Application.load(:public_key)
-    Application.ensure_all_started(:public_key)
-    :code.ensure_loaded(:public_key)
+    IO.puts("[FETCHER-MARKER] before Application.load, is_loaded?=#{inspect(:code.is_loaded(:public_key))}")
+    r1 = Application.load(:public_key)
+    IO.puts("[FETCHER-MARKER] load result=#{inspect(r1)}, is_loaded?=#{inspect(:code.is_loaded(:public_key))}")
+    r2 = Application.ensure_all_started(:public_key)
+    IO.puts("[FETCHER-MARKER] ensure_all_started=#{inspect(r2)}, is_loaded?=#{inspect(:code.is_loaded(:public_key))}")
+    r3 = :code.ensure_loaded(:public_key)
+    IO.puts("[FETCHER-MARKER] ensure_loaded=#{inspect(r3)}")
+    cacerts = :public_key.cacerts_get()
+    IO.puts("[FETCHER-MARKER] cacerts_get returned #{length(cacerts)} certs")
 
     ssl_opts = [
       verify: :verify_peer,
-      cacerts: :public_key.cacerts_get(),
+      cacerts: cacerts,
       customize_hostname_check: [
         match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
       ]
