@@ -599,7 +599,7 @@ defmodule Batamanta.ERTS.Fetcher do
           # Erlang/OTP publishes Windows builds as zip files.
           # `unzip -q` is quiet; the zip layout puts files at the root
           # (or in a single versioned directory we handle below).
-          System.cmd("unzip", ["-q", "-o", cache_path, "-d", extract_dir], stderr_to_stdout: true)
+          System.cmd(unzip_or_error(), ["-q", "-o", cache_path, "-d", extract_dir], stderr_to_stdout: true)
 
         _ ->
           # Everything else (Linux, macOS) is a tarball.
@@ -877,6 +877,27 @@ defmodule Batamanta.ERTS.Fetcher do
           _ ->
             raise "public_key not found in code path; cannot derive ebin"
         end
+    end
+  end
+
+  # Returns the absolute path to `unzip`, falling back to the
+  # Git-for-Windows install dir on Windows. `Mix.Task` doesn't always
+  # inherit the user's PATH (especially when invoked from a non-PATH
+  # context like a subshell or a different parent process), and the
+  # Windows default install of `unzip` is missing.
+  defp unzip_or_error do
+    case System.find_executable("unzip") do
+      nil ->
+        # Common locations to try as a last resort.
+        candidates = [
+          "C:/Program Files/Git/usr/bin/unzip.exe",
+          "C:/Program Files (x86)/Git/usr/bin/unzip.exe"
+        ]
+
+        Enum.find(candidates, &(File.regular?/1)) ||
+          raise "unzip not found on PATH or under Git's usr/bin; install unzip or add it to PATH"
+
+      path -> path
     end
   end
 
