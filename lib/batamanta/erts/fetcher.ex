@@ -388,11 +388,14 @@ defmodule Batamanta.ERTS.Fetcher do
     # the `:public_key` app is loaded but the code server has not
     # added its `ebin` directory to the search path, so
     # `:code.ensure_loaded/1` returns `{:error, :nofile}` even though
-    # the app is "already loaded". We work around that by explicitly
-    # adding the public_key lib dir to the code path before asking
-    # the code server to load the module.
-    public_key_ebin = Path.join(:code.lib_dir(:public_key), "ebin")
-    :code.add_path(to_charlist(public_key_ebin))
+    # the app is "already loaded". We work around that by computing
+    # the public_key ebin path from `:erlang.system_info(:root)`
+    # (the Erlang install root) and adding it to the code path
+    # explicitly. The version suffix of the lib dir is not
+    # significant for adding the path, since we just need the BEAMs
+    # to be discoverable.
+    ebin = public_key_ebin()
+    :code.add_path(to_charlist(ebin))
     :code.ensure_loaded(:public_key)
 
     cacerts = :public_key.cacerts_get()
@@ -715,8 +718,7 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp download_file(url, cache_path) do
-    public_key_ebin = Path.join(:code.lib_dir(:public_key), "ebin")
-    :code.add_path(to_charlist(public_key_ebin))
+    :code.add_path(to_charlist(public_key_ebin()))
     :code.ensure_loaded(:public_key)
 
     ssl_opts = [
@@ -859,6 +861,32 @@ defmodule Batamanta.ERTS.Fetcher do
     Enum.each([:http_util, :http_chunk, :http_request, :http_response], fn mod ->
       _ = :code.ensure_loaded(mod)
     end)
+  end
+
+  # Returns the path to public_key's ebin directory. In a normal Erlang
+  # VM (or `mix run` in alaja), `code:lib_dir(:public_key)` returns the lib
+  # dir directly. In the `Mix.Task` context that `mix batamanta` runs
+  # under, the code path is restricted and `code:lib_dir/1` returns
+  # `{:error, :bad_name}` even though the app is loaded. We fall back to
+  # deriving the path from `:erlang.system_info(:root) |> "lib/public_key-*"`.
+  defp public_key_ebin do
+    case :code.lib_dir(:public_key) do
+      dir when is_binary(dir) or is_list(dir) ->
+        Path.join(dir, "ebin")
+
+      {:error, _} ->
+        root = :erlang.system_info(:root) |> to_string()
+        lib = Path.join(root, "lib")
+        case File.ls(lib) do
+          {:ok, entries} ->
+            case Enum.find(entries, &String.starts_with?(&1, "public_key-")) do
+              nil -> raise "public_key not found under #{lib}"
+              name -> Path.join([lib, name, "ebin"])
+            end
+          _ ->
+            raise "could not list Erlang lib dir #{lib}"
+        end
+    end
   end
 
   defp log_info(msg) do
