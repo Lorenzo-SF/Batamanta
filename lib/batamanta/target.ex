@@ -411,8 +411,6 @@ defmodule Batamanta.Target do
     resolve_string_target(target_str)
   end
 
-  def resolve_auto(nil, config), do: resolve_auto(:auto, config)
-
   defp resolve_auto_mode(config) do
     if Map.get(config, :force_os) do
       build_target_from_overrides(config)
