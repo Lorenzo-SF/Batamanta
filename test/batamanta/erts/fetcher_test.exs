@@ -144,10 +144,12 @@ defmodule Batamanta.ERTS.FetcherTest do
       assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
 
-    test "Windows arm64 falls back to amd64 when no arm64 release" do
-      # Fetcher may succeed via fallback to windows-amd64 if windows-arm64
-      # release is missing — accept either success (with amd64 fallback) or
-      # graceful error. The test verifies the call doesn't crash.
+    test "unknown target atom falls back gracefully" do
+      # `:windows_arm64` is intentionally not a valid target (upstream
+      # Erlang/OTP does not publish arm64 Windows binaries - see
+      # `Target` moduledoc). Passing it through `Fetcher.fetch/2` should
+      # not crash; either the call resolves via the default target
+      # fallback or returns a graceful error.
       result = Fetcher.fetch("28.0", :windows_arm64)
       assert match?({:ok, _}, result) or match?({:error, _}, result)
     end
