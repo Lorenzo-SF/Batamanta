@@ -100,8 +100,7 @@ fn run_target(run_script: &std::path::Path) -> Result<ExitCode> {
 // `erts-X.Y.Z/lib/` and the project's own `releases/`.
 #[cfg(windows)]
 fn run_target(run_script: &std::path::Path) -> Result<ExitCode> {
-    let bash = std::env::var("BATAMANTA_BASH")
-        .unwrap_or_else(|_| "bash.exe".to_string());
+    let bash = locate_bash_exe()?;
 
     // Find a working `erl.exe` to inject into PATH. Prefer the env var so
     // the user can pin a specific install; otherwise scan %PROGRAMFILES%
@@ -143,6 +142,41 @@ fn run_target(run_script: &std::path::Path) -> Result<ExitCode> {
         .context("Failed to spawn bash for .run script")?;
     let code = status.code().unwrap_or(1) as u8;
     Ok(ExitCode::from(code))
+}
+
+// Locate bash.exe. We need it to source the .run script and to do the
+// POSIX-style PATH/BINDIR dance. In order:
+//   1. BATAMANTA_BASH env var (explicit override)
+//   2. Look on the current PATH (so scoop-installed git works)
+//   3. Walk the conventional Git for Windows install dirs
+#[cfg(windows)]
+fn locate_bash_exe() -> Result<String> {
+    if let Ok(p) = std::env::var("BATAMANTA_BASH") {
+        if std::path::Path::new(&p).exists() {
+            return Ok(p);
+        }
+    }
+
+    // The PATH of a launched process inherits what was set at build time
+    // (the Cargo run path) plus what `mix batamanta` added. But when the
+    // user double-clicks the .exe or runs it from a fresh shell, PATH
+    // may not have Git in it. Walk the standard install dirs.
+    let candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\usr\bin\bash.exe",
+    ];
+    for c in candidates {
+        if std::path::Path::new(c).exists() {
+            return Ok(c.to_string());
+        }
+    }
+
+    anyhow::bail!(
+        "Could not find bash.exe. Install Git for Windows (scoop install git) \
+         or set BATAMANTA_BASH to the full path of bash.exe."
+    )
 }
 
 // Walk a few conventional Erlang install locations and return the first that
