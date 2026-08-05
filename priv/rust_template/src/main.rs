@@ -137,6 +137,28 @@ fn run_target(run_script: &std::path::Path) -> Result<ExitCode> {
         cmd.arg(arg);
     }
 
+    // The .run script uses POSIX tools like `dirname`, `readlink`, `pwd -P`,
+    // and `which`. These live in `<Git>\usr\bin\` and `<Git>\mingw64\bin\`
+    // but are typically NOT on PATH when the user launches the .exe from
+    // a fresh terminal. Walk up from bash.exe to find Git's usr/bin dir
+    // and prepend it (and mingw64/bin) so the .run script can find its tools.
+    if let Some(tools_bin) = git_tools_bin(&bash) {
+        let current_path: std::ffi::OsString = cmd
+            .get_envs()
+            .find(|(k, _)| *k == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, v)| v.map(|s| s.to_os_string()))
+            .unwrap_or_default();
+        let new_path = match std::env::join_paths(
+            std::iter::once(tools_bin).chain(
+                std::env::split_paths(&current_path)
+            )
+        ) {
+            Ok(p) => p,
+            Err(_) => current_path,
+        };
+        cmd.env("PATH", &new_path);
+    }
+
     let status = cmd
         .status()
         .context("Failed to spawn bash for .run script")?;
@@ -177,6 +199,45 @@ fn locate_bash_exe() -> Result<String> {
         "Could not find bash.exe. Install Git for Windows (scoop install git) \
          or set BATAMANTA_BASH to the full path of bash.exe."
     )
+}
+
+// Given a path to bash.exe, walk up the directory tree to find the
+// companion `usr\bin` dir that ships with Git for Windows (where
+// `dirname`, `readlink`, `pwd` etc. live). The .run script we source
+// uses these tools; without them, the script silently fails with
+// "command not found" and the rest of the launch dies.
+//
+// Conventionally:
+//   C:\Program Files\Git\bin\bash.exe         -> C:\Program Files\Git\usr\bin
+//   C:\Program Files\Git\usr\bin\bash.exe    -> C:\Program Files\Git\usr\bin
+//   C:\Program Files\Git\mingw64\bin\bash.exe (rare) -> ...\mingw64\bin
+#[cfg(windows)]
+fn git_tools_bin(bash_path: &str) -> Option<std::path::PathBuf> {
+    let p = std::path::Path::new(bash_path);
+    let dir = p.parent()?;
+    let dir_str = dir.to_string_lossy();
+
+    // If bash is at .../Git/bin/bash.exe, tools are at .../Git/usr/bin
+    if dir_str.ends_with("Git\\bin") || dir_str.ends_with("Git/bin") {
+        let candidate = dir.parent()?.join("usr").join("bin");
+        if candidate.join("dirname.exe").exists() {
+            return Some(candidate);
+        }
+    }
+    // If bash is at .../Git/usr/bin/bash.exe, tools are right there
+    if dir_str.ends_with("Git\\usr\\bin") || dir_str.ends_with("Git/usr/bin") {
+        if dir.join("dirname.exe").exists() {
+            return Some(dir.to_path_buf());
+        }
+    }
+    // If bash is at .../Git/mingw64/bin/bash.exe, tools are at .../Git/usr/bin
+    if dir_str.ends_with("Git\\mingw64\\bin") || dir_str.ends_with("Git/mingw64/bin") {
+        let candidate = dir.parent()?.parent()?.join("usr").join("bin");
+        if candidate.join("dirname.exe").exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 // Walk a few conventional Erlang install locations and return the first that
