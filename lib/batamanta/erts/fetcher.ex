@@ -711,29 +711,33 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp download_file(url, cache_path) do
-    ensure_started([:inets, :ssl])
+    # We shell out to `curl` directly. The Erlang `:httpc` + `:ssl` +
+    # `:public_key` stack has proven brittle when invoked from inside a
+    # `Mix.Task` context on certain hosts (notably Erlang 29 on Windows
+    # where `:public_key` is not reachable from the code path). Falling
+    # back to a system `curl` sidesteps the entire in-VM TLS stack: the
+    # OS ships its own certificate store, the binary has its own retry
+    # and progress logic, and the failure modes are well-known. We
+    # require `curl` on the PATH (most systems have it; on Windows it
+    # ships with Git for Windows, which is already a build prereq).
+    case System.find_executable("curl") do
+      nil ->
+        {:error, "curl not found on PATH; required for ERTS download"}
 
-    ssl_opts = [
-      verify: :verify_none
-    ]
+      curl ->
+        case System.cmd(curl, [
+               "-fsSL",
+               "--connect-timeout", "30",
+               "--max-time", "300",
+               "-o", cache_path,
+               String.to_charlist(url)
+             ], stderr_to_stdout: true) do
+          {_out, 0} ->
+            :ok
 
-    case :httpc.request(:get, {String.to_charlist(url), []}, [timeout: 120_000, ssl: ssl_opts],
-           body_format: :binary
-         ) do
-      {:ok, {{_, 200, _}, _, body}} ->
-        save_file(body, cache_path)
-
-      {:ok, {{_, 404, _}, _}} ->
-        {:error, "File not found on server (404)"}
-
-      {:ok, {{_, status, _}, _}} ->
-        {:error, "HTTP error: #{status}"}
-
-      {:error, reason} when is_atom(reason) ->
-        {:error, "Network error: #{reason}"}
-
-      {:error, reason} ->
-        {:error, "Download error: #{inspect(reason)}"}
+          {_out, _code} ->
+            {:error, "curl exited with non-zero status for #{url}"}
+        end
     end
   end
 
