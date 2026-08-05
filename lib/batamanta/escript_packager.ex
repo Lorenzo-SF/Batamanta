@@ -321,36 +321,54 @@ defmodule Batamanta.EscriptPackager do
     File.chmod!(path, new_mode)
   end
 
+  # Creates the tarball at tar_path by walking source_dir and using
+  # `:erl_tar.create/2` with `{arcname, sourcepath}` tuples.
+  #
+  # Why `:erl_tar.create/2` instead of `System.cmd("tar", ...)`?
+  #
+  # The BSD tar shipped on Windows 10/11 (in `C:\Windows\System32\tar.exe`)
+  # crashes with an Access Violation (0xC0000005) when given GNU-tar-only
+  # flags like `--mtime=1970-01-01 00:00:00`. Even the minimal invocation
+  # `-C src -c -f out .` works, but adding any of the deterministic-build
+  # flags we use on Linux/macOS (--owner=0, --group=0, --mtime=...)
+  # triggers the crash. Switching to `:erl_tar.create/2` (which `packager.ex`
+  # already uses) sidesteps the entire issue: it's portable, doesn't depend
+  # on any external binary, and produces a deterministic-enough tar that the
+  # downstream Rust wrapper extracts correctly.
   defp create_tarball(source_dir, tar_path) do
-    tar_temp = String.replace_trailing(tar_path, ".tar", "_uncompressed.tar")
+    files = collect_for_tar(source_dir, source_dir)
 
-    {os_type, os_name} = :os.type()
-
-    tar_opts =
-      if os_type == :unix and os_name == :darwin do
-        ["-C", source_dir, "-c", "-f", tar_temp, "."]
-      else
-        [
-          "-C",
-          source_dir,
-          "-c",
-          "-f",
-          tar_temp,
-          "--owner=0",
-          "--group=0",
-          "--mtime=1970-01-01 00:00:00",
-          "."
-        ]
-      end
-
-    case System.cmd("tar", tar_opts) do
-      {_, 0} ->
-        File.rename(tar_temp, tar_path)
+    case :erl_tar.create(String.to_charlist(tar_path), files) do
+      :ok ->
         :ok
 
-      {error, _} ->
-        File.rm(tar_temp)
-        {:error, "tar creation failed: #{error}"}
+      {:error, reason} ->
+        {:error, "tar creation failed: #{inspect(reason)}"}
+    end
+  end
+
+  @spec collect_for_tar(Path.t(), Path.t()) :: [{charlist(), charlist()}]
+  defp collect_for_tar(root, dir) do
+    case File.ls(dir) do
+      {:ok, names} ->
+        Enum.flat_map(names, fn name ->
+          full = Path.join(dir, name)
+
+          case File.stat(full) do
+            {:ok, %{type: :regular}} ->
+              arcname = Path.relative_to(full, root)
+              [{String.to_charlist(arcname), String.to_charlist(full)}]
+
+            {:ok, %{type: :directory}} ->
+              collect_for_tar(root, full)
+
+            _ ->
+              []
+          end
+        end)
+
+      _ ->
+        []
     end
   end
 
