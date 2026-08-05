@@ -152,17 +152,11 @@ defmodule Batamanta.ERTS.Fetcher do
 
   defp check_erts_cache(otp_version, platform_key) do
     extract_dir = Path.join(get_cache_dir(), "erts-#{otp_version}-#{platform_key}")
-    legacy_dir = Path.join(get_cache_dir(), platform_key)
 
-    cond do
-      File.exists?(extract_dir) and erts_valid?(extract_dir, otp_version) ->
-        {:ok, extract_dir}
-
-      File.exists?(legacy_dir) and erts_valid?(legacy_dir, otp_version) ->
-        {:ok, legacy_dir}
-
-      true ->
-        :not_found
+    if File.exists?(extract_dir) and erts_valid?(extract_dir, otp_version) do
+      {:ok, extract_dir}
+    else
+      :not_found
     end
   end
 
@@ -376,40 +370,11 @@ defmodule Batamanta.ERTS.Fetcher do
   # ============================================================================
   # ============================================================================
 
+  # Decodes the upstream MANIFEST.json. Jason already produces the exact
+  # shape we need: `Map[String.t(), String.t() | Map[String.t(), String.t()]]`,
+  # so no further normalisation is required.
   defp parse_json(json_string) do
-    json_string
-    |> parse_json_object()
-    |> Enum.into(%{})
-  end
-
-  defp parse_json_object(json) do
-    json
-    |> String.trim()
-    |> String.replace("\n", "")
-    |> String.replace(" ", "")
-    |> extract_key_values()
-    |> Enum.filter(&match?({key, _} when is_binary(key) and byte_size(key) > 0, &1))
-  end
-
-  defp extract_key_values(json) do
-    regex = ~r/"([^"]+)"\s*:\s*("(?:[^"\\]|\\.)*"|\{[^}]*\})/
-
-    Regex.scan(regex, json)
-    |> Enum.map(fn [_full, key, value] ->
-      {key, parse_json_value(value)}
-    end)
-  end
-
-  defp parse_json_value("{" <> rest) do
-    ("{" <> rest)
-    |> String.trim_trailing("}")
-    |> extract_key_values()
-    |> Enum.into(%{})
-  end
-
-  defp parse_json_value(value) do
-    value
-    |> String.trim("\"")
+    Jason.decode!(json_string)
   end
 
   defp local_manifest_path do

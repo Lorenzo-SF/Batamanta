@@ -8,7 +8,7 @@ defmodule Batamanta.RustTemplate do
   - Linux: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
   - Linux musl: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
   - macOS: x86_64-apple-darwin, aarch64-apple-darwin
-  - Windows: x86_64-pc-windows-msvc (coming soon)
+  - Windows: x86_64-pc-windows-msvc
   """
 
   @doc """

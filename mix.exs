@@ -75,6 +75,7 @@ defmodule Batamanta.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18", only: :test, runtime: false},
+      {:jason, "~> 1.0"},
       {:xref_runner, "~> 1.2"}
     ]
   end

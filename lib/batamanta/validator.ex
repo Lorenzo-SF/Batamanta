@@ -14,11 +14,16 @@ defmodule Batamanta.Validator do
   - `:x86_64` - Intel/AMD 64-bit
   - `:aarch64` - ARM 64-bit (Apple Silicon, ARM servers)
 
-  - OTP 25+ (minimum supported)
-  - OTP 26, 27, 28+ (recommended)
+  - OTP 27+ (minimum supported by the upstream ERTS mirror,
+    i.e. Lorenzo-SF/Batamanta---ERTS-repository; the validator itself
+    currently permits OTP 25+ for back-compat with locally-installed
+    system ERTS - see @min_otp_version).
+  - OTP 27, 28, 29+ (recommended)
 
-  - Elixir 1.15+ (minimum supported)
-  - Elixir 1.16, 1.17, 1.18+ (recommended)
+  - Elixir 1.18+ (minimum supported, as pinned in mix.exs;
+    the validator currently permits 1.15+ - see
+    @min_elixir_version).
+  - Elixir 1.18, 1.19+ (recommended)
 
   - `:cli` - Command-line interface (all platforms)
   - `:tui` - Text user interface (Unix only)
