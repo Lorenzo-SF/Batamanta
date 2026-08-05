@@ -707,7 +707,8 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp download_file(url, cache_path) do
-    ensure_started([:inets, :ssl])
+    ensure_started([:inets, :ssl, :public_key])
+    :code.ensure_loaded(:public_key)
 
     ssl_opts = [
       verify: :verify_peer,
@@ -760,14 +761,50 @@ defmodule Batamanta.ERTS.Fetcher do
   # ============================================================================
 
   defp erts_valid?(extract_dir, otp_version) do
+    # There are three known upstream layouts, depending on the target:
+    #
+    #   1. Linux/Mac release-style:
+    #        bin/erlexec, releases/<vsn>/OTP_VERSION, releases/<vsn>/<boot>,
+    #        lib/<erts-*>, erts-<vsn>/bin
+    #   2. Windows release-style (re-packaged from erlang/otp prebuilt):
+    #        bin/erl.exe, releases/<vsn>/OTP_VERSION, erts-<vsn>/bin,
+    #        erts-<vsn>/lib
+    #   3. Windows raw-style (some older re-packaged zips):
+    #        erl.exe, erlc.exe, werl.exe, start.boot, start_clean.boot,
+    #        start_sasl.boot, no_dot_erlang.boot  (everything at the root)
+    #
+    # Layouts 1 and 2 are what the Fetcher was originally written for. Layout
+    # 3 is a third variant that some Erlang/OTP Windows prebuilt zips use —
+    # we accept it by checking for `erl.exe` + at least one `*.boot` file
+    # at the root.
     checks = [
+      # Linux/Mac release
       File.exists?(Path.join(extract_dir, "bin/erlexec")),
+      # Linux/Mac release (alt path)
       File.exists?(Path.join(extract_dir, "releases/#{otp_version}/OTP_VERSION")),
+      # Windows release-style
+      File.exists?(Path.join(extract_dir, "bin/erl.exe")),
+      # Windows release (alt path)
+      File.exists?(Path.join(extract_dir, "releases/#{otp_version}/erl.exe")),
       has_valid_release_dir?(extract_dir),
-      File.dir?(Path.join(extract_dir, "lib"))
+      # Any of the three layouts
+      File.dir?(Path.join(extract_dir, "lib")),
+      # Windows raw-style: erl.exe + a *.boot file at the root
+      raw_windows_erts?(extract_dir)
     ]
 
-    Enum.member?(checks, true) and Enum.count(checks, & &1) >= 2
+    Enum.count(checks, & &1) >= 2
+  end
+
+  defp raw_windows_erts?(extract_dir) do
+    erl = Path.join(extract_dir, "erl.exe")
+    boots =
+      case File.ls(extract_dir) do
+        {:ok, files} -> Enum.filter(files, &String.ends_with?(&1, ".boot"))
+        _ -> []
+      end
+
+    File.regular?(erl) and boots != []
   end
 
   defp has_valid_release_dir?(extract_dir) do
