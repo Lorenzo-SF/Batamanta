@@ -382,12 +382,19 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp download_manifest do
-    # `:public_key` is needed for `cacerts_get/0` and
-    # `pkix_verify_hostname_match_fun/1` below. Without it, the call site
-    # crashes with `(UndefinedFunctionError) function :public_key.cacerts_get/0
-    # is undefined (module :public_key is not available)`. `ensure_started/1`
-    # is idempotent — calling it again is a no-op.
-    ensure_started([:inets, :ssl, :public_key])
+    # `:public_key` provides `cacerts_get/0` and
+    # `pkix_verify_hostname_match_fun/1`, which we call below. On some
+    # hosts (notably Erlang/OTP 29 on Windows under `mix batamanta`)
+    # the `:public_key` BEAM is not loaded into the current process
+    # even though the app is started. We try three different load
+    # strategies to cover the cases we've seen: explicit
+    # `Application.load/1` (loads the .app file), then
+    # `Application.ensure_all_started/1` (starts the supervisor and
+    # its dependencies), then `:code.ensure_loaded/1` which actually
+    # pulls the BEAM into the code server.
+    Application.load(:public_key)
+    Application.ensure_all_started(:public_key)
+    :code.ensure_loaded(:public_key)
 
     ssl_opts = [
       verify: :verify_peer,
