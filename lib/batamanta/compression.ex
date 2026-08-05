@@ -148,7 +148,12 @@ defmodule Batamanta.Compression do
     end
   end
 
-  defp module_for(:zstd), do: Zstd
-  defp module_for(:gzip), do: Gzip
-  defp module_for(:none), do: None
+  @doc """
+  Returns the backend module for the given backend atom. Public
+  so smoke tests (and the mix task) can introspect the available?/0
+  predicate of a specific backend without going through resolve_format/1.
+  """
+  def module_for(:zstd), do: Zstd
+  def module_for(:gzip), do: Gzip
+  def module_for(:none), do: None
 end
