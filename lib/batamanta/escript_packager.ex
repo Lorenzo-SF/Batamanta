@@ -94,8 +94,8 @@ defmodule Batamanta.EscriptPackager do
         {:error, _} = error -> throw(error)
       end
 
-      case compress_zstd(tar_path, output_path, compression_level) do
-        :ok -> {:ok, output_path}
+      case Batamanta.Compression.compress(:zstd, tar_path, output_path, compression_level) do
+        {:ok, ^output_path} -> {:ok, output_path}
         {:error, _} = error -> throw(error)
       end
     after
@@ -354,14 +354,8 @@ defmodule Batamanta.EscriptPackager do
     end
   end
 
-  defp compress_zstd(tar_path, output_path, level) do
-    File.rm(output_path)
-
-    case System.cmd("zstd", ["-#{level}", "-f", "-o", output_path, tar_path]) do
-      {_, 0} -> :ok
-      {error, _} -> {:error, "zstd compression failed: #{error}"}
-    end
-  end
+  # Compression delegated to `Batamanta.Compression` — see the
+  # packager for the same comment explaining the abstraction.
 
   @doc """
   Returns the approximate size of a minimal ERTS package.

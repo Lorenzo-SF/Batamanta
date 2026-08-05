@@ -65,7 +65,7 @@ defmodule Batamanta.Packager do
 
       case :erl_tar.create(String.to_charlist(tar_path), files) do
         :ok ->
-          compress_with_zstd(tar_path, out_path, compression_level)
+          Batamanta.Compression.compress(:zstd, tar_path, out_path, compression_level)
 
         {:error, reason} ->
           {:error, "Tar creation failed: #{inspect(reason)}"}
@@ -493,37 +493,11 @@ defmodule Batamanta.Packager do
   # COMPRESSION
   # ============================================================================
 
-  @spec compress_with_zstd(Path.t(), Path.t(), integer()) ::
-          {:ok, Path.t()} | {:error, String.t()}
-  defp compress_with_zstd(tar, zst, level) do
-    ensure_zstd_available!()
-
-    case System.cmd("zstd", ["-z", "-f", "--rm", "-#{level}", tar, "-o", zst],
-           stderr_to_stdout: true
-         ) do
-      {_out, 0} ->
-        {:ok, zst}
-
-      {err, code} ->
-        {:error, "Zstd failed (exit code #{code}): #{err}"}
-    end
-  end
-
-  defp ensure_zstd_available! do
-    unless System.find_executable("zstd") do
-      raise """
-      zstd is required but not installed.
-
-      Install with:
-        sudo apt install zstd
-
-        brew install zstd
-
-        apk add zstd
-
-      """
-    end
-  end
+  # Compression is delegated to `Batamanta.Compression`; the
+  # packager now supports any backend the compression layer
+  # implements (zstd by default, gzip and none as fallbacks).
+  # See `Batamanta.Compression` for the magic-bytes detection
+  # that lets the Rust dispenser pick the right decompressor.
 
   @doc """
   Extracts the ERTS numeric version (e.g., `"14.2"`) from an ERTS work
