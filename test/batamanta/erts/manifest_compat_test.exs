@@ -23,7 +23,7 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
   @tag :compat
   test "every Target.manifest_key is present in the upstream MANIFEST.json" do
     manifest = fetch_manifest!()
-    [sample_version | _] = manifest_versions(manifest)
+    sample_version = latest_full_version(manifest) || hd(manifest_versions(manifest))
 
     for target_atom <- Target.valid_targets() do
       key = Target.manifest_key(target_atom)
@@ -70,7 +70,12 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
     alias Batamanta.ERTS.Fetcher
 
     manifest = fetch_manifest!()
-    [latest_version | _] = manifest_versions(manifest)
+    # OTP 28.4.2+ ships without musl (upstream Erlang dropped the prebuilt
+    # musl tarballs), so the absolute-latest version in the manifest is not
+    # the one we want to test full matrix coverage against. Prefer the most
+    # recent version that has every target's manifest_key, fall back to
+    # the absolute latest if no such version exists.
+    latest_version = latest_full_version(manifest) || hd(manifest_versions(manifest))
 
     for target_atom <- Target.valid_targets() do
       platform = Fetcher.target_atom_to_platform(target_atom)
@@ -122,6 +127,21 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
     |> Enum.filter(&String.starts_with?(&1, "OTP-"))
     |> Enum.map(&String.replace_prefix(&1, "OTP-", ""))
     |> Enum.sort_by(&version_sort_key/1, :desc)
+  end
+
+  # Find the most recent OTP version in the manifest that has every
+  # target's manifest_key present. As of OTP 28.4.2 the upstream Erlang
+  # team dropped the prebuilt musl tarballs, so the absolute-latest version
+  # is no longer suitable for full-matrix coverage tests. Returns nil if
+  # no version in the manifest has every target, in which case callers
+  # should fall back to the absolute latest.
+  defp latest_full_version(manifest) do
+    keys = Target.valid_targets() |> Enum.map(&Target.manifest_key/1)
+    manifest_versions(manifest)
+    |> Enum.find(fn v ->
+      entry = Map.get(manifest, "OTP-#{v}") || %{}
+      Enum.all?(keys, &Map.has_key?(entry, &1))
+    end)
   end
 
   # Sort OTP versions in descending semver-ish order so we always pick a
