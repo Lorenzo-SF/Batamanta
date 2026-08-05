@@ -111,7 +111,89 @@ that assumed a single `linux-glibc` key per `OTP-X.Y.Z` release).
   comment, because the explanation needs to surface in `mix docs`
   too.
 
-## Next Steps
+## Audit status (2026-08-05, post-2.0.0-dev work)
+
+### `mix test` results
+- **220/231 passed**, 7 excluded, **11 failed** in `mix test`
+  (the 7 excluded are the manifest compat test, gated by
+  `--include integration`).
+- The 11 failures are all in `test/batamanta/packager_test.exs`
+  with the same root cause: `RuntimeError: Cannot determine
+  ERTS version from .../erts_work` raised by
+  `Batamanta.Packager.get_erts_version/1` (line 517). The
+  test setup creates `et/releases/` as an empty directory and
+  `et/erts-28.0/bin/erlexec` as a 6-byte "binary" placeholder;
+  `Path.wildcard("erts_work/erts-*")` doesn't find the
+  placeholder, and the `extract_erts_version/1` fallback that
+  looks for a non-trivial entry in `releases/` returns `nil`
+  because `releases/` is empty.
+- **Verified pre-existing** by stashing the compression refactor
+  and running `mix test` at HEAD: same 11 failures, same
+  stacktrace. Not introduced by the 2.0.0-dev work.
+- Fix candidate (for a future session): the test setup should
+  create `et/releases/0.1.0/start_erl.data` or similar so that
+  `extract_erts_version/1` has something to find; alternatively
+  the wildcard should match the placeholder dir even when
+  `bin/erlexec` is 6 bytes.
+
+### `mix test` warnings
+- 1 warning, fixed in commit `7a90487`:
+  `test/smoke_test.exs:88` — `is_binary(key)` was redundant
+  because `Target.manifest_key/1` is spec'd as returning
+  `binary()`. Dropped the redundant half of the assertion.
+
+### Audit findings (no action needed this session)
+- `lib/mix/tasks/batamanta.ex` (962 lines, 36 functions):
+  well-structured, `validate_toolchain!/0` checks `cargo` and
+  `zstd` availability upfront, `run/1` dispatches to
+  umbrella vs single-app path, `execute_pipeline/8` dispatches
+  by `:format` (`:release` vs `:escript`). All `Mix.raise`
+  sites have clear error messages.
+- `lib/batamanta/banner.ex` (441 lines): cosmetic, no logic
+  changes needed.
+- `lib/batamanta/erts/libc_detector.ex` (278 lines): multi-strategy
+  libc detection (ldd, loader, /etc/os-release, /proc/self/maps),
+  no issues.
+- `lib/batamanta/env_cleaner.ex` (349 lines): asdf/mise/kerl
+  neutralisation, no issues.
+- `lib/batamanta/release/step.ex` (16 lines): trivial pass-through,
+  covered by `test/batamanta/release/step_test.exs`.
+- `lib/mix/tasks/batamanta.clean.ex`: cache wipe task, no issues.
+- `lib/mix/tasks/rust.test.ex`: `cargo test` wrapper, no issues.
+- Zero `TODO` / `FIXME` / `XXX` / `HACK` markers in the entire
+  `lib/` and `test/` trees.
+
+### File line counts (post-2.0.0-dev)
+
+| File | Lines |
+|------|-------|
+| `lib/batamanta.ex` | 52 |
+| `lib/batamanta/application.ex` | 13 |
+| `lib/batamanta/banner.ex` | 441 |
+| `lib/batamanta/compression.ex` | 159 (new) |
+| `lib/batamanta/compression/backend.ex` | 32 (new) |
+| `lib/batamanta/compression/gzip.ex` | 47 (new) |
+| `lib/batamanta/compression/none.ex` | 36 (new) |
+| `lib/batamanta/compression/zstd.ex` | 40 (new) |
+| `lib/batamanta/env_cleaner.ex` | 349 |
+| `lib/batamanta/ers/fetcher.ex` | 832 |
+| `lib/batamanta/ers/libc_detector.ex` | 278 |
+| `lib/batamanta/escript_builder.ex` | 137 |
+| `lib/batamanta/escript_packager.ex` | 452 |
+| `lib/batamanta/logger.ex` | 53 |
+| `lib/batamanta/packager.ex` | 537 |
+| `lib/batamanta/release/step.ex` | 16 |
+| `lib/batamanta/runner.ex` | 35 |
+| `lib/batamanta/run_script.ex` | 126 |
+| `lib/batamanta/rust_template.ex` | 133 |
+| `lib/batamanta/target.ex` | 514 |
+| `lib/batamanta/validator.ex` | 269 |
+| `lib/mix/tasks/batamanta.ex` | 962 |
+| `lib/mix/tasks/batamanta.clean.ex` | ~30 |
+| `lib/mix/tasks/rust.test.ex` | ~20 |
+| `test/smoke_test.exs` | 104 (replaces 21-line stub) |
+
+
 
 1. **Audit Fase 2** (post-Plan B cleanup of the ERTS repo):
    - `packager.ex` compression refactor (magic bytes + multi-backend)
