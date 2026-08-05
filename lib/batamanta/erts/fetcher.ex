@@ -395,13 +395,7 @@ defmodule Batamanta.ERTS.Fetcher do
     :code.add_path(to_charlist(public_key_ebin))
     :code.ensure_loaded(:public_key)
 
-    ssl_opts = [
-      verify: :verify_peer,
-      cacerts: :public_key.cacerts_get(),
-      customize_hostname_check: [
-        match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
-      ]
-    ]
+    cacerts = :public_key.cacerts_get()
 
     ssl_opts = [
       verify: :verify_peer,
