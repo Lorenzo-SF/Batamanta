@@ -866,25 +866,22 @@ defmodule Batamanta.ERTS.Fetcher do
   # Returns the path to public_key's ebin directory. In a normal Erlang
   # VM (or `mix run` in alaja), `code:lib_dir(:public_key)` returns the lib
   # dir directly. In the `Mix.Task` context that `mix batamanta` runs
-  # under, the code path is restricted and `code:lib_dir/1` returns
-  # `{:error, :bad_name}` even though the app is loaded. We fall back to
-  # deriving the path from `:erlang.system_info(:root) |> "lib/public_key-*"`.
+  # under (or with older ERTS versions), the code path is restricted and
+  # `code:lib_dir/1` returns `{:error, :bad_name}` even though the app
+  # is loaded. We fall back to `code:where_is_file/1` to find the path.
   defp public_key_ebin do
     case :code.lib_dir(:public_key) do
       dir when is_binary(dir) or is_list(dir) ->
         Path.join(dir, "ebin")
 
       {:error, _} ->
-        root = :erlang.system_info(:root) |> to_string()
-        lib = Path.join(root, "lib")
-        case File.ls(lib) do
-          {:ok, entries} ->
-            case Enum.find(entries, &String.starts_with?(&1, "public_key-")) do
-              nil -> raise "public_key not found under #{lib}"
-              name -> Path.join([lib, name, "ebin"])
-            end
+        # The :public_key.app file is in the lib dir; derive the ebin from it.
+        case :code.where_is_file("public_key.app") do
+          path when is_binary(path) ->
+            path |> Path.dirname() |> Path.join("ebin")
+
           _ ->
-            raise "could not list Erlang lib dir #{lib}"
+            raise "public_key not found in code path; cannot derive ebin"
         end
     end
   end
