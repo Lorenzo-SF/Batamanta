@@ -42,7 +42,7 @@ defmodule Batamanta do
   See `mix help batamanta` for all available options.
   """
 
-  @version "1.5.2"
+  @version "2.0.0-dev"
 
   @doc """
   Returns the current version of Batamanta.
