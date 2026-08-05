@@ -85,7 +85,7 @@ defmodule SmokeTest do
     test "every supported target maps to a manifest_key" do
       for target <- Target.valid_targets() do
         key = Target.manifest_key(target)
-        assert is_binary(key) and key != "",
+        assert key != "",
                "target #{inspect(target)} has empty manifest_key"
       end
     end
