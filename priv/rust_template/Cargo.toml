@@ -9,6 +9,10 @@ anyhow = "1.0"
 indicatif = "0.17"
 tar = "0.4.40"
 zstd = "0.13"
+
+# nix is Unix-only (its `unistd::execvp` has no Windows equivalent). On
+# Windows we shell out to bash + the .run script via std::process::Command.
+[target.'cfg(unix)'.dependencies]
 nix = "0.26"
 
 [profile.release]
