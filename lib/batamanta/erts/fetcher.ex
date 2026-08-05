@@ -730,7 +730,7 @@ defmodule Batamanta.ERTS.Fetcher do
                "--connect-timeout", "30",
                "--max-time", "300",
                "-o", cache_path,
-               String.to_charlist(url)
+               url
              ], stderr_to_stdout: true) do
           {_out, 0} ->
             :ok
