@@ -382,7 +382,12 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp download_manifest do
-    ensure_started([:inets, :ssl])
+    # `:public_key` is needed for `cacerts_get/0` and
+    # `pkix_verify_hostname_match_fun/1` below. Without it, the call site
+    # crashes with `(UndefinedFunctionError) function :public_key.cacerts_get/0
+    # is undefined (module :public_key is not available)`. `ensure_started/1`
+    # is idempotent — calling it again is a no-op.
+    ensure_started([:inets, :ssl, :public_key])
 
     ssl_opts = [
       verify: :verify_peer,
