@@ -56,6 +56,17 @@ defmodule Batamanta.RunScript do
     # GENERADO POR BATAMANTA — NO EDITAR
     set -e
 
+    # BATAMANTA_USER_ARGS (Windows only): the Rust wrapper serializes the
+    # user's CLI args into this env var (each arg single-quoted and joined
+    # with spaces) and we re-parse them via eval. This is the workaround
+    # for multi-word args being split somewhere in the
+    # `bash -c` -> `source` -> `exec` chain on Windows. POSIX path uses
+    # execvp directly and never sets this var, so the if block is a
+    # no-op and $@ keeps whatever the user passed on the command line.
+    if [ -n "$BATAMANTA_USER_ARGS" ]; then
+      eval "set -- $BATAMANTA_USER_ARGS"
+    fi
+
     # Windows Rust wrapper invokes us as:
     #   bash -c "<wrapper-script>" -- <user-arg-1> <user-arg-2> ...
     # The `--` ends up as $1 in this sourced context, shifting the user's
