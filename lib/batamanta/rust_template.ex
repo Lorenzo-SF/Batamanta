@@ -119,7 +119,18 @@ defmodule Batamanta.RustTemplate do
     compiled_bin =
       if String.contains?(target_triple, "windows"), do: base_bin <> ".exe", else: base_bin
 
-    if File.exists?(binary_name), do: File.rm!(binary_name)
+    # On Windows the output binary must end in `.exe` for PowerShell and
+    # cmd to recognise and execute it. Without the suffix, `.\alaja` from
+    # PowerShell silently fails (no output, empty $LASTEXITCODE) because
+    # the shell doesn't know it's an executable. POSIX stays extensionless.
+    output_name =
+      if String.contains?(target_triple, "windows") and not String.ends_with?(binary_name, ".exe") do
+        binary_name <> ".exe"
+      else
+        binary_name
+      end
+
+    if File.exists?(output_name), do: File.rm!(output_name)
 
     # Use Erlang's :file.copy/2 directly instead of Elixir's File.cp/2.
     # On Windows, File.cp/2 has a long-standing bug where it returns
@@ -128,13 +139,13 @@ defmodule Batamanta.RustTemplate do
     # created file that makes Elixir's post-copy stat() fail). Erlang's
     # :file.copy/2 returns `{:ok, bytes_copied}` and doesn't do that
     # extra stat, so it correctly reports success.
-    with {:ok, _bytes} <- :file.copy(String.to_charlist(compiled_bin), String.to_charlist(binary_name)),
-         :ok <- File.chmod(binary_name, 0o755) do
+    with {:ok, _bytes} <- :file.copy(String.to_charlist(compiled_bin), String.to_charlist(output_name)),
+         :ok <- File.chmod(output_name, 0o755) do
       :ok
     else
       {:error, reason} ->
         {:error,
-         "Error copying compiled binary (from #{compiled_bin} to #{binary_name}): #{inspect(reason)}"}
+         "Error copying compiled binary (from #{compiled_bin} to #{output_name}): #{inspect(reason)}"}
     end
   end
 end
