@@ -121,7 +121,14 @@ defmodule Batamanta.RustTemplate do
 
     if File.exists?(binary_name), do: File.rm!(binary_name)
 
-    with :ok <- File.cp(compiled_bin, binary_name),
+    # Use Erlang's :file.copy/2 directly instead of Elixir's File.cp/2.
+    # On Windows, File.cp/2 has a long-standing bug where it returns
+    # `{:error, :eacces}` even when the copy actually succeeded (Windows
+    # Defender / search indexer can hold a transient lock on the newly
+    # created file that makes Elixir's post-copy stat() fail). Erlang's
+    # :file.copy/2 returns `{:ok, bytes_copied}` and doesn't do that
+    # extra stat, so it correctly reports success.
+    with {:ok, _bytes} <- :file.copy(String.to_charlist(compiled_bin), String.to_charlist(binary_name)),
          :ok <- File.chmod(binary_name, 0o755) do
       :ok
     else

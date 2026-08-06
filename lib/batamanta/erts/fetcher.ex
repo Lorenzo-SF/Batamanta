@@ -741,28 +741,6 @@ defmodule Batamanta.ERTS.Fetcher do
     end
   end
 
-  defp save_file(body, cache_path) do
-    tmp_path = cache_path <> ".part"
-
-    case File.write(tmp_path, body) do
-      :ok ->
-        case File.rename(tmp_path, cache_path) do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            File.rm(tmp_path)
-            {:error, "Failed to save cache: #{reason}"}
-        end
-
-      {:error, reason} ->
-        {:error, "Failed to write temp file: #{reason}"}
-    end
-  end
-
-  # ============================================================================
-  # ============================================================================
-
   defp erts_valid?(extract_dir, otp_version) do
     # There are three known upstream layouts, depending on the target:
     #
@@ -859,24 +837,6 @@ defmodule Batamanta.ERTS.Fetcher do
   # `code:lib_dir/1` returns `{:error, :bad_name}` even though the app
   # is loaded. We fall back to deriving the path from the beam
   # location: we force-load the module, then use `code:which/1` to
-  # find the beam file, then its parent directory is the ebin.
-  defp public_key_ebin do
-    case :code.lib_dir(:public_key) do
-      dir when is_binary(dir) or is_list(dir) ->
-        Path.join(dir, "ebin")
-
-      {:error, _} ->
-        _ = :code.ensure_loaded(:public_key)
-        case :code.which(:public_key) do
-          beam when is_list(beam) ->
-            beam |> Path.dirname() |> Path.expand()
-
-          _ ->
-            raise "public_key not found in code path; cannot derive ebin"
-        end
-    end
-  end
-
   # Returns the absolute path to `unzip`, falling back to the
   # Git-for-Windows install dir on Windows. `Mix.Task` doesn't always
   # inherit the user's PATH (especially when invoked from a non-PATH
