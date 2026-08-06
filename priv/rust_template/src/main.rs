@@ -64,6 +64,36 @@ fn main() -> Result<ExitCode> {
     run_target(&run_script)
 }
 
+// Convert a Windows path to MSYS2/Git-Bash style so bash can find the
+// executable on PATH. The simple `replace('\\', "/")` is not enough:
+// bash on Windows uses `/c/Program Files/...` (or `/cygdrive/c/...` for
+// Cygwin) — passing `C:/Program Files/...` results in `which` returning
+// nothing because bash doesn't translate that form back to the
+// underlying Windows path.
+//
+// This converts:
+//   C:\foo\bar           -> /c/foo/bar
+//   C:\Program Files\..  -> /c/Program Files/..
+//   \\?\C:\foo           -> /c/foo  (extended-length prefix stripped)
+fn to_msys2_path(p: &str) -> String {
+    let s = p;
+    // Strip the Windows extended-length prefix \\?\ if present.
+    let s = s.strip_prefix(r"\\?\").unwrap_or(s);
+    // Convert drive letter "C:\" or "C:/" to "/c/".
+    let s = if let Some(rest) = s.strip_prefix(|c: char| c.is_ascii_alphabetic()) {
+        if let Some(after_colon) = rest.strip_prefix(':') {
+            // Drive-letter path: "C:\foo" or "C:/foo" -> "/c/foo"
+            let drive = s.chars().next().unwrap().to_ascii_lowercase();
+            format!("/{}{}", drive, after_colon.replace('\\', "/"))
+        } else {
+            s.to_string()
+        }
+    } else {
+        s.to_string()
+    };
+    s
+}
+
 // Replace this process with the .run script on Unix (execvp), or shell out
 // to bash + the .run script on Windows. The .run script handles PATH,
 // BINDIR, neutralization, and exec mode routing (cli/daemon/tui).
@@ -109,55 +139,83 @@ fn run_target(run_script: &std::path::Path) -> Result<ExitCode> {
     let system_erl_bin = locate_system_erl_bin()?;
 
     // Build a small bash wrapper that:
-    //   1. Prepends the system erl bin dir to PATH (so `erl`, `escript` resolve)
-    //   2. Sets BINDIR/ERL_ROOTDIR to the system erl
+    //   1. Builds PATH from scratch using POSIX `:` separators (mixing
+    //      Windows `;` separators breaks the bash PATH parser; on
+    //      Windows the Rust std::env::join_paths uses `;` which would
+    //      corrupt $PATH if it ends up inside the bash script)
+    //   2. Sets ERL_BINDIR/BINDIR/ERL_ROOTDIR to the system erl
     //   3. Neutralizes asdf/mise/kerl
-    //   4. `source`s the original .run script (which is POSIX shell), then
+    //   4. Sets BATAMANTA_RUN_SCRIPT so the .run script can find itself
+    //      (we `source` it, so $0 is "bash" and the classic readlink
+    //      trick can't recover the real path)
+    //   5. `source`s the original .run script (which is POSIX shell), then
     //      execs the escript with the args
     //
     // The .run script does `exec bin/<app> "$@"`. After sourcing, those
     // shell vars are in scope, so PATH and BINDIR point at the system erl
     // and the escript starts cleanly.
-    let erl_bin_posix = system_erl_bin.replace('\\', "/");
-    let script_posix = run_script.to_string_lossy().replace('\\', "/");
+    //
+    // ERL_BINDIR is the new env var the .run script reads. When
+    // ERL_BINDIR is set the .run script uses it as BINDIR instead of
+    // computing its own from the payload's erts-X.Y.Z/bin, which on
+    // Windows is the NSIS installer shim that crashes (0xC0000005)
+    // when invoked outside the installer.
+    //
+    // CRITICAL: paths passed to bash on Windows must use MSYS2's
+    // `/c/Program Files/...` form, NOT `C:/Program Files/...` (which
+    // looks the same but bash's command lookup doesn't translate it
+    // back to the Windows path — `which` returns nothing). The simple
+    // backslash→slash replace is NOT enough; we need to convert the
+    // drive letter too. to_msys2_path() does that.
+    let erl_bin_posix = to_msys2_path(&system_erl_bin);
+    let script_posix = to_msys2_path(&run_script.to_string_lossy());
     let mut script = String::new();
     script.push_str("set -e\n");
-    script.push_str(&format!("export PATH=\"{erl_bin_posix}:$PATH\"\n"));
+    script.push_str(&format!("export BATAMANTA_RUN_SCRIPT=\"{script_posix}\"\n"));
+
+    // Compose a clean POSIX PATH from the three dirs we actually need:
+    //   - system erl bin (so escript, erl, erlc resolve)
+    //   - Git usr/bin (so readlink, dirname, pwd resolve)
+    //   - Git mingw64/bin (so other tools resolve)
+    // We deliberately do NOT pass through $PATH from the parent: on
+    // Windows, $PATH is `;`-separated and would corrupt the bash PATH
+    // parser. The four dirs above cover everything the .run script and
+    // the spawned escript need.
+    let mut posix_path = format!("{erl_bin_posix}");
+    if let Some(tools_bin) = git_tools_bin(&bash) {
+        let tools_bin_posix = to_msys2_path(&tools_bin.to_string_lossy());
+        posix_path.push(':');
+        posix_path.push_str(&tools_bin_posix);
+    } else {
+        eprintln!("[batamanta] WARNING: could not find Git usr/bin for dirname/readlink/pwd; .run script may fail");
+    }
+    script.push_str(&format!("export PATH=\"{posix_path}\"\n"));
+    script.push_str(&format!("export ERL_BINDIR=\"{erl_bin_posix}\"\n"));
     script.push_str(&format!("export BINDIR=\"{erl_bin_posix}\"\n"));
     script.push_str(&format!("export ERL_ROOTDIR=\"{erl_bin_posix}/..\"\n"));
     script.push_str("export ERL_FLAGS=\"\" ERL_AFLAGS=\"\" ERL_ZFLAGS=\"\"\n");
-    // The .run script does `exec bin/<app> "$@"` — by overriding PATH above
-    // and leaving BINDIR set, that exec picks up our system erl. We don't
-    // need to translate the script at all, just source it.
+    // The .run script does `exec bin/<app> "$@"` — by setting ERL_BINDIR
+    // above, the .run script will use our system erl as BINDIR and won't
+    // prepend the payload's broken bin/ to PATH. We source the .run
+    // verbatim; no translation needed.
     script.push_str(&format!("source \"{script_posix}\"\n"));
 
     let mut cmd = std::process::Command::new(&bash);
-    cmd.arg("-c").arg(&script);
+    // IMPORTANT: with `bash -c "script" arg1 arg2 ...`, bash sets $0 to
+    // the first arg after the script and $@ to the REST. So if we just
+    // pass the user's args, the first one gets eaten into $0 (and our
+    // .run script falls into the "fallback to $0" branch). The fix is
+    // the canonical `--` separator: `bash -c "script" -- arg1 arg2 ...`
+    // sets $0 to `--` and $@ to (arg1, arg2, ...). The .run script
+    // then receives all user args via "$@".
+    cmd.arg("-c").arg(&script).arg("--");
     for arg in env::args_os().skip(1) {
         cmd.arg(arg);
     }
-
-    // The .run script uses POSIX tools like `dirname`, `readlink`, `pwd -P`,
-    // and `which`. These live in `<Git>\usr\bin\` and `<Git>\mingw64\bin\`
-    // but are typically NOT on PATH when the user launches the .exe from
-    // a fresh terminal. Walk up from bash.exe to find Git's usr/bin dir
-    // and prepend it (and mingw64/bin) so the .run script can find its tools.
-    if let Some(tools_bin) = git_tools_bin(&bash) {
-        let current_path: std::ffi::OsString = cmd
-            .get_envs()
-            .find(|(k, _)| *k == std::ffi::OsStr::new("PATH"))
-            .and_then(|(_, v)| v.map(|s| s.to_os_string()))
-            .unwrap_or_default();
-        let new_path = match std::env::join_paths(
-            std::iter::once(tools_bin).chain(
-                std::env::split_paths(&current_path)
-            )
-        ) {
-            Ok(p) => p,
-            Err(_) => current_path,
-        };
-        cmd.env("PATH", &new_path);
-    }
+    // No need to set PATH via cmd.env — the script sets it itself with
+    // the right (POSIX `:`) separator. Setting it from Rust would
+    // re-introduce the Windows `;` separator and break bash's PATH
+    // parser.
 
     let status = cmd
         .status()

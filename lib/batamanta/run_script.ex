@@ -56,12 +56,42 @@ defmodule Batamanta.RunScript do
     # GENERADO POR BATAMANTA — NO EDITAR
     set -e
 
-    SELF=$(readlink "$0" || true)
-    [ -z "$SELF" ] && SELF="$0"
+    # Windows Rust wrapper invokes us as:
+    #   bash -c "<wrapper-script>" -- <user-arg-1> <user-arg-2> ...
+    # The `--` ends up as $1 in this sourced context, shifting the user's
+    # real args by one (so alaja sees "--" as its first arg and reports
+    # "unknown command '--'"). Strip the `--` if present. This is a
+    # no-op on POSIX (where the .run script is exec'd directly and $1
+    # is the user's first arg).
+    [ "$1" = "--" ] && shift
+
+    # Determine our own path. Three sources, in order of preference:
+    #   1. BATAMANTA_RUN_SCRIPT — set by the Rust wrapper on Windows
+    #      (which `source`s this script, so $0 is "bash" and the
+    #      readlink trick below can't work)
+    #   2. The classic readlink trick: this works on POSIX when the
+    #      script is `exec`'d or invoked as a normal shell script
+    #   3. Fallback to $0 (might be "bash" if sourced, but the rest of
+    #      the script still does its best with whatever path it can get)
+    if [ -n "$BATAMANTA_RUN_SCRIPT" ]; then
+      SELF="$BATAMANTA_RUN_SCRIPT"
+    else
+      SELF=$(readlink "$0" 2>/dev/null || true)
+      [ -z "$SELF" ] && SELF="$0"
+    fi
     RELEASE_ROOT="$(CDPATH='' cd "$(dirname "$SELF")/.." && pwd -P)"
     ERTS_DIR="$RELEASE_ROOT/__ERTS_DIR__"
     ERTS_BIN="$ERTS_DIR/bin"
 
+    # ERL_BINDIR may be set externally (e.g. by the Windows Rust wrapper
+    # which auto-locates a working system Erlang). If so, honour it: the
+    # bundled `bin/erl.exe` in the payload is the NSIS installer shim and
+    # crashes (0xC0000005) when invoked outside the installer's context
+    # on Windows. On POSIX the bundled erl is real, so when ERL_BINDIR
+    # is NOT set we fall back to the payload's own bin/.
+    if [ -n "$ERL_BINDIR" ]; then
+      ERTS_BIN="$ERL_BINDIR"
+    fi
     export PATH="$ERTS_BIN:$PATH"
     export BINDIR="$ERTS_BIN"
     export RELEASE_ROOT

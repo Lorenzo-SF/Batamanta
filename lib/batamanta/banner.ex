@@ -45,18 +45,37 @@ defmodule Batamanta.Banner do
     protocol = detect_image_protocol()
 
     ctx =
-      if show_banner == false do
-        print_messages(messages)
+      cond do
+        show_banner == false ->
+          print_messages(messages)
 
-        %Context{
-          mode: :text_only,
-          messages: messages,
-          show_banner: false,
-          on_success_image: on_success_image,
-          on_error_image: on_error_image
-        }
-      else
-        display_banner_with_streaming(messages, protocol, on_success_image, on_error_image)
+          %Context{
+            mode: :text_only,
+            messages: messages,
+            show_banner: false,
+            on_success_image: on_success_image,
+            on_error_image: on_error_image
+          }
+
+        # On terminals without an image protocol (Windows PowerShell,
+        # cmd.exe, plain TTYs) the image can't render. Reserving the
+        # 24-row banner area would just leave a big blank space with
+        # the messages pushed to the right by the image width. Skip
+        # straight to text mode in that case so the user actually sees
+        # the banner messages, not whitespace.
+        protocol == :ascii ->
+          print_messages(messages)
+
+          %Context{
+            mode: :text_only,
+            messages: messages,
+            show_banner: true,
+            on_success_image: on_success_image,
+            on_error_image: on_error_image
+          }
+
+        true ->
+          display_banner_with_streaming(messages, protocol, on_success_image, on_error_image)
       end
 
     Process.put(:batamanta_banner_ctx, ctx)
