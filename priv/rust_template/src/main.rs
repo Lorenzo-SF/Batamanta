@@ -173,6 +173,28 @@ fn run_target(run_script: &std::path::Path) -> Result<ExitCode> {
     script.push_str("set -e\n");
     script.push_str(&format!("export BATAMANTA_RUN_SCRIPT=\"{script_posix}\"\n"));
 
+    // Serialize the user's CLI args into a single env var the .run script
+    // can re-parse via `eval "set -- $BATAMANTA_USER_ARGS"`. This is the
+    // workaround for multi-word args being mangled somewhere in the
+    // `bash -c "script" -- arg1 "arg with spaces" arg3` chain on Windows
+    // (the arg count seen by alaja doesn't match what the user typed).
+    // Each arg is single-quoted with internal `'` escaped as `'\''` so
+    // spaces, newlines, and other shell metacharacters survive the
+    // round-trip. POSIX path (cfg(unix)) uses execvp directly and never
+    // sets this var, so it's a no-op there.
+    let user_args_str: String = env::args_os()
+        .skip(1)
+        .map(|a| {
+            let s = a.to_string_lossy();
+            let escaped = s.replace('\'', "'\\''");
+            format!("'{escaped}'")
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    script.push_str(&format!(
+        "export BATAMANTA_USER_ARGS=\"{user_args_str}\"\n"
+    ));
+
     // Compose a clean POSIX PATH from the three dirs we actually need:
     //   - system erl bin (so escript, erl, erlc resolve)
     //   - Git usr/bin (so readlink, dirname, pwd resolve)
