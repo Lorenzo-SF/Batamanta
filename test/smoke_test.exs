@@ -71,20 +71,33 @@ defmodule SmokeTest do
   end
 
   describe "Target matrix" do
-    test "valid_targets/0 returns the documented six targets" do
+    test "valid_targets/0 returns the seven documented targets" do
       targets = Target.valid_targets()
       assert is_list(targets)
-      # 4 Linux + 1 darwin + 1 windows = 6
+      # 4 Linux + 2 darwin (arm64 published, x86_64 latent) + 1 windows = 7
+      assert length(targets) == 7
+      assert :ubuntu_22_04_x86_64 in targets
+      assert :alpine_3_19_x86_64 in targets
+      assert :macos_12_arm64 in targets
+      assert :macos_12_x86_64 in targets
+      assert :windows_x86_64 in targets
+    end
+
+    test "published_targets/0 returns the six targets shipped upstream" do
+      targets = Target.published_targets()
+      # 4 Linux + darwin-arm64 + windows = 6 (excludes latent macos_12_x86_64)
       assert length(targets) == 6
       assert :ubuntu_22_04_x86_64 in targets
       assert :alpine_3_19_x86_64 in targets
       assert :macos_12_arm64 in targets
       assert :windows_x86_64 in targets
+      refute :macos_12_x86_64 in targets
     end
 
     test "every supported target maps to a manifest_key" do
       for target <- Target.valid_targets() do
         key = Target.manifest_key(target)
+
         assert key != "",
                "target #{inspect(target)} has empty manifest_key"
       end

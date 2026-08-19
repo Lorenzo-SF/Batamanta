@@ -25,9 +25,10 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
     manifest = fetch_manifest!()
     sample_version = latest_full_version(manifest) || hd(manifest_versions(manifest))
 
-    for target_atom <- Target.valid_targets() do
+    for target_atom <- Target.published_targets() do
       key = Target.manifest_key(target_atom)
       entry = Map.get(manifest, "OTP-#{sample_version}") || %{}
+
       assert Map.has_key?(entry, key),
              "manifest_key #{inspect(key)} (for #{inspect(target_atom)}) is missing " <>
                "from the upstream MANIFEST.json under OTP-#{sample_version}. " <>
@@ -41,6 +42,7 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
   @tag :compat
   test "floor version (OTP-#{@floor_version}) is present in the upstream MANIFEST" do
     manifest = fetch_manifest!()
+
     assert Map.has_key?(manifest, "OTP-#{@floor_version}"),
            "Expected floor version OTP-#{@floor_version} to be in the upstream MANIFEST. " <>
              "If the mirror dropped support for #{@floor_version}, update the floor " <>
@@ -52,13 +54,14 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
   test "fetcher resolves a real URL for each target at the floor version" do
     alias Batamanta.ERTS.Fetcher
 
-    for target_atom <- Target.valid_targets() do
+    for target_atom <- Target.published_targets() do
       # build_platform_key/1 should never raise for any target in the matrix.
       platform = Fetcher.target_atom_to_platform(target_atom)
       key = Fetcher.build_platform_key(platform)
       assert is_binary(key), "#{inspect(target_atom)} produced nil key"
 
       url = Fetcher.find_erts_url(@floor_version, key, :explicit)
+
       assert is_binary(url),
              "No URL for #{target_atom} (key=#{key}) at OTP-#{@floor_version} in upstream MANIFEST"
     end
@@ -77,10 +80,11 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
     # the absolute latest if no such version exists.
     latest_version = latest_full_version(manifest) || hd(manifest_versions(manifest))
 
-    for target_atom <- Target.valid_targets() do
+    for target_atom <- Target.published_targets() do
       platform = Fetcher.target_atom_to_platform(target_atom)
       key = Fetcher.build_platform_key(platform)
       url = Fetcher.find_erts_url(latest_version, key, :explicit)
+
       assert is_binary(url),
              "No URL for #{target_atom} (key=#{key}) at OTP-#{latest_version} (latest) in upstream MANIFEST"
     end
@@ -136,7 +140,8 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
   # no version in the manifest has every target, in which case callers
   # should fall back to the absolute latest.
   defp latest_full_version(manifest) do
-    keys = Target.valid_targets() |> Enum.map(&Target.manifest_key/1)
+    keys = Target.published_targets() |> Enum.map(&Target.manifest_key/1)
+
     manifest_versions(manifest)
     |> Enum.find(fn v ->
       entry = Map.get(manifest, "OTP-#{v}") || %{}

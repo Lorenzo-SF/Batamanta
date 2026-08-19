@@ -275,6 +275,20 @@ defmodule Batamanta.Target do
   @spec valid_targets() :: list(atom())
   def valid_targets, do: Map.keys(@target_matrix)
 
+  # Targets kept in the matrix for future reactivation but with no
+  # upstream asset published in Lorenzo-SF/Batamanta---ERTS-repository.
+  # The Fetcher resolves them to the system-installed ERTS at runtime
+  # instead of downloading a tarball. See the moduledoc section
+  # "Targets whose upstream release is not currently published".
+  @latent_targets [:macos_12_x86_64]
+
+  @doc """
+  Lists the targets that the upstream mirror currently publishes
+  (excludes latent targets kept for future reactivation).
+  """
+  @spec published_targets() :: list(atom())
+  def published_targets, do: Map.keys(@target_matrix) -- @latent_targets
+
   @doc """
   Detects the host platform and returns the matching ERTS target.
 
