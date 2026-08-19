@@ -27,7 +27,7 @@ defmodule Batamanta.ERTS.FetcherIntegrationTest do
 
   @tag :integration
   test "fetch/2 with explicit target downloads ERTS" do
-    otp_version = "26.0"
+    otp_version = "27.0"
     result = Fetcher.fetch(otp_version, :ubuntu_22_04_x86_64)
 
     # Result depends on network availability and ERTS availability
