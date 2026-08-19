@@ -139,7 +139,8 @@ defmodule Batamanta.RustTemplate do
     # created file that makes Elixir's post-copy stat() fail). Erlang's
     # :file.copy/2 returns `{:ok, bytes_copied}` and doesn't do that
     # extra stat, so it correctly reports success.
-    with {:ok, _bytes} <- :file.copy(String.to_charlist(compiled_bin), String.to_charlist(output_name)),
+    with {:ok, _bytes} <-
+           :file.copy(String.to_charlist(compiled_bin), String.to_charlist(output_name)),
          :ok <- File.chmod(output_name, 0o755) do
       :ok
     else

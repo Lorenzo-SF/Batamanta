@@ -65,12 +65,13 @@ defmodule Batamanta.Compression do
   """
   @spec detect(Path.t()) :: {:ok, backend()} | {:error, String.t()}
   def detect(path) do
-    with {:ok, <<head::binary-size(4)>>} <- File.open(path, [:read, :binary], fn f ->
-           case :file.read(f, 4) do
-             {:ok, bin} -> {:ok, bin}
-             e -> e
-           end
-         end) do
+    with {:ok, <<head::binary-size(4)>>} <-
+           File.open(path, [:read, :binary], fn f ->
+             case :file.read(f, 4) do
+               {:ok, bin} -> {:ok, bin}
+               e -> e
+             end
+           end) do
       cond do
         binary_part(head, 0, 4) == magic_bytes(:zstd) -> {:ok, :zstd}
         binary_part(head, 0, 2) == magic_bytes(:gzip) -> {:ok, :gzip}
