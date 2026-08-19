@@ -144,6 +144,12 @@ defmodule Batamanta.RunScript do
     |> String.replace("__MODE__", fragments.exec_mode)
     |> String.replace("__FORMAT__", fragments.format)
     |> String.replace("__APP_NAME__", fragments.app_name)
+    # Normalize to LF. The source file may contain CRLF (e.g. after a
+    # Windows checkout), and heredoc sigils keep the \r. A CRLF shebang
+    # (`#!/bin/sh\r`) breaks execvp on POSIX with "No such file or
+    # directory" — the kernel looks for an interpreter literally named
+    # `/bin/sh\r`.
+    |> String.replace("\r\n", "\n")
   end
 
   @doc """
