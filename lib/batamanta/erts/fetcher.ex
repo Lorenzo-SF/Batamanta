@@ -225,6 +225,7 @@ defmodule Batamanta.ERTS.Fetcher do
   # path is enough.
   defp string_to_target_atom_safe(%{os: os, arch: arch, libc: libc}) do
     libc_str = libc && to_string(libc)
+
     libc_variants =
       case {os, libc_str} do
         {"windows", nil} -> [nil, "msvc"]
@@ -599,7 +600,9 @@ defmodule Batamanta.ERTS.Fetcher do
           # Erlang/OTP publishes Windows builds as zip files.
           # `unzip -q` is quiet; the zip layout puts files at the root
           # (or in a single versioned directory we handle below).
-          System.cmd(unzip_or_error(), ["-q", "-o", cache_path, "-d", extract_dir], stderr_to_stdout: true)
+          System.cmd(unzip_or_error(), ["-q", "-o", cache_path, "-d", extract_dir],
+            stderr_to_stdout: true
+          )
 
         _ ->
           # Everything else (Linux, macOS) is a tarball.
@@ -629,6 +632,7 @@ defmodule Batamanta.ERTS.Fetcher do
         # versioned subdirectory (e.g. "otp_src_28.4/"). If so, flatten it
         # so the cache dir always looks the same.
         flat_dir = flatten_single_subdir(extract_dir)
+
         if erts_valid?(flat_dir, otp_version) do
           {:ok, flat_dir}
         else
@@ -650,6 +654,7 @@ defmodule Batamanta.ERTS.Fetcher do
     case File.ls(dir) do
       {:ok, [single]} ->
         single_path = Path.join(dir, single)
+
         case File.stat(single_path) do
           {:ok, %File.Stat{type: :directory}} ->
             # Move everything up one level and remove the now-empty wrapper.
@@ -658,9 +663,11 @@ defmodule Batamanta.ERTS.Fetcher do
             File.rm_rf!(dir)
             File.rename!(tmp, dir)
             dir
+
           _ ->
             dir
         end
+
       _ ->
         dir
     end
@@ -725,13 +732,20 @@ defmodule Batamanta.ERTS.Fetcher do
         {:error, "curl not found on PATH; required for ERTS download"}
 
       curl ->
-        case System.cmd(curl, [
-               "-fsSL",
-               "--connect-timeout", "30",
-               "--max-time", "300",
-               "-o", cache_path,
-               url
-             ], stderr_to_stdout: true) do
+        case System.cmd(
+               curl,
+               [
+                 "-fsSL",
+                 "--connect-timeout",
+                 "30",
+                 "--max-time",
+                 "300",
+                 "-o",
+                 cache_path,
+                 url
+               ],
+               stderr_to_stdout: true
+             ) do
           {_out, 0} ->
             :ok
 
@@ -851,10 +865,11 @@ defmodule Batamanta.ERTS.Fetcher do
           "C:/Program Files (x86)/Git/usr/bin/unzip.exe"
         ]
 
-        Enum.find(candidates, &(File.regular?/1)) ||
+        Enum.find(candidates, &File.regular?/1) ||
           raise "unzip not found on PATH or under Git's usr/bin; install unzip or add it to PATH"
 
-      path -> path
+      path ->
+        path
     end
   end
 
