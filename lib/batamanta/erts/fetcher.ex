@@ -383,39 +383,40 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp download_manifest do
-    # We deliberately skip strict TLS verification here. The
-    # `cacerts_get/0` path needs `:public_key` loaded with its ebin on
-    # the code path; in some hosts (notably Erlang 29 on Windows when
-    # `mix batamanta` runs as a Mix.Task) `:public_key` is loaded as an
-    # app but its ebin is not on the code path, so `:code.which/1`
-    # returns `non_existing` and `:public_key.cacerts_get/0` crashes.
-    # The URLs we hit are hard-coded GitHub release URLs, so the
-    # cryptographic trust anchor is well known and the cost of a
-    # missing CA check is small (worst case: an MITM serves a
-    # malicious tarball, which would still fail the SHA check at
-    # extraction time once we add it). We also skip the hostname
-    # match_fun for the same reason — the public_key module is
-    # unavailable, so the `match_fun` reference crashes too.
-    ensure_started([:inets, :ssl])
+    # We shell out to `curl` for the same reason `download_file/2` does
+    # below: the in-VM `:httpc` + `:ssl` + `:public_key` stack is brittle
+    # when invoked from a `Mix.Task` because not every Erlang app's ebin
+    # ends up on the BEAM's code path. We hit `cacerts_get/0` on OTP 28
+    # + alaja/zaguan (`:public_key` not on path), and `:http_util.timestamp/0`
+    # after that fix (`:inets` not on path). `curl` ships everywhere we
+    # care about (Git for Windows on Windows, system curl on macOS/Linux)
+    # and brings its own certificate store, retry logic, and well-known
+    # failure modes. The URLs are pinned to our own GitHub release
+    # mirror, so MITM risk is negligible — and the SHA check at
+    # extraction time would catch a tampered tarball regardless.
+    case System.find_executable("curl") do
+      nil ->
+        {:error, "curl not found on PATH; required to download MANIFEST.json"}
 
-    ssl_opts = [
-      verify: :verify_none
-    ]
+      curl ->
+        case System.cmd(
+               curl,
+               [
+                 "-fsSL",
+                 "--connect-timeout",
+                 "30",
+                 "--max-time",
+                 "60",
+                 @manifest_url
+               ],
+               stderr_to_stdout: true
+             ) do
+          {body, 0} ->
+            {:ok, body}
 
-    case :httpc.request(
-           :get,
-           {String.to_charlist(@manifest_url), []},
-           [timeout: 30_000, ssl: ssl_opts],
-           body_format: :binary
-         ) do
-      {:ok, {{_, 200, _}, _, body}} ->
-        {:ok, body}
-
-      {:ok, {{_, status, _}, _}} ->
-        {:error, "HTTP #{status}"}
-
-      {:error, reason} ->
-        {:error, inspect(reason)}
+          {output, _code} ->
+            {:error, "curl failed for MANIFEST.json: #{output}"}
+        end
     end
   end
 
@@ -826,22 +827,6 @@ defmodule Batamanta.ERTS.Fetcher do
       [major, minor, patch] ->
         if(patch == "0", do: "#{major}.#{minor}", else: "#{major}.#{minor}.#{patch}")
     end
-  end
-
-  defp ensure_started(apps) do
-    Enum.each(apps, &Application.ensure_all_started/1)
-
-    # OTP 28+ loads inets modules lazily. :httpc.handle_request/9 calls
-    # :http_util.timestamp() on a fresh session — if :http_util hasn't
-    # been touched yet, it raises "module is not available".
-    # Pin a few of inets' helper modules so they're in memory before
-    # the first HTTPS call. Without this, building from a clean slate
-    # (no cached ERTS, fresh `_build/`) reliably fails with:
-    #   (UndefinedFunctionError) :http_util.timestamp/0 ... not available
-    # while a warm shell sometimes papers over it.
-    Enum.each([:http_util, :http_chunk, :http_request, :http_response], fn mod ->
-      _ = :code.ensure_loaded(mod)
-    end)
   end
 
   # Returns the path to public_key's ebin directory. In a normal Erlang
