@@ -20,7 +20,7 @@ defmodule Batamanta.Validator do
     system ERTS - see @min_otp_version).
   - OTP 27, 28, 29+ (recommended)
 
-  - Elixir 1.18+ (minimum supported, as pinned in mix.exs;
+  - Elixir 1.15+ (minimum supported, as pinned in mix.exs;
     the validator currently permits 1.15+ - see
     @min_elixir_version).
   - Elixir 1.18, 1.19+ (recommended)

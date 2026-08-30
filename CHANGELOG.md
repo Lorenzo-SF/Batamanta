@@ -5,20 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0-dev] - Unreleased
+## [2.0.0] - 2026-08-30
+
+### Added
+
+- **CI matrix split**: a new `resolve_otp_versions` job that reads the
+  upstream `Lorenzo-SF/Batamanta---ERTS-repository` `MANIFEST.json` and
+  publishes `otp_min` / `otp_max` for every other job. The
+  `workflow_dispatch` input now lets you override either bound, so
+  the matrix stays in sync with the mirror automatically. Two matrix
+  jobs follow:
+    - `smoke_matrix` — a 10-cell representative subset that runs on
+      every PR + push to main/develop. Covers linux-glibc-amd64
+      {release × cli/tui/daemon, escript × cli}, linux-musl-amd64
+      release × cli (docker alpine), linux-glibc-arm64 release × cli
+      (QEMU on ubuntu-latest), darwin-arm64 {release × cli, escript × cli}
+      and windows-amd64 {release × cli, escript × cli}. All cells use
+  `otp_max`.
+    - `nightly_full_matrix` — a 30-cell exhaustive matrix scheduled
+      every Sunday 02:00 UTC. Covers both `otp_min` and `otp_max`
+      for every target the Validator accepts (macos-amd64 commented
+      out, requires paid runner; windows-arm64 absent — no upstream
+      OTP prebuilds to mirror).
+- **Step body for the build cells** maps `(format, mode)` to an
+  existing `smoke_tests/` directory via the `Pick smoke_test
+  directory` step. Cells without a matching test (e.g. `tui` + `escript`,
+  which the validator doesn't accept on Windows) are filtered out with
+  a clean skip + step summary, so the matrix never runs a cell it
+  can't validate.
+- **Job-level `if: matrix.runs_on == 'ubuntu-latest'` gate on
+  `Install System Dependencies`** so `sudo apt-get` doesn't try to run
+  on `macos-latest` (`sudo: apt-get: command not found`) or
+  `windows-latest` (`sudo: command not found`).
+- **`Fetcher` test (`unknown_target_atom_falls_back`)**: clarified
+  that `:windows_arm64` was the old name for the test before that
+  target was dropped — now titled "unknown target atom falls back
+  gracefully".
 
 ### Changed
 
-- **`@version` bumped to `2.0.0-dev`**: `lib/batamanta.ex` had drifted
-  from `mix.exs` (`1.5.2` vs `2.0.0-dev`); both now read
-  `2.0.0-dev` consistently.
+- **`@version` bumped to `2.0.0`**: both `lib/batamanta.ex` and
+  `mix.exs` read the same version.
+- **Toolchain pin dropped from `OTP 27.2 / Elixir 1.18.2-otp-27`
+  to `OTP 26.2.5 / Elixir 1.15.8-otp-26`** in `.tool-versions` /
+  `mix.exs` (`@elixir_vsn "~> 1.15"`). This is what the project is
+  tested against on macOS and Cachy OS. The validator's minimum
+  versions stay more permissive (`OTP 25 / Elixir 1.14`) for
+  back-compat with locally-installed system ERTS.
 - **MANIFEST naming aligned with upstream**:
   `priv/erts_repository/MANIFEST.json` regenerated from
   `Lorenzo-SF/Batamanta---ERTS-repository` to use the new asset key
   names (`linux-glibc-amd64`, `linux-musl-amd64`, `darwin-arm64`,
   `windows-amd64`). The previous keys (`amd64-glibc`, `amd64-musl`,
   `arm64-glibc`, `arm64-musl`) are no longer published by the upstream
-  mirror - they pointed at assets that haven't existed on the release
+  mirror — they pointed at assets that haven't existed on the release
   page since the manifest rename.
 - **`manifest_compat_test.exs`**: added `latest_full_version/1` helper
   that picks the most recent OTP version in the manifest that has every
@@ -28,21 +68,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the "every `Target.manifest_key` is present" test and the "fetcher
   resolves a real URL for each target at the latest version" test now
   use the helper.
+- **`Fetcher.download_manifest/0`**: shells out to `curl` instead of
+  `:httpc`. The in-VM `:httpc + :ssl + :public_key` stack was brittle
+  under `Mix.Task` invocation (notably OTP 28, where `:ssl` calls
+  `:public_key.cacerts_get/0` even with `verify: :verify_none`).
+  `curl` is on PATH everywhere we care about (Homebrew, Git for
+  Windows, system installs), ships its own cert store + retry logic,
+  and the URLs we hit are pinned to our own GitHub release mirror —
+  the SHA check at extraction time would catch a tampered tarball.
+  See the long-form comment in `lib/batamanta/erts/fetcher.ex`
+  around `download_manifest/0` for the rationale.
+
+### Fixed
+
+- **Cross-OS ERTS download**: running `mix batamanta` from a consumer
+  (e.g. `alaja`, `zaguan`, or any project using batamanta as a
+  `path:` dep) on OTP 28+ macOS/Linux no longer crashes with
+  `UndefinedFunctionError: function :public_key.cacerts_get/0 is
+  undefined`. The curl-based `Fetcher.download_manifest/0` is the
+  single source of truth for the MANIFEST fetch.
+- **Manifest validation in the ERTS mirror CI**: the
+  `generate_manifest` step in
+  `Lorenzo-SF/Batamanta---ERTS-repository` now uses `jq` as the
+  primary validator and only falls back to `python3` when `jq` is
+  missing **and** the python shim actually runs (the previous code
+  treated `asdf`'s broken python3 shim — exit 126 when no
+  `.tool-versions` resolves python — as a JSON validation failure,
+  aborting every weekly regeneration with "JSON invalid" even though
+  the JSON was fine). Regeneration no longer aborts spuriously.
+- **Quality findings** caught by `mix credo --strict` on the
+  `feature/8-targets-and-arm64` PR, including CRLF line endings on
+  `banner.ex` / `run_script.ex`, nested-too-deep functions in
+  `compression.ex` / `fetcher.ex` / `escript_packager.ex`, a
+  `with`/cond refactor in `compression.ex`, and an
+  `Enum.map_join/3` micro-optimisation in the manifest compat test.
+
+### Removed
+
+- **`priv/erts_repository/MANIFEST.json`** (314-line stale local
+  fallback): the tier-3 fallback that pointed at the pre-jq-fix URL
+  shape (asset URLs with a doubled `Lorenzo-SF/Lorenzo-SF/` prefix
+  that the upstream mirror never published). With the upstream
+  MANIFEST regenerated cleanly and the on-disk cache
+  (`~/.cache/batamanta/MANIFEST.json`) covering the cold-cache case,
+  the local copy was dead weight. The dispatch code in
+  `Fetcher.load_manifest_from_source/0` now goes through the upstream
+  / cache tiers only.
 
 ### Documented
 
 - **`Target` moduledoc**: added a "Targets whose upstream release is
   not currently published" section noting that `:macos_12_x86_64`
-  resolves via the system-installed ERTS at runtime - no
+  resolves via the system-installed ERTS at runtime — no
   `darwin-amd64.tar.gz` releases are currently published by the
   upstream mirror (no Mac with an Intel CPU is available in the
   maintainer's fleet to keep the build pipeline running).
-- **`Fetcher` test (`windows_arm64`)**: renamed to "unknown target
-  atom falls back gracefully" and the comment updated to reflect that
-  `:windows_arm64` is not a valid target (it was the old name of the
-  test when `:windows_arm64` was still a target - the target was
-  dropped in `409e24d` because upstream Erlang/OTP does not publish
-  arm64 Windows binaries).
+- **`AGENTS.md`**: forward-looking references to Elixir `1.18` are
+  now `1.15` (lines 26, 83, 222); historical "Done" notes that quote
+  Elixir 1.18 behaviour (e.g. the `is_atom` warning removal) stay
+  as-is — they describe what was done in past commits.
+- **README.md** Compatibility Matrix updated to reflect that
+  OTP 28 / Elixir 1.18 are no longer the project's primary toolchain
+  (the matrix table was already correct as it lists Elixir 1.15
+  and above for every OTP row).
 
 ## [1.6.1] - 2026-07-03
 ### Added
@@ -99,26 +187,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`EscriptPackager.get_erts_version/1`**: Fixed Credo nesting
   warning.
 
-## [1.6.0] - 2026-07-02
 
-### Added
-- **CLI dispatch via `-eval` + `start_clean.boot`**: CLI mode (`execution_mode: :cli`) now boots the VM with `start_clean.boot` (minimal boot — no application supervision tree) instead of `start.boot` (full release boot). CLI args are dispatched via `-eval 'Elixir.Module.CLI':main([<<"...">>])` followed by `-s init stop`, so the binary runs the CLI command and exits cleanly without ever starting OTP applications. Daemon and TUI modes continue using `start.boot` (full supervision tree).
-- **`smoke_tests/test_escript_otp26`**: regression guard for escript builds targeting OTP 26 (OTP compatibility).
-- **`smoke_tests/test_release_nif`**: regression guard that exercises `include_erts: false` with explicit `:erlang.system_info/1` + `Supervisor.start_link/2` calls that fail if `kernel`/`supervisor` did not load. Wired into `smoke_tests.sh`.
-- **`derive_cli_module/1`**: derives the CLI module name from the app name at runtime (`:delfos` → `"Delfos.CLI"`, `:test_cli` → `"TestCli.CLI"`), following Alaja convention.
-- **ROOTDIR heuristic**: new logic checks if `<release>/lib/kernel-*` exists to determine whether ROOTDIR should point to the release root (standard layout) or the bundled ERTS directory (`include_erts: false` layout).
-
-### Fixed
-- **CLI args silently dropped (critical)**: the `args` vector (containing `-eval`, `-s init stop`, and user arguments) was built but **never passed to the `Command`** in CLI mode. The `Command` was constructed from scratch with individual `.arg()` calls, duplicating only the base erlexec args. Now uses `.args(&args)` — the complete vector is passed to the spawned process.
-- **CLI args as charlists instead of binaries**: `"version"` in Erlang syntax produces a charlist (`[118,101,114,...]`), which Elixir receives as `'version'` (charlist) instead of `"version"` (string). All CLI arg comparisons using `== "version"` evaluated to `false`, causing `'unknown command'` errors. Fixed by formatting args as Erlang binary syntax: `<<"version">>`.
-- **CLI mode used `start.boot` (full supervision tree)**: before this release, `exec_mode == :cli` still started the full OTP release (`start.boot`), starting the application supervisor tree, Ecto repos, and all children. The CLI command ran as a side effect after the full tree started, and `-s init stop` was ineffective because the supervision tree kept the VM alive. Daemon/TUI remain unaffected.
-- **`exec_mode` overridden by args presence**: `cli_mode = !user_args.is_empty()` in `run_with_erlexec` meant any binary launched without arguments entered daemon mode even when `execution_mode: :cli` was configured. An empty-args CLI binary (e.g. `delfos` with no subcommand) would boot the full supervision tree and hang forever. Now `exec_mode` is the sole determinant of boot strategy.
-- **`--erl-config` vs `-config` flag**: previous releases used the `-config` flag for erlexec, which is unsupported in newer OTP versions. Changed to `--erl-config` for compatibility.
-- **Release mode boot crash (`load_failed` on kernel/stdlib)**: when a release is built with `include_erts: false` (or when batamanta flattens the ERTS into `release/erts/`), the wrapper's `ROOTDIR` was set to the release root, but the boot script references `$ROOT/lib/kernel-*`, `$ROOT/lib/stdlib-*`, etc. Those modules live in the bundled ERTS, not in `release/lib/`. The VM crashed on boot with `{load_failed,[supervisor,kernel,...]}`. The wrapper now detects where `erlexec` actually lives and points `ROOTDIR` to the bundled ERTS directory when it is flattened. Two new Rust unit tests cover the `include_erts: true` and `include_erts: false` layouts.
-- **Umbrella release builds were silently broken**: `run_umbrella_release/7` ran `mix release` from the umbrella root (no `cd:`), so only the root's release (typically a no-op) was ever built. The sub-app releases were never assembled. The loop now iterates sub-apps and runs `mix release` with `cd: app_path` so each sub-app produces its own release.
-- **Umbrella `get_release_path/1` pointed at the wrong directory**: the function computed `<root>/_build/prod/rel/<app>` for every app, but in a sub-app the release lives in `<sub_app>/_build/prod/rel/<app>`. Now accepts an optional `app_path` argument; the umbrella caller passes the sub-app path while the standalone path is unchanged. Four new unit tests cover standalone, single-level umbrella, nested umbrella, and `app_path` precedence.
-- **`flatten_nested_erts` removed from `Packager.prepare_erts/1`**: the flattening step was accidentally removed in a previous refactor, causing `include_erts: false` releases to have a malformed ERTS layout (erlexec two levels deep). Restored the call to ensure erlexec and kernel are at the same level under ROOTDIR.
-- **`test_escript` missing `main_module`**: the `test_escript_otp26` smoke test project lacked the `escript: [main_module: ...]` configuration in its `mix.exs` and the corresponding `cli.ex` entry point. Added both.
 
 ### Changed
 - **`exec_mode` is the sole boot strategy selector**: Previously, the presence of CLI arguments could override `exec_mode`, causing daemon-configured apps to accidentally enter CLI mode (and vice versa). Now `exec_mode` is evaluated first and always respected.
