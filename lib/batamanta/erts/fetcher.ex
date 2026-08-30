@@ -234,12 +234,16 @@ defmodule Batamanta.ERTS.Fetcher do
 
     Enum.find_value(libc_variants, fn l ->
       Enum.find_value(Target.valid_targets(), fn atom ->
-        case Target.get_target_info(atom) do
-          %{os: ^os, arch: ^arch, libc: ^l} -> atom
-          _ -> nil
-        end
+        target_atom_for?(atom, os, arch, l)
       end)
     end)
+  end
+
+  defp target_atom_for?(atom, os, arch, libc) do
+    case Target.get_target_info(atom) do
+      %{os: ^os, arch: ^arch, libc: ^libc} -> atom
+      _ -> nil
+    end
   end
 
   defp target_atom_to_platform_impl(:ubuntu_22_04_x86_64),

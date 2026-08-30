@@ -154,7 +154,6 @@ defmodule Batamanta.ERTS.ManifestCompatTest do
   defp version_sort_key(v) do
     v
     |> String.split(".")
-    |> Enum.map(&String.pad_leading(&1, 4, "0"))
-    |> Enum.join(".")
+    |> Enum.map_join(".", &String.pad_leading(&1, 4, "0"))
   end
 end

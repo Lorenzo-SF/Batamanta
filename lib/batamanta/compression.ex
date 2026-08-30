@@ -65,20 +65,31 @@ defmodule Batamanta.Compression do
   """
   @spec detect(Path.t()) :: {:ok, backend()} | {:error, String.t()}
   def detect(path) do
-    with {:ok, <<head::binary-size(4)>>} <-
-           File.open(path, [:read, :binary], fn f ->
-             case :file.read(f, 4) do
-               {:ok, bin} -> {:ok, bin}
-               e -> e
-             end
-           end) do
-      cond do
-        binary_part(head, 0, 4) == magic_bytes(:zstd) -> {:ok, :zstd}
-        binary_part(head, 0, 2) == magic_bytes(:gzip) -> {:ok, :gzip}
-        true -> {:error, "unrecognised compression magic: #{inspect(head)}"}
-      end
-    else
-      {:error, reason} -> {:error, "cannot read #{path}: #{inspect(reason)}"}
+    case read_first_4_bytes(path) do
+      {:ok, head} when byte_size(head) == 4 ->
+        case magic_bytes_match(head) do
+          :zstd -> {:ok, :zstd}
+          :gzip -> {:ok, :gzip}
+          :none -> {:error, "unrecognised compression magic: #{inspect(head)}"}
+        end
+
+      {:error, reason} ->
+        {:error, "cannot read #{path}: #{inspect(reason)}"}
+    end
+  end
+
+  defp read_first_4_bytes(path) do
+    File.open(path, [:read, :binary], fn f ->
+      :file.read(f, 4)
+    end)
+  end
+
+  # Internal: detect which backend's magic-byte signature a 4-byte head matches.
+  defp magic_bytes_match(head) do
+    cond do
+      binary_part(head, 0, 4) == magic_bytes(:zstd) -> :zstd
+      binary_part(head, 0, 2) == magic_bytes(:gzip) -> :gzip
+      true -> :none
     end
   end
 
@@ -135,9 +146,10 @@ defmodule Batamanta.Compression do
   """
   @spec resolve_format(format()) :: {:ok, backend()} | {:error, String.t()}
   def resolve_format(backend) when backend in [:zstd, :gzip, :none] do
-    cond do
-      module_for(backend).available?() -> {:ok, backend}
-      true -> {:error, "requested backend #{inspect(backend)} is not installed"}
+    if module_for(backend).available?() do
+      {:ok, backend}
+    else
+      {:error, "requested backend #{inspect(backend)} is not installed"}
     end
   end
 

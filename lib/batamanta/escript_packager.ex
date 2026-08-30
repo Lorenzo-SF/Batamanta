@@ -351,25 +351,27 @@ defmodule Batamanta.EscriptPackager do
   defp collect_for_tar(root, dir) do
     case File.ls(dir) do
       {:ok, names} ->
-        Enum.flat_map(names, fn name ->
-          full = Path.join(dir, name)
-
-          case File.stat(full) do
-            {:ok, %{type: :regular}} ->
-              arcname = Path.relative_to(full, root)
-              [{String.to_charlist(arcname), String.to_charlist(full)}]
-
-            {:ok, %{type: :directory}} ->
-              collect_for_tar(root, full)
-
-            _ ->
-              []
-          end
-        end)
+        Enum.flat_map(names, fn name -> tar_entry(root, Path.join(dir, name)) end)
 
       _ ->
         []
     end
+  end
+
+  # tar_entry/2 — produce one tar entry for `full` (or recurse if it's a
+  # directory). Pulled out of collect_for_tar/2 so the body stays at credo's
+  # max nesting depth of 2.
+  defp tar_entry(root, full) do
+    case File.stat(full) do
+      {:ok, %{type: :regular}} -> regular_tar_entry(root, full)
+      {:ok, %{type: :directory}} -> collect_for_tar(root, full)
+      _ -> []
+    end
+  end
+
+  defp regular_tar_entry(root, full) do
+    arcname = Path.relative_to(full, root)
+    [{String.to_charlist(arcname), String.to_charlist(full)}]
   end
 
   # Compression delegated to `Batamanta.Compression` — see the
