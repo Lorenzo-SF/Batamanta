@@ -3,7 +3,7 @@ defmodule Batamanta.MixProject do
 
   @version "2.0.0-dev"
   @source_url "https://github.com/Lorenzo-SF/Batamanta"
-  @elixir_vsn "~> 1.18"
+  @elixir_vsn "~> 1.15"
 
   def project do
     [

@@ -23,8 +23,12 @@ that assumed a single `linux-glibc` key per `OTP-X.Y.Z` release).
   via system ERTS at runtime.
 - `lib/batamanta/target.ex` is the single source of truth for the
   target matrix; the Fetcher and packagers delegate to it.
-- Pin floor: Elixir 1.18 (`@elixir_vsn "~> 1.18"` in `mix.exs`).
-  OTP floor is 27.0 for **upstream-pulled** ERTS (see
+- Pin floor: Elixir 1.15 (`@elixir_vsn "~> 1.15"` in `mix.exs`).
+  OTP 26 for the **build** (matches `.tool-versions`); the **ERTS
+  floor** for *upstream-pulled* ERTS is 27.0 (see
+  `Lorenzo-SF/Batamanta---ERTS-repository`); the Fetcher itself is
+  more permissive because locally-installed system ERTS can still be
+  used as a fallback.
   `Lorenzo-SF/Batamanta---ERTS-repository`); the Fetcher itself is
   more permissive because locally-installed system ERTS can still be
   used as a fallback.
@@ -77,7 +81,7 @@ that assumed a single `linux-glibc` key per `OTP-X.Y.Z` release).
   `rust_template.ex` no longer says "Windows coming soon" (it ships
   since 1.6.1); `validator.ex` moduledoc now correctly aligns the
   OTP/Elixir version policy with the upstream floor (27+) and the
-  `mix.exs` pin (1.18+) while documenting that the validator
+  `mix.exs` pin (1.15+) while documenting that the validator
   constants remain more permissive for back-compat with local
   system ERTS.
 - **`Target` moduledoc**: added a "Targets whose upstream release
@@ -215,11 +219,12 @@ that assumed a single `linux-glibc` key per `OTP-X.Y.Z` release).
 
 ## Critical Context
 
-- The `mix.exs` `@elixir_vsn "~> 1.18"` is the source of truth.
+- The `mix.exs` `@elixir_vsn "~> 1.15"` is the source of truth.
   Anything that says "Elixir 1.15+ minimum" is the *runtime* floor
   (validator still permits older Elixir for system-ERTS fallback);
-  the build *requires* 1.18+ because of `Code.ensure_compiled/1`
-  shape changes in 1.17 that the dispatcher depends on.
+  the build uses **OTP 26** (pinned in `.tool-versions`) because
+  that's the toolchain the project is tested against on macOS and
+  Cachy OS.
 - `priv/erts_repository/MANIFEST.json` is the *fallback* (used when
   the upstream download fails and there's no cached copy). The
   primary source is `https://raw.githubusercontent.com/Lorenzo-SF/Batamanta---ERTS-repository/main/MANIFEST.json`

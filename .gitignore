@@ -96,3 +96,6 @@ test_escript-*
 # generate-context artefactos
 ../.code-intel/churn/
 ../.code-intel/static/
+
+# Generated binary from 'mix batamanta'
+batamanta-2.0.0-dev-x86_64-linux
