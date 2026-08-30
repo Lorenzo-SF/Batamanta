@@ -2,15 +2,18 @@
 
 ## Goal
 
-Ship `batamanta` 2.0.0-dev as the personal Elixir ecosystem's
+Ship `batamanta` 2.0.0 as the personal Elixir ecosystem's
 packaging primitive: self-contained release binaries that bundle a
 pinned ERTS from `Lorenzo-SF/Batamanta---ERTS-repository` with no
 Erlang/Elixir install required on the target machine. After the 1.6.x
 re-architecture (no-flatten ERTS + Rust dispenser + `.run` script),
-the focus is on **alignment with the renamed upstream manifest** and
-**cleaning up the legacy code paths that the rename exposed** (most
-notably the JSON parser in `Fetcher` and the cache directory layout
-that assumed a single `linux-glibc` key per `OTP-X.Y.Z` release).
+the 2.0.0 cycle focused on **cross-OS robustness** (replacing the
+brittle `:httpc` MANIFEST fetch with `curl`), **CI matrix
+modernisation** (representative PR subset + exhaustive nightly),
+**credo-cleanliness** (zero `--strict` findings), and **toolchain
+alignment** (the project is now built and tested on `OTP 26 / Elixir
+1.15`, matching the `mix.exs` `@elixir_vsn "~> 1.15"` floor and the
+verified macOS / Cachy OS pipeline).
 
 ## Constraints & Preferences
 
