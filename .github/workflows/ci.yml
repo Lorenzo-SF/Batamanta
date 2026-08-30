@@ -61,14 +61,16 @@ jobs:
           set -euo pipefail
           curl -fsSL https://raw.githubusercontent.com/Lorenzo-SF/Batamanta---ERTS-repository/main/MANIFEST.json -o /tmp/manifest.json
           # Strip "OTP-" prefix, natural-sort, pick first/last.
-          versions=$(jq -r 'keys[] | sub("^OTP-"; "")' /tmp/manifest.json | sort -V)
+          versions=$(jq -r "keys[] | sub(\"^OTP-\"; \"\")" /tmp/manifest.json | sort -V | awk '$0 >= 27')
           min=$(echo "$versions" | head -1)
           max=$(echo "$versions" | tail -1)
-          [[ -n "${OVERRIDE_MIN:-}" ]] && min="$OVERRIDE_MIN"
-          [[ -n "${OVERRIDE_MAX:-}" ]] && max="$OVERRIDE_MAX"
+          [[ -n "${OVERRIDE_MIN:-}" ]] && min="${OVERRIDE_MIN}"
+          [[ -n "${OVERRIDE_MAX:-}" ]] && max="${OVERRIDE_MAX}"
           echo "min=$min" >> "$GITHUB_OUTPUT"
+
           echo "max=$max" >> "$GITHUB_OUTPUT"
           echo "Resolved OTP versions: min=$min max=$max"
+
 
   # ===========================================================================
   # UNIT TESTS — fast feedback on PR (always runs)
