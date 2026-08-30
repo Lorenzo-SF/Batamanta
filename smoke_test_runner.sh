@@ -2,13 +2,17 @@
 #===============================================================================
 # Smoke Test Runner for CI
 # 
-# Usage: ./smoke_test_runner.sh <project_dir> <mode> <timeout_seconds>
+# Usage: ./smoke_test_runner.sh <project_dir> <mode> <timeout_seconds> [format]
 # 
 # Modes:
 #   cli     - Command-line interface application
 #   tui     - Terminal user interface application
 #   daemon  - Background service application
 #   escript - Standalone escript (no release, just escript.build)
+# 
+# Formats:
+#   release - Release build (default)
+#   escript - Escript build
 # 
 # Examples:
 #   ./smoke_test_runner.sh smoke_tests/test_cli cli 30
@@ -23,9 +27,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="${1:-}"
 MODE="${2:-cli}"
 TIMEOUT="${3:-30}"
+FORMAT="${4:-release}"
 
 if [[ -z "$PROJECT_DIR" ]]; then
-    echo "Usage: $0 <project_dir> <mode> <timeout_seconds>"
+    echo "Usage: $0 <project_dir> <mode> <timeout_seconds> [format]"
     exit 1
 fi
 
@@ -52,19 +57,32 @@ if [[ "$MODE" == "escript" ]]; then
         exit 1
     fi
 else
-    # Look for binary matching current platform
+    # Look for binary matching current platform (.run files)
+    # First try with mode suffix (e.g., test_*-cli-*.run)
     if [[ "$HOST_OS" == "linux" ]]; then
-        BINARY=$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*-linux" 2>/dev/null | head -1 || true)
+        BINARY=$(find . -maxdepth 1 -type f -executable -name "*-${MODE}-*-linux.run" 2>/dev/null | head -1 || true)
     elif [[ "$HOST_OS" == "darwin" ]]; then
         if [[ "$HOST_ARCH" == "aarch64" ]]; then
-            BINARY=$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*-macos" 2>/dev/null | grep "arm64\|aarch64" | head -1 || true)
+            BINARY=$(find . -maxdepth 1 -type f -executable -name "*-${MODE}-*-macos.run" 2>/dev/null | grep "arm64\|aarch64" | head -1 || true)
         else
-            BINARY=$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*-macos" 2>/dev/null | grep -v "arm64\|aarch64" | head -1 || true)
+            BINARY=$(find . -maxdepth 1 -type f -executable -name "*-${MODE}-*-macos.run" 2>/dev/null | grep -v "arm64\|aarch64" | head -1 || true)
         fi
     fi
 
-    # Fallback to any matching binary
-    BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable -name "test_${MODE}-*" 2>/dev/null | head -1 || true)}"
+    # Fallback to any .run file matching the format (release/escript)
+    if [[ "$FORMAT" == "release" ]]; then
+        BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable -name "*-linux.run" 2>/dev/null | head -1 || true)}"
+        BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable -name "*-macos.run" 2>/dev/null | head -1 || true)}"
+    elif [[ "$FORMAT" == "escript" ]]; then
+        # Escript mode has different naming; handled separately above
+        :
+    fi
+    
+    # If still not found, try without .run extension (legacy)
+    BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable -name "*-${MODE}-*" ! -name "*.run" 2>/dev/null | head -1 || true)}"
+    
+    # Last resort: any executable file
+    BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable ! -name "*.sh" ! -name "*.run" 2>/dev/null | head -1 || true)}"
 fi
 
 if [[ -z "$BINARY" ]]; then
