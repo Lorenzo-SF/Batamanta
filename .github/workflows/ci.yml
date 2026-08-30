@@ -265,6 +265,7 @@ jobs:
           targets: ${{ matrix.rust_target }}
 
       - name: Install System Dependencies
+        if: matrix.runs_on == 'ubuntu-latest'
         shell: bash
         run: |
           if [[ "${{ matrix.target }}" == linux-musl-* ]]; then
@@ -630,6 +631,7 @@ jobs:
           targets: ${{ matrix.rust_target }}
 
       - name: Install System Dependencies
+        if: matrix.runs_on == 'ubuntu-latest'
         shell: bash
         run: |
           if [[ "${{ matrix.target }}" == linux-musl-* ]]; then
