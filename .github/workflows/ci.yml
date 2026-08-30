@@ -269,13 +269,20 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.target }}" == linux-musl-* ]]; then
-            sudo apt-get update && sudo apt-get install -y zstd docker.io
+            # docker.io has conflicts with containerd.io on musl; skip it
+            sudo apt-get update && sudo apt-get install -y zstd || true
           else
             sudo apt-get update && sudo apt-get install -y zstd
           fi
 
       - name: Clean cached ERTS (avoid cached build bypassing new code)
-        run: rm -rf ~/.cache/batamanta
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            Remove-Item -Recurse -Force "$HOME/.cache/batamanta" -ErrorAction SilentlyContinue
+          else
+            rm -rf ~/.cache/batamanta
+          fi
 
       - name: Pick smoke_test directory
         id: pick
@@ -320,7 +327,7 @@ jobs:
         shell: bash
         run: |
           chmod +x smoke_test_runner.sh
-          ./smoke_test_runner.sh ${{ steps.pick.outputs.dir }} ${{ matrix.mode }} 60
+          ./smoke_test_runner.sh ${{ steps.pick.outputs.dir }} ${{ matrix.mode }} 60 ${{ matrix.format }}
 
       - name: Upload Binary Artifact
         if: steps.pick.outputs.skip != 'true'
@@ -635,13 +642,20 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.target }}" == linux-musl-* ]]; then
-            sudo apt-get update && sudo apt-get install -y zstd docker.io
+            # docker.io has conflicts with containerd.io on musl; skip it
+            sudo apt-get update && sudo apt-get install -y zstd || true
           else
             sudo apt-get update && sudo apt-get install -y zstd
           fi
 
       - name: Clean cached ERTS
-        run: rm -rf ~/.cache/batamanta
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            Remove-Item -Recurse -Force "$HOME/.cache/batamanta" -ErrorAction SilentlyContinue
+          else
+            rm -rf ~/.cache/batamanta
+          fi
 
       - name: Pick smoke_test directory
         id: pick
@@ -681,7 +695,7 @@ jobs:
         shell: bash
         run: |
           chmod +x smoke_test_runner.sh
-          ./smoke_test_runner.sh ${{ steps.pick.outputs.dir }} ${{ matrix.mode }} 60
+          ./smoke_test_runner.sh ${{ steps.pick.outputs.dir }} ${{ matrix.mode }} 60 ${{ matrix.format }}
 
       - name: Upload Binary Artifact
         if: steps.pick.outputs.skip != 'true'
