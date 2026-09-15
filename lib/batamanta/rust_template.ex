@@ -115,8 +115,9 @@ defmodule Batamanta.RustTemplate do
 
     daemon_env =
       if DaemonConfig.enabled?(daemon_config) do
-        daemon_config |> DaemonConfig.to_env_vars() ++
-          [{"BATAMANTA_DAEMON_BUILD_HASH", build_hash}]
+        daemon_config
+        |> DaemonConfig.to_env_vars()
+        |> Kernel.++([{"BATAMANTA_DAEMON_BUILD_HASH", build_hash}])
       else
         DaemonConfig.to_env_vars(daemon_config)
       end
