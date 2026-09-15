@@ -11,6 +11,9 @@ defmodule Batamanta.Packager do
   - **Boot File Preparation**: Ensures correct .boot file for target platform
   """
 
+  alias Batamanta.Daemon
+  alias Batamanta.DaemonConfig
+
   @doc """
   Packages the release and the ERTS into a single compressed tarball.
 
@@ -28,6 +31,11 @@ defmodule Batamanta.Packager do
     temp = Path.join(System.tmp_dir!(), "bat_pkg_#{:erlang.unique_integer([:positive])}")
     config = Mix.Project.config()
     app_name = config[:app] |> to_string()
+    bata_config = Keyword.get(config, :batamanta, [])
+    daemon_config =
+      Keyword.get(bata_config, :daemon)
+      |> DaemonConfig.from_config()
+      |> DaemonConfig.with_resolved_user_app()
 
     try do
       File.mkdir_p!(temp)
@@ -50,8 +58,17 @@ defmodule Batamanta.Packager do
       remove_mix_bundled_erts(rel_path, erts_work)
       update_start_erl_data(rel_path, erts_work)
 
+      # Compile the BEAM daemon sources into the release's lib/ tree when
+      # the feature is enabled at build time. The compiled .beam files
+      # end up in the payload; they are *not* auto-started by the release
+      # — the wrapper Rust loads them on demand via `batamanta_daemon_bootstrap`.
+      case Daemon.compile(rel_path, erts_work, daemon_config) do
+        :ok -> :ok
+        :skip -> :ok
+        {:error, reason} -> raise "Failed to compile BEAM daemon: #{reason}"
+      end
+
       # Generate <app>.run entry point script
-      bata_config = Keyword.get(config, :batamanta, [])
       exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
       run_script = Batamanta.RunScript.generate(app_name, exec_mode, :release, erts_version)
       run_script_path = Path.join([rel_path, "bin", "#{app_name}.run"])

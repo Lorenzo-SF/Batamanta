@@ -454,8 +454,14 @@ defmodule Mix.Tasks.Batamanta do
               ">> 📦 Packaging Escript for #{app_name} (Zstd level #{app_compression})..."
             )
 
+            app_daemon_config =
+              Keyword.get(app_bata_config, :daemon)
+              |> Batamanta.DaemonConfig.from_config()
+              |> Batamanta.DaemonConfig.with_resolved_user_app()
+
             case EscriptPackager.package(escript_path, erts_path, payload_path, app_compression,
-                   execution_mode: app_exec_mode
+                   execution_mode: app_exec_mode,
+                   daemon_config: app_daemon_config
                  ) do
               {:ok, _} ->
                 compile_wrapper(
@@ -721,9 +727,14 @@ defmodule Mix.Tasks.Batamanta do
 
     bata_config = Keyword.get(config, :batamanta, [])
     exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
+    daemon_config =
+      Keyword.get(bata_config, :daemon)
+      |> Batamanta.DaemonConfig.from_config()
+      |> Batamanta.DaemonConfig.with_resolved_user_app()
 
     case EscriptPackager.package(escript_path, erts_path, payload_path, compression,
-           execution_mode: exec_mode
+           execution_mode: exec_mode,
+           daemon_config: daemon_config
          ) do
       {:ok, _} ->
         compile_wrapper(

@@ -52,7 +52,7 @@ defmodule Batamanta.MixProject do
     [
       name: "batamanta",
       files: ~w(lib mix.exs README* LICENSE* CHANGELOG*
-                priv/assets priv/erts_repository priv/plts
+                priv/assets priv/erts_repository priv/plts priv/daemon
                 priv/rust_template/Cargo.* priv/rust_template/src
                 priv/rust_template/build.rs
                 assets/batamantaman.png),

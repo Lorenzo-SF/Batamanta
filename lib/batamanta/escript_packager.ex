@@ -33,6 +33,9 @@ defmodule Batamanta.EscriptPackager do
   - Reproducible builds with fixed ownership and timestamps
   """
 
+  alias Batamanta.Daemon
+  alias Batamanta.DaemonConfig
+
   @doc """
   Packages an escript with minimal ERTS into a compressed tarball.
 
@@ -51,6 +54,14 @@ defmodule Batamanta.EscriptPackager do
              compression_level <= 19 do
     temp_dir = create_temp_directory()
     app_name = Path.basename(escript_path, ".escript")
+    daemon_config =
+      case Keyword.fetch(opts, :daemon_config) do
+        {:ok, %DaemonConfig{} = cfg} -> DaemonConfig.with_resolved_user_app(cfg)
+        :error ->
+          Keyword.get(opts, :daemon)
+          |> DaemonConfig.from_config()
+          |> DaemonConfig.with_resolved_user_app()
+      end
 
     try do
       release_dir = Path.join([temp_dir, "release"])
@@ -71,6 +82,16 @@ defmodule Batamanta.EscriptPackager do
 
       minimal_erts_path = Path.join([release_dir, "erts-#{erts_version}"])
       prepare_minimal_erts(erts_path, minimal_erts_path)
+
+      # T-008-bis: compile the BEAM daemon sources into the payload's lib/
+      # tree when the daemon feature is enabled. The .beam files end up
+      # at release/lib/batamanta_daemon-0.1.0/ebin/. They're loaded on
+      # demand by the wrapper — never auto-started.
+      case Daemon.compile(release_dir, erts_path, daemon_config) do
+        :ok -> :ok
+        :skip -> :ok
+        {:error, reason} -> throw({:error, "daemon compile failed: #{reason}"})
+      end
 
       # Copy boot files to release/bin/ so erlexec (which uses
       # $ROOTDIR/bin/ for boot file resolution via ERL_ROOTDIR)
