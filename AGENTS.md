@@ -48,6 +48,19 @@ verified macOS / Cachy OS pipeline).
 
 ### Done
 
+- **BEAM daemon mode (the `daemon:` config block — implemented this
+  session from the spec at
+  `attachments/faf7f99e756c9e7b/batamanta-daemon-mode-spec.md`)**:
+  opt-in persistent BEAM kept alive across wrapper invocations.
+  Configured via `batamanta: [daemon: [enabled: true, var: "...",
+  default_ms: N, user_app: :my_app, request_timeout_ms: M]]` in the
+  consumer's `mix.exs`. Per-binary socket at
+  `$XDG_RUNTIME_DIR/batamanta/<app>-<version>-<target>.sock`;
+  build-hash check via SHA-256 of the payload detects stale daemons.
+  See `lib/batamanta/daemon*.ex` (Elixir side),
+  `priv/daemon/src/*.erl` (Erlang daemon), and
+  `priv/rust_template/src/main.rs` (Rust client). Smoke test:
+  `smoke_tests/test_beam_daemon_runner.sh`.
 - **1.6.x series (re-architecture)**: no-flatten ERTS, Rust dispenser
   reduced to ~100 lines, `.run` script generated at build time,
   `Mix.Tasks.Batamanta` passes `execution_mode` to the packagers.

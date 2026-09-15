@@ -8,8 +8,11 @@ defmodule Batamanta.RustTemplate do
   - Linux: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
   - Linux musl: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
   - macOS: x86_64-apple-darwin, aarch64-apple-darwin
-  - Windows: x86_64-pc-windows-msvc
+  - Windows: x86_64-pc-windows-msvc (coming soon)
   """
+
+  alias Batamanta.Daemon
+  alias Batamanta.DaemonConfig
 
   @doc """
   Initializes a temporary directory with the Rust dispenser template.
@@ -84,17 +87,41 @@ defmodule Batamanta.RustTemplate do
     mode_str = Atom.to_string(Keyword.get(bata_config, :execution_mode, :cli))
     app_name_str = to_string(Keyword.get(config, :app, "app"))
     format_str = Atom.to_string(format)
+    app_version_str = to_string(Keyword.get(config, :version, "0.0.0"))
+    target_str = Atom.to_string(target_triple)
+
+    daemon_config =
+      Keyword.get(bata_config, :daemon)
+      |> DaemonConfig.from_config()
+      |> DaemonConfig.with_resolved_user_app()
 
     current_env = System.get_env() |> Enum.map(fn {k, v} -> {k, v} end)
 
-    additional_env = [
+    base_env = [
       {"BATAMANTA_EXEC_MODE", mode_str},
       {"BATAMANTA_APP_NAME", app_name_str},
+      {"BATAMANTA_APP_VERSION", app_version_str},
+      {"BATAMANTA_TARGET", target_str},
       {"BATAMANTA_FORMAT", format_str},
       {"CARGO_TARGET_DIR", cargo_target_dir}
     ]
 
-    env = current_env ++ additional_env
+    # Compute the build hash from the payload that's about to be embedded
+    # in the binary. The wrapper will pass this hash to the daemon on
+    # every request; if the daemon's baked hash differs (deploy happened),
+    # the daemon self-shuts so the next client spawns a fresh one.
+    payload_dest = Path.join([build_dir, "src", "payload.tar.zst"])
+    build_hash = Daemon.build_hash_for(payload_dest)
+
+    daemon_env =
+      if DaemonConfig.enabled?(daemon_config) do
+        daemon_config |> DaemonConfig.to_env_vars() ++
+          [{"BATAMANTA_DAEMON_BUILD_HASH", build_hash}]
+      else
+        DaemonConfig.to_env_vars(daemon_config)
+      end
+
+    env = current_env ++ base_env ++ daemon_env
 
     case System.cmd(cmd, ["build", "--release", "--target", target_triple],
            cd: build_dir,
@@ -119,34 +146,15 @@ defmodule Batamanta.RustTemplate do
     compiled_bin =
       if String.contains?(target_triple, "windows"), do: base_bin <> ".exe", else: base_bin
 
-    # On Windows the output binary must end in `.exe` for PowerShell and
-    # cmd to recognise and execute it. Without the suffix, `.\alaja` from
-    # PowerShell silently fails (no output, empty $LASTEXITCODE) because
-    # the shell doesn't know it's an executable. POSIX stays extensionless.
-    output_name =
-      if String.contains?(target_triple, "windows") and not String.ends_with?(binary_name, ".exe") do
-        binary_name <> ".exe"
-      else
-        binary_name
-      end
+    if File.exists?(binary_name), do: File.rm!(binary_name)
 
-    if File.exists?(output_name), do: File.rm!(output_name)
-
-    # Use Erlang's :file.copy/2 directly instead of Elixir's File.cp/2.
-    # On Windows, File.cp/2 has a long-standing bug where it returns
-    # `{:error, :eacces}` even when the copy actually succeeded (Windows
-    # Defender / search indexer can hold a transient lock on the newly
-    # created file that makes Elixir's post-copy stat() fail). Erlang's
-    # :file.copy/2 returns `{:ok, bytes_copied}` and doesn't do that
-    # extra stat, so it correctly reports success.
-    with {:ok, _bytes} <-
-           :file.copy(String.to_charlist(compiled_bin), String.to_charlist(output_name)),
-         :ok <- File.chmod(output_name, 0o755) do
+    with :ok <- File.cp(compiled_bin, binary_name),
+         :ok <- File.chmod(binary_name, 0o755) do
       :ok
     else
       {:error, reason} ->
         {:error,
-         "Error copying compiled binary (from #{compiled_bin} to #{output_name}): #{inspect(reason)}"}
+         "Error copying compiled binary (from #{compiled_bin} to #{binary_name}): #{inspect(reason)}"}
     end
   end
 end
