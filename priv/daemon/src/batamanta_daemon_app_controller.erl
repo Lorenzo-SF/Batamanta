@@ -59,6 +59,11 @@ start_worker(Req, UserApp, Table) ->
         process_flag(trap_exit, true),
         OldGL = group_leader(),
         group_leader(StdoutServer, self()),
+        %% Apply the caller's cwd if provided (per spec §"Componentes
+        %% a implementar" — the wrapper passes the cwd of the user's
+        %% shell, not the daemon's cwd, so file paths in the user app
+        %% resolve the same as in a legacy invocation).
+        apply_cwd(maps:get(cwd, Req, undefined)),
         Result = run_user_main(Req, UserApp, StderrServer),
         group_leader(OldGL, self()),
         Parent ! {self(), Result}
@@ -230,6 +235,34 @@ is_alpha(C) when C >= $a, C =< $z -> true;
 is_alpha(_) -> false.
 
 %% ============================================================================
+%% cwd handling (per spec §"Componentes a implementar" — the wrapper
+%% passes the caller's cwd and the daemon honours it so file paths in
+%% the user app resolve the same as in a legacy invocation).
+%% ============================================================================
+
+apply_cwd(undefined) -> ok;
+apply_cwd(<<"">>)     -> ok;
+apply_cwd(Cwd) when is_binary(Cwd) ->
+    Path = binary_to_list(Cwd),
+    case file:read_file_info(Path) of
+        {ok, _} ->
+            try
+                file:set_cwd(Path),
+                ok
+            catch
+                _:_ -> ok
+            end;
+        {error, _} ->
+            %% Path doesn't exist or isn't accessible. Leave the daemon's
+            %% cwd in place rather than failing the request — a relative
+            %% file path that resolves to the user's cwd is a common CLI
+            %% pattern, and the user may have set cwd for a future call
+            %% to a path that's temporarily gone.
+            ok
+    end;
+apply_cwd(_) -> ok.
+
+%% ============================================================================
 %% Output capture via custom group_leader / io_server
 %%
 %% This implements the Erlang `io` protocol in pure Erlang, writing every
@@ -237,6 +270,9 @@ is_alpha(_) -> false.
 %% stderr share the same table; the row key encodes which stream it came
 %% from so we can split them at read time.
 %% ============================================================================
+
+%% ============================================================================
+%% Output capture via custom group_leader / io_server
 
 -define(ROW_STDOUT, 1).
 -define(ROW_STDERR, 2).

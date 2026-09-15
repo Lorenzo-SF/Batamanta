@@ -211,6 +211,17 @@ fn dispatch_over_socket(mut sock: UnixStream, args: &[String]) -> Result<Dispatc
     let resp: serde_json::Value = serde_json::from_slice(&resp_bytes)
         .context("decode response JSON")?;
 
+    // Protocol-level error from the daemon (e.g. hash_mismatch, no_cli_main
+    // when user_app is unset, ...). Surface the reason so the caller can
+    // decide whether to retry (hash_mismatch → cold start) or fall back.
+    if let Some(false) = resp.get("ok").and_then(|v| v.as_bool()) {
+        let reason = resp
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        return Err(anyhow::anyhow!("daemon rejected request: {}", reason));
+    }
+
     let exit_code = resp
         .get("exit_code")
         .and_then(|v| v.as_i64())
@@ -406,20 +417,55 @@ fn dispatch_via_daemon(args: &[String]) -> Result<i32> {
     let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/payload.tar.zst"));
     extract_payload_if_needed(&extract_dir, bytes)?;
 
-    // Try warm path: socket + live PID.
-    let live = sock_path.exists() && daemon_is_alive(&pid_path);
+    // Try warm path: socket + live PID. Loop at most twice: once for
+    // the happy case, once if the first connect succeeds but the daemon
+    // reports a hash mismatch (in which case it shuts itself down and
+    // we need to cold-start a fresh one with our current hash).
+    for attempt in 0..2 {
+        let live = sock_path.exists() && daemon_is_alive(&pid_path);
+        if !live {
+            // Cold start (or re-start after the previous daemon quit).
+            bootstrap_daemon(&extract_dir)?;
+        }
 
-    if !live {
-        // Cold start: bootstrap a fresh daemon.
-        bootstrap_daemon(&extract_dir)?;
+        let sock = match try_connect(&sock_path, DAEMON_CONNECT_TIMEOUT) {
+            Ok(s) => s,
+            Err(e) => {
+                if attempt == 0 {
+                    // Could be a stale sock file from a killed BEAM —
+                    // fall through to bootstrap which clears it.
+                    continue;
+                }
+                return Err(e.context(format!(
+                    "connecting to daemon at {}",
+                    sock_path.display()
+                )));
+            }
+        };
+
+        match dispatch_over_socket(sock, args) {
+            Ok(result) => return Ok(result.exit_code),
+            Err(e) => {
+                let msg = format!("{:#}", e);
+                if attempt == 0 && msg.contains("hash_mismatch") {
+                    eprintln!(
+                        "batamanta: daemon is stale (hash mismatch); respawning"
+                    );
+                    // Give the dying daemon a moment to release the
+                    // socket; otherwise bootstrap's pre-clean of the
+                    // sock file races with the dying process.
+                    std::thread::sleep(Duration::from_millis(100));
+                    let _ = fs::remove_file(&sock_path);
+                    let _ = fs::remove_file(&pid_path);
+                    continue;
+                }
+                return Err(e);
+            }
+        }
     }
 
-    // Now connect (or re-connect) and dispatch.
-    let sock = try_connect(&sock_path, DAEMON_CONNECT_TIMEOUT)
-        .with_context(|| format!("connecting to daemon at {}", sock_path.display()))?;
-
-    let result = dispatch_over_socket(sock, args)?;
-    Ok(result.exit_code)
+    // Loop ran out (shouldn't happen, but the compiler needs an exit).
+    Err(anyhow::anyhow!("daemon dispatch gave up after 2 attempts"))
 }
 
 // ============================================================================
