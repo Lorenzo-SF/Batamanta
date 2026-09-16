@@ -325,7 +325,7 @@ defmodule Batamanta.Packager do
   # ============================================================================
 
   defp remove_mix_bundled_erts(rel_path, erts_work) do
-    erts_version = extract_erts_version(erts_work)
+    erts_version = detect_erts_version(erts_work)
 
     if erts_version do
       mix_erts_path = Path.join(rel_path, "erts-#{erts_version}")
@@ -345,7 +345,7 @@ defmodule Batamanta.Packager do
     start_erl_path = Path.join([rel_path, "releases", "start_erl.data"])
 
     if File.exists?(start_erl_path) do
-      erts_version = extract_erts_version(erts_work)
+      erts_version = detect_erts_version(erts_work)
       releases_dir = Path.join(rel_path, "releases")
 
       app_vsn =
@@ -556,13 +556,29 @@ defmodule Batamanta.Packager do
   """
   @spec get_erts_version(Path.t()) :: String.t()
   def get_erts_version(erts_path) do
+    case detect_erts_version(erts_path) do
+      nil ->
+        raise "Cannot determine ERTS version from #{erts_path} " <>
+                "(no erts-* subdir, no releases/<vsn>/ subdir, " <>
+                "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data)"
+
+      version ->
+        version
+    end
+  end
+
+  @doc """
+  Like `get_erts_version/1` but returns `nil` instead of raising when no
+  layout matches. Used by helpers like `remove_mix_bundled_erts/2` and
+  `update_start_erl_data/2` that want to fall back to a glob-based
+  cleanup rather than abort the whole packager run.
+  """
+  @spec detect_erts_version(Path.t()) :: String.t() | nil
+  def detect_erts_version(erts_path) do
     detect_from_erts_subdir(erts_path) ||
       detect_from_releases_subdir(erts_path) ||
       detect_from_otp_version_file(erts_path) ||
-      detect_from_start_erl_data(erts_path) ||
-      raise "Cannot determine ERTS version from #{erts_path} " <>
-              "(no erts-* subdir, no releases/<vsn>/ subdir, " <>
-              "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data)"
+      detect_from_start_erl_data(erts_path)
   end
 
   # Layout 1/2: a directory named `erts-<vsn>/` exists at the root.
