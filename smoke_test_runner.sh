@@ -124,20 +124,45 @@ case "$MODE" in
         ;;
         
     daemon)
-        echo "🧪 Running Daemon smoke test..."
-        # Daemon starts, creates file, and waits for signal
-        # The wrapper process exits, but the BEAM daemon continues
+        # Two flavours of "daemon" mode coexist in this repo:
+        #
+        #   * Legacy `smoke_tests/test_daemon` — uses `execution_mode:
+        #     :daemon`, starts a single long-running BEAM as `myapp
+        #     --daemon`, and creates a `daemon_alive.txt` sentinel
+        #     file. The wrapper forks the BEAM once and waits.
+        #
+        #   * New `smoke_tests/test_beam_daemon` — uses
+        #     `batamanta: [daemon: [enabled: true]]`. The wrapper keeps
+        #     a BEAM-supervised Unix-socket daemon alive across short
+        #     CLI invocations; the smoke test is multi-call and uses
+        #     `test_beam_daemon_runner.sh` to exercise the warm path.
+        #
+        # Branch on PROJECT_DIR so the new runner is used automatically
+        # when CI maps `release-daemon` to test_beam_daemon.
+        if [[ "$(basename "$PROJECT_DIR")" == "test_beam_daemon" ]]; then
+            beam_runner="$PROJECT_DIR/../test_beam_daemon_runner.sh"
+            if [[ ! -x "$beam_runner" ]]; then
+                # Allow repo-relative path (CI runs from repo root).
+                beam_runner="smoke_tests/test_beam_daemon_runner.sh"
+            fi
+            echo "🧪 Running BEAM-daemon smoke (test_beam_daemon)..."
+            exec "$beam_runner" "${TIMEOUT:-15}"
+        fi
+
+        echo "🧪 Running legacy Daemon smoke test..."
+        # Legacy path: daemon starts, creates file, and waits for signal.
+        # The wrapper process exits, but the BEAM daemon continues.
         rm -f daemon_alive.txt daemon_heartbeat.txt 2>/dev/null || true
         timeout "$TIMEOUT" "$BINARY" &
-        
+
         # Wait for daemon to initialize
         sleep 2
-        
+
         # Check for daemon file (indicates daemon is running)
         if [[ -f "daemon_alive.txt" ]]; then
             echo "✅ Daemon is running (created daemon_alive.txt)"
             cat daemon_alive.txt
-            
+
             # Find and kill the daemon process
             DAEMON_PIDS=$(pgrep -f "beam.smp.*$(basename "$BINARY")" 2>/dev/null || true)
             if [[ -n "$DAEMON_PIDS" ]]; then
