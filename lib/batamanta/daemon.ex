@@ -45,10 +45,15 @@ defmodule Batamanta.Daemon do
          :ok <- validate_user_app(daemon_config),
          {:ok, ebin_dir} <- ensure_daemon_app_dir(staging_dir),
          :ok <- maybe_skip_if_present(opts, ebin_dir),
-         {:ok, src_files} <- list_source_files(),
-         :ok <- run_erlc(erlc, src_files, ebin_dir),
-         :ok <- write_app_file(ebin_dir, daemon_config) do
-      :ok
+         {:ok, src_files} <- list_source_files() do
+      compile_sources(erlc, src_files, ebin_dir, daemon_config)
+    end
+  end
+
+  defp compile_sources(erlc, src_files, ebin_dir, daemon_config) do
+    case run_erlc(erlc, src_files, ebin_dir) do
+      :ok -> write_app_file(ebin_dir, daemon_config)
+      {:error, _} = err -> err
     end
   end
 
