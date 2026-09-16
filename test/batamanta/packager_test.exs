@@ -130,5 +130,67 @@ defmodule Batamanta.PackagerTest do
         Packager.get_erts_version(base)
       end
     end
+
+    test "ignores the Fetcher cache-dir-name (erts-<vsn>-<platform_key>) created by cp_r", %{
+      base: base
+    } do
+      # Regression for the alaja-on-Windows build:
+      #
+      #   `mix batamanta` failed on Windows with:
+      #     ** (RuntimeError) Cannot determine ERTS version from
+      #        C:/Users/.../Temp/bat_pkg_.../erts_work
+      #
+      # Root cause: the Fetcher's cache directory is named
+      # `erts-<otp_version>-<platform_key>` (e.g. `erts-28.5-windows-amd64`).
+      # Packager.package/4 does `File.cp_r!(erts_cache, erts_work)` so the
+      # cache directory becomes a subdirectory of `erts_work` whose name
+      # starts with `erts-`. The first detector in the cascade (`detect_from_erts_subdir`)
+      # used to accept any directory whose name started with `erts-` and
+      # return its suffix (after stripping `erts-`) as the version —
+      # which silently produced `"28.5-windows-amd64"` instead of nil,
+      # masking the real version source and crashing the rest of the
+      # pipeline downstream. The fix is to require the suffix to be a
+      # numeric OTP version (valid_otp_version_string?/1).
+      #
+      # In the real bug case, the work path contains BOTH the spurious
+      # cache-named directory AND the legitimate `erts-28/` runtime dir.
+      # We rebuild that exact shape here.
+      File.mkdir_p!(Path.join(base, "erts-28.5-windows-amd64/bin"))
+      File.write!(Path.join([base, "erts-28.5-windows-amd64", "bin", "erl.exe"]), "fake")
+      File.mkdir_p!(Path.join([base, "erts-28.5-windows-amd64", "releases", "28.5"]))
+      File.write!(
+        Path.join([base, "erts-28.5-windows-amd64", "releases", "28.5", "OTP_VERSION"]),
+        "28.5\n"
+      )
+
+      # The legitimate, non-cache-prefixed erts-<vsn>/ runtime dir:
+      File.mkdir_p!(Path.join(base, "erts-28/bin"))
+      File.write!(Path.join([base, "erts-28", "bin", "erlexec"]), "fake")
+
+      assert Packager.get_erts_version(base) == "28"
+    end
+
+    test "falls through to releases/ detector when only the spurious cache-dir is present", %{
+      base: base
+    } do
+      # Same root cause as above, but only the spurious cache dir name
+      # exists (no real erts-<X.Y>/ subdir). The cascade must skip it
+      # and read the version from `releases/<vsn>/OTP_VERSION` instead.
+      File.mkdir_p!(Path.join(base, "erts-28.5-windows-amd64/bin"))
+      File.mkdir_p!(Path.join([base, "erts-28.5-windows-amd64", "releases", "28.5"]))
+      File.write!(
+        Path.join([base, "erts-28.5-windows-amd64", "releases", "28.5", "OTP_VERSION"]),
+        "28.5.1\n"
+      )
+
+      # The releases/<vsn>/ the cascade should now find (note: the
+      # `releases/` is at the root of `base`, NOT under the cache-named
+      # subdir — this matches what the packager sees after cp_r because
+      # the ERTS top-level layout puts releases/ at the work-root).
+      File.mkdir_p!(Path.join([base, "releases", "28.5"]))
+      File.write!(Path.join([base, "releases", "28.5", "OTP_VERSION"]), "28.5.1\n")
+
+      assert Packager.get_erts_version(base) == "28.5"
+    end
   end
 end

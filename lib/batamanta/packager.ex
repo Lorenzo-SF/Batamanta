@@ -589,12 +589,26 @@ defmodule Batamanta.Packager do
   #     BatPkg temp dirs frequently do).
   #   * Wildcard returns files too on some platforms; we want only
   #     directories and only those whose name starts with `erts-`.
+  #
+  # The `<vsn>` suffix MUST be a numeric OTP version (e.g. "14.2", "28").
+  # This is critical because the Fetcher's cache directory is also named
+  # `erts-<otp_version>-<platform_key>` (e.g. `erts-28.5-windows-amd64`).
+  # The packager does `File.cp_r!(erts_cache, erts_work)` before calling
+  # get_erts_version/1, so `erts_work` contains the cache directory as a
+  # subdirectory. Without the `valid_otp_version_string?/1` check the
+  # cascade would happily return "28.5-windows-amd64" as if it were a
+  # version, breaking every packager run on Windows (and any other
+  # platform whose cache directory name starts with `erts-` and gets
+  # sorted before the upstream `erts-<X.Y>` runtime dir).
   defp detect_from_erts_subdir(erts_path) do
     with {:ok, entries} <- File.ls(erts_path),
          [dir | _] <-
            Enum.filter(entries, fn e ->
              String.starts_with?(e, "erts-") and
-               File.dir?(Path.join(erts_path, e))
+               File.dir?(Path.join(erts_path, e)) and
+               valid_otp_version_string?(
+                 e |> String.trim_leading("erts-")
+               )
            end) do
       dir |> String.trim_leading("erts-")
     else
@@ -712,11 +726,26 @@ defmodule Batamanta.Packager do
   #   * "X.Y.Z" — major.minor.patch (e.g. "28.0.1")
   # We accept all three so we don't accidentally pick a non-version
   # directory like "start_erl.data" or ".DS_Store".
+  #
+  # We require Integer.parse/1 to consume the WHOLE segment (i.e. the
+  # remainder tuple must be empty). `Integer.parse("28-windows-amd64")`
+  # returns `{28, "-windows-amd64"}` — not `:error` — so a naive
+  # `!= :error` check would accept the Fetcher cache directory name
+  # `erts-28-windows-amd64` after `trim_leading("erts-")` and silently
+  # produce a wrong version. See the Windows ERTS-detection bug
+  # regression in test/batamanta/packager_test.exs.
   defp valid_otp_version_string?(s) do
     case String.split(s, ".") do
-      [n] -> Integer.parse(n) != :error
-      [n1, n2] -> Integer.parse(n1) != :error and Integer.parse(n2) != :error
-      [n1, n2, n3] -> Integer.parse(n1) != :error and Integer.parse(n2) != :error and Integer.parse(n3) != :error
+      [n] -> parse_consumes_whole?(n)
+      [n1, n2] -> parse_consumes_whole?(n1) and parse_consumes_whole?(n2)
+      [n1, n2, n3] -> parse_consumes_whole?(n1) and parse_consumes_whole?(n2) and parse_consumes_whole?(n3)
+      _ -> false
+    end
+  end
+
+  defp parse_consumes_whole?(segment) do
+    case Integer.parse(segment) do
+      {_int, ""} -> true
       _ -> false
     end
   end
