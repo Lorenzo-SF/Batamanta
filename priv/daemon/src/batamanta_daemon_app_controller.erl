@@ -44,7 +44,13 @@ run(Req, UserApp, TimeoutMs) ->
         {WorkerPid, MonRef, Servers} = start_worker(Req, UserApp, Table),
         wait_for_worker(WorkerPid, MonRef, Servers, Table, TimeoutMs)
     after
-        catch ets:delete(Table)
+        %% Silently delete the ETS table if it still exists; otherwise
+        %% ignore the badarg. Using try/catch instead of the deprecated
+        %% `catch` form so the daemon compiles cleanly under OTP 27+ with
+        %% -Werror.
+        try ets:delete(Table)
+        catch _:_ -> ok
+        end
     end.
 
 %% ============================================================================
