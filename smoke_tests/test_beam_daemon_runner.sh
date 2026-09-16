@@ -2,9 +2,13 @@
 #===============================================================================
 # BEAM-daemon-mode smoke test runner.
 #
-# Builds the test_beam_daemon smoke project (with daemon: [enabled: true]),
-# then exercises it with N invocations. The first invocation pays the BEAM
-# boot cost; the remaining N-1 should hit the warm BEAM in single-digit
+# Expects the test_beam_daemon binary to be already built (the CI workflow
+# runs `mix batamanta` in the project before invoking this runner). Locally
+# or in a fresh checkout, this script will rebuild the binary for you —
+# that's a single-shot path; in CI it's just the warm-path benchmark.
+#
+# Exercises the binary with N invocations. The first invocation pays the
+# BEAM boot cost; the remaining N-1 should hit the warm BEAM in single-digit
 # milliseconds. Total wall-time must be well under the same loop in legacy
 # mode (which would pay boot cost N times).
 #
@@ -14,6 +18,10 @@
 #
 # Usage:
 #     ./smoke_tests/test_beam_daemon_runner.sh [iterations]
+#
+# Env vars:
+#     SKIP_BUILD=1   don't run `mix batamanta`; assume binary is present
+#                    (CI workflow sets this).
 #===============================================================================
 
 set -euo pipefail
@@ -24,12 +32,17 @@ ITERATIONS="${1:-15}"
 
 cd "$SCRIPT_DIR/.."
 
-echo "==> Building test_beam_daemon smoke binary (mix batamanta)..."
-(cd "$PROJECT_DIR" && mix deps.get >/dev/null 2>&1 || true)
-(cd "$PROJECT_DIR" && mix batamanta 2>&1 | tail -30)
-
-# Find the resulting binary.
+# Find the resulting binary. If missing, try to build it (unless the
+# caller told us the binary is already there).
 BIN="$(find "$PROJECT_DIR" -maxdepth 1 -name 'test_beam_daemon-*' -type f | head -n1)"
+
+if [[ -z "$BIN" && "${SKIP_BUILD:-0}" != "1" ]]; then
+    echo "==> Building test_beam_daemon smoke binary (mix batamanta)..."
+    (cd "$PROJECT_DIR" && mix deps.get >/dev/null 2>&1 || true)
+    (cd "$PROJECT_DIR" && mix batamanta 2>&1 | tail -30)
+    BIN="$(find "$PROJECT_DIR" -maxdepth 1 -name 'test_beam_daemon-*' -type f | head -n1)"
+fi
+
 if [[ -z "$BIN" ]]; then
     echo "FAIL: no binary produced by mix batamanta" >&2
     exit 1
