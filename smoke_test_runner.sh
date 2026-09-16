@@ -60,29 +60,29 @@ else
     # Look for binary matching current platform (.run files)
     # First try with mode suffix (e.g., test_*-cli-*.run)
     if [[ "$HOST_OS" == "linux" ]]; then
-        BINARY=$(find . -maxdepth 1 -type f -executable -name "*-${MODE}-*-linux.run" 2>/dev/null | head -1 || true)
+        BINARY=$(find . -maxdepth 1 -type f -perm /111 -name "*-${MODE}-*-linux.run" 2>/dev/null | head -1 || true)
     elif [[ "$HOST_OS" == "darwin" ]]; then
         if [[ "$HOST_ARCH" == "aarch64" ]]; then
-            BINARY=$(find . -maxdepth 1 -type f -executable -name "*-${MODE}-*-macos.run" 2>/dev/null | grep "arm64\|aarch64" | head -1 || true)
+            BINARY=$(find . -maxdepth 1 -type f -perm /111 -name "*-${MODE}-*-macos.run" 2>/dev/null | grep "arm64\|aarch64" | head -1 || true)
         else
-            BINARY=$(find . -maxdepth 1 -type f -executable -name "*-${MODE}-*-macos.run" 2>/dev/null | grep -v "arm64\|aarch64" | head -1 || true)
+            BINARY=$(find . -maxdepth 1 -type f -perm /111 -name "*-${MODE}-*-macos.run" 2>/dev/null | grep -v "arm64\|aarch64" | head -1 || true)
         fi
     fi
 
     # Fallback to any .run file matching the format (release/escript)
     if [[ "$FORMAT" == "release" ]]; then
-        BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable -name "*-linux.run" 2>/dev/null | head -1 || true)}"
-        BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable -name "*-macos.run" 2>/dev/null | head -1 || true)}"
+        BINARY="${BINARY:-$(find . -maxdepth 1 -type f -perm /111 -name "*-linux.run" 2>/dev/null | head -1 || true)}"
+        BINARY="${BINARY:-$(find . -maxdepth 1 -type f -perm /111 -name "*-macos.run" 2>/dev/null | head -1 || true)}"
     elif [[ "$FORMAT" == "escript" ]]; then
         # Escript mode has different naming; handled separately above
         :
     fi
     
     # If still not found, try without .run extension (legacy)
-    BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable -name "*-${MODE}-*" ! -name "*.run" 2>/dev/null | head -1 || true)}"
+    BINARY="${BINARY:-$(find . -maxdepth 1 -type f -perm /111 -name "*-${MODE}-*" ! -name "*.run" 2>/dev/null | head -1 || true)}"
     
     # Last resort: any executable file
-    BINARY="${BINARY:-$(find . -maxdepth 1 -type f -executable ! -name "*.sh" ! -name "*.run" 2>/dev/null | head -1 || true)}"
+    BINARY="${BINARY:-$(find . -maxdepth 1 -type f -perm /111 ! -name "*.sh" ! -name "*.run" 2>/dev/null | head -1 || true)}"
 fi
 
 if [[ -z "$BINARY" ]]; then
