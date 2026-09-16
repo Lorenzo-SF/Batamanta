@@ -27,6 +27,15 @@ defmodule Batamanta.MixProject do
         summary: [
           threshold: 100
         ]
+      ],
+      # Helpers used by ExUnit (loaded by test_helper.exs via
+      # Code.require_file) must NOT be treated as test modules; otherwise
+      # the parallel compiler will try to load them as such and fail with
+      # MatchError {:error, :enoent} on Elixir 1.18+ when support files
+      # are first discovered by the file-system glob.
+      test_ignore_filters: [
+        ~r/test\/support\/.*\.exs/,
+        ~r/test\/test_httpc\.exs/
       ]
     ]
   end
