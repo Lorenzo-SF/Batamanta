@@ -31,8 +31,20 @@ defmodule Batamanta.Packager do
     config = Mix.Project.config()
     app_name = config[:app] |> to_string()
     bata_config = Keyword.get(config, :batamanta, [])
-    daemon_config =
-      Keyword.get(bata_config, :daemon)
+
+    # The daemon is compiled BEFORE `mix release` by mix batamanta's
+    # execute_release_pipeline (see compile_daemon_for_build/4), so the
+    # compiled .beam + .app already exist under _build/prod/lib/ and
+    # get picked up automatically when `mix release` runs. The compiled
+    # .app ends up in rel_path/lib/ without further intervention, and
+    # the payload tar below includes rel_path/lib/** as part of files.
+    #
+    # We still validate the daemon config here so callers see the same
+    # error messages they used to get from Daemon.compile/4 inside the
+    # try/rescue boundary.
+    _daemon_config =
+      bata_config
+      |> Keyword.get(:daemon)
       |> DaemonConfig.from_config()
       |> DaemonConfig.with_resolved_user_app()
 
