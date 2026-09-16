@@ -54,28 +54,12 @@ defmodule Batamanta.EscriptPackager do
              compression_level <= 19 do
     temp_dir = create_temp_directory()
     app_name = Path.basename(escript_path, ".escript")
-    daemon_config =
-      case Keyword.fetch(opts, :daemon_config) do
-        {:ok, %DaemonConfig{} = cfg} -> DaemonConfig.with_resolved_user_app(cfg)
-        :error ->
-          Keyword.get(opts, :daemon)
-          |> DaemonConfig.from_config()
-          |> DaemonConfig.with_resolved_user_app()
-      end
+    daemon_config = resolve_daemon_config(opts)
 
     try do
       release_dir = Path.join([temp_dir, "release"])
-
       File.mkdir_p!(Path.join([release_dir, "bin"]))
-
-      escript_file =
-        if File.exists?(escript_path) do
-          escript_path
-        else
-          Path.join(Path.dirname(escript_path), Path.basename(escript_path, ".escript"))
-        end
-
-      File.cp!(escript_file, Path.join([release_dir, "bin", app_name]))
+      copy_escript_into_release(release_dir, escript_path, app_name)
 
       # Capture ERTS version BEFORE prepare_minimal_erts flattens
       erts_version = get_erts_version(erts_path)
@@ -102,29 +86,69 @@ defmodule Batamanta.EscriptPackager do
         Path.join([release_dir, "bin"])
       )
 
-      # Generate <app>.run entry point script
-      exec_mode = Keyword.get(opts, :execution_mode, :cli)
-      run_script = Batamanta.RunScript.generate(app_name, exec_mode, :escript, erts_version)
-      run_script_path = Path.join([release_dir, "bin", "#{app_name}.run"])
-      File.write!(run_script_path, run_script)
-      File.chmod!(run_script_path, 0o755)
+      write_run_script(release_dir, app_name, opts, erts_version)
 
       tar_path = String.replace_trailing(output_path, ".tar.zst", ".tar")
-
-      case create_tarball(temp_dir, tar_path) do
-        :ok -> :ok
-        {:error, _} = error -> throw(error)
-      end
-
-      case Batamanta.Compression.compress(:zstd, tar_path, output_path, compression_level) do
-        {:ok, ^output_path} -> {:ok, output_path}
-        {:error, _} = error -> throw(error)
-      end
+      create_tarball(temp_dir, tar_path) |> tar_or_throw()
+      compress_output(tar_path, output_path, compression_level)
     after
       File.rm_rf(temp_dir)
     end
   catch
     {:error, reason} -> {:error, reason}
+  end
+
+  # Pulls the DaemonConfig out of opts, normalising the two supported
+  # shapes (`:daemon_config` already-built struct or `:daemon` keyword
+  # list) into a single resolved struct. Kept as a separate function
+  # for clarity; the `case` inside would otherwise push package/5
+  # over credo strict's cyclomatic complexity budget.
+  defp resolve_daemon_config(opts) do
+    case Keyword.fetch(opts, :daemon_config) do
+      {:ok, %DaemonConfig{} = cfg} ->
+        DaemonConfig.with_resolved_user_app(cfg)
+
+      :error ->
+        opts
+        |> Keyword.get(:daemon)
+        |> DaemonConfig.from_config()
+        |> DaemonConfig.with_resolved_user_app()
+    end
+  end
+
+  # The wrapper accepts both `<app>.escript` and the bare `<app>` binary
+  # produced by `mix escript.build` (depending on the version / flags).
+  # Both end up at the same place in the staged release tree.
+  defp copy_escript_into_release(release_dir, escript_path, app_name) do
+    escript_file =
+      if File.exists?(escript_path) do
+        escript_path
+      else
+        Path.join(Path.dirname(escript_path), Path.basename(escript_path, ".escript"))
+      end
+
+    File.cp!(escript_file, Path.join([release_dir, "bin", app_name]))
+  end
+
+  # Writes the `<app>.run` entry-point shell script at the standard
+  # release location. `Batamanta.RunScript` is shared with the release
+  # packager, so this is just a thin wrapper that picks the right opts.
+  defp write_run_script(release_dir, app_name, opts, erts_version) do
+    exec_mode = Keyword.get(opts, :execution_mode, :cli)
+    run_script = Batamanta.RunScript.generate(app_name, exec_mode, :escript, erts_version)
+    run_script_path = Path.join([release_dir, "bin", "#{app_name}.run"])
+    File.write!(run_script_path, run_script)
+    File.chmod!(run_script_path, 0o755)
+  end
+
+  defp tar_or_throw(:ok), do: :ok
+  defp tar_or_throw({:error, _} = err), do: throw(err)
+
+  defp compress_output(tar_path, output_path, compression_level) do
+    case Batamanta.Compression.compress(:zstd, tar_path, output_path, compression_level) do
+      {:ok, ^output_path} -> {:ok, output_path}
+      {:error, _} = err -> throw(err)
+    end
   end
 
   # Compiles the daemon Erlang sources into `<release_dir>/lib/...` when
