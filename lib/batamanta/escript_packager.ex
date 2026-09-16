@@ -33,7 +33,6 @@ defmodule Batamanta.EscriptPackager do
   - Reproducible builds with fixed ownership and timestamps
   """
 
-  alias Batamanta.Daemon
   alias Batamanta.DaemonConfig
 
   @doc """
@@ -67,16 +66,12 @@ defmodule Batamanta.EscriptPackager do
       minimal_erts_path = Path.join([release_dir, "erts-#{erts_version}"])
       prepare_minimal_erts(erts_path, minimal_erts_path)
 
-      # Compile the BEAM daemon sources into the payload's lib/ tree when
-      # the daemon feature is enabled. The .beam files end up at
-      # release/lib/batamanta_daemon-0.1.0/ebin/. They're loaded on demand
-      # by the wrapper — never auto-started.
-      #
-      # Only attempt this when the consumer opted into daemon mode via
-      # `batamanta: [daemon: [enabled: true, ...]]`. Without that, the
-      # payload stays slim (legacy size) and the wrapper falls back to
-      # single-shot execution.
-      compile_daemon_if_enabled(release_dir, erts_path, daemon_config)
+      # The BEAM daemon (when enabled) is compiled BEFORE `mix escript.build`
+      # at `_build/prod/lib/batamanta_daemon-0.1.0/` so that Mix
+      # recognises it as a regular OTP application. After escript
+      # assembly, the daemon's .beam files are already inside the
+      # escript zip and we just need to include them in the payload
+      # tar. No re-compilation here.
 
       # Copy boot files to release/bin/ so erlexec (which uses
       # $ROOTDIR/bin/ for boot file resolution via ERL_ROOTDIR)
@@ -151,20 +146,6 @@ defmodule Batamanta.EscriptPackager do
     end
   end
 
-  # Compiles the daemon Erlang sources into `<release_dir>/lib/...` when
-  # the consumer opted in. Extracted from `package/5` to keep that
-  # function's cyclomatic complexity below credo strict's threshold.
-  # Throws `{:error, _}` so the surrounding `catch` in `package/5`
-  # propagates a single error type upward.
-  defp compile_daemon_if_enabled(release_dir, erts_path, daemon_config) do
-    if DaemonConfig.enabled?(daemon_config) do
-      case Daemon.compile(release_dir, erts_path, daemon_config) do
-        :ok -> :ok
-        :skip -> :ok
-        {:error, reason} -> throw({:error, "daemon compile failed: #{reason}"})
-      end
-    end
-  end
 
   defp create_temp_directory do
     dir = Path.join(System.tmp_dir!(), "batamanta_escript_#{unique_id()}")
