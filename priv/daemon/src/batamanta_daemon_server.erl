@@ -146,7 +146,11 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, State) ->
-    catch gen_tcp:close(State#state.listen_socket),
+    %% gen_tcp:close can throw if the socket is already closed; swallow
+    %% the failure rather than corrupting the parent's shutdown.
+    try gen_tcp:close(State#state.listen_socket)
+    catch _:_ -> ok
+    end,
     _ = file:delete(State#state.sock_path),
     _ = file:delete(State#state.pid_file),
     ok.
@@ -181,16 +185,12 @@ enqueue(State, ConnPid, Req) ->
 on_request_done(ConnPid, Result, State) ->
     Reply = build_response(Result),
     ConnPid ! {self(), reply, Reply},
-    NewQueue = case State#state.queue of
-        [{ConnPid, _, _} | Rest] -> Rest;
-        [_ | Rest]               -> Rest;
-        []                       -> []
-    end,
+    NewQueue = strip_queue(ConnPid, State#state.queue),
     NewTimer = reset_inactivity(State#state.default_ttl_ms),
-    case NewQueue of
-        [] ->
+    case next_request(NewQueue) of
+        none ->
             State#state{timer = NewTimer, running = false, queue = []};
-        [{NextConn, _, NextReq} | Rest] ->
+        {NextConn, NextReq, Rest} ->
             run_next(NextConn, NextReq,
                      State#state{timer = NewTimer, queue = Rest})
     end.
@@ -223,6 +223,27 @@ schedule_inactivity(0) ->
     undefined;
 schedule_inactivity(TTLMs) when TTLMs > 0 ->
     erlang:send_after(TTLMs, self(), timeout).
+
+%% Pops the head of the queue, returning {none} when empty. Refactored
+%% out of `on_request_done/3` because Erlang's case-of-case analysis
+%% rejects a single `case` whose arms disagree on which variables they
+%% bind (e.g. one arm binds Rest, another doesn't).
+-spec next_request(queue()) -> none | {pid(), request(), queue()}.
+next_request([]) ->
+    none;
+next_request([{ConnPid, _WorkerPid, Req} | Rest]) ->
+    {ConnPid, Req, Rest}.
+
+%% Removes the entry for `ConnPid` from the queue, returning the tail.
+%% Extracted so the case doesn't have to bind Rest in some arms and not
+%% in others (unsafe under OTP 27+'s stricter Erlang compiler).
+-spec strip_queue(pid(), queue()) -> queue().
+strip_queue(_ConnPid, []) ->
+    [];
+strip_queue(ConnPid, [{ConnPid, _, _} | Rest]) ->
+    Rest;
+strip_queue(_ConnPid, [{_, _, _} | Rest]) ->
+    Rest.
 
 reset_inactivity(0) ->
     undefined;
