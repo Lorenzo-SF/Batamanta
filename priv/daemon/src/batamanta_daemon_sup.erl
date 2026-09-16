@@ -6,7 +6,7 @@
 %% Children:
 %%   * `batamanta_daemon_server` — gen_server with the Unix socket and
 %%     inactivity timer. The supervisor restarts it on crash so a single
-%%     bad request doesn't take the whole keeper down.
+%%     bad request doesn't take the whole daemon down.
 
 -export([start_link/1, init/1]).
 

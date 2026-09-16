@@ -83,14 +83,21 @@ defmodule Batamanta.EscriptPackager do
       minimal_erts_path = Path.join([release_dir, "erts-#{erts_version}"])
       prepare_minimal_erts(erts_path, minimal_erts_path)
 
-      # T-008-bis: compile the BEAM daemon sources into the payload's lib/
-      # tree when the daemon feature is enabled. The .beam files end up
-      # at release/lib/batamanta_daemon-0.1.0/ebin/. They're loaded on
-      # demand by the wrapper — never auto-started.
-      case Daemon.compile(release_dir, erts_path, daemon_config) do
-        :ok -> :ok
-        :skip -> :ok
-        {:error, reason} -> throw({:error, "daemon compile failed: #{reason}"})
+      # Compile the BEAM daemon sources into the payload's lib/ tree when
+      # the daemon feature is enabled. The .beam files end up at
+      # release/lib/batamanta_daemon-0.1.0/ebin/. They're loaded on demand
+      # by the wrapper — never auto-started.
+      #
+      # Only attempt this when the consumer opted into daemon mode via
+      # `batamanta: [daemon: [enabled: true, ...]]`. Without that, the
+      # payload stays slim (legacy size) and the wrapper falls back to
+      # single-shot execution.
+      if DaemonConfig.enabled?(daemon_config) do
+        case Daemon.compile(release_dir, erts_path, daemon_config) do
+          :ok -> :ok
+          :skip -> :ok
+          {:error, reason} -> throw({:error, "daemon compile failed: #{reason}"})
+        end
       end
 
       # Copy boot files to release/bin/ so erlexec (which uses
@@ -459,34 +466,139 @@ defmodule Batamanta.EscriptPackager do
   end
 
   @doc """
-  Extracts the ERTS numeric version (e.g., `"14.2"`) from an ERTS cache
-  directory by looking for the `erts-*` subdirectory.
+  Extracts the ERTS numeric version (e.g., `"14.2"` or `"28"`) from an ERTS
+  cache or work directory.
+
+  Mirrors `Batamanta.Packager.get_erts_version/1` — see that function's
+  moduledoc for the full layout table and rationale. Kept in lockstep
+  so the release and escript packaging paths agree on what an ERTS
+  cache looks like (important on Windows where `Path.wildcard("erts-*")`
+  alone misses the "raw" zip layout).
   """
   @spec get_erts_version(Path.t()) :: String.t()
   def get_erts_version(erts_path) do
-    case Path.wildcard(Path.join(erts_path, "erts-*")) do
-      [dir | _] ->
-        dir |> Path.basename() |> String.trim_leading("erts-")
+    detect_from_erts_subdir(erts_path) ||
+      detect_from_releases_subdir(erts_path) ||
+      detect_from_otp_version_file(erts_path) ||
+      detect_from_start_erl_data(erts_path) ||
+      raise("Cannot determine ERTS version from #{erts_path} " <>
+              "(no erts-* subdir, no releases/<vsn>/ subdir, " <>
+              "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data)")
+  end
 
-      [] ->
-        release_in_erts = find_first_subdir(Path.join(erts_path, "releases"))
+  defp detect_from_erts_subdir(erts_path) do
+    with {:ok, entries} <- File.ls(erts_path),
+         [dir | _] <-
+           Enum.filter(entries, fn e ->
+             String.starts_with?(e, "erts-") and File.dir?(Path.join(erts_path, e))
+           end) do
+      dir |> String.trim_leading("erts-")
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
 
-        case release_in_erts do
-          nil -> raise("Cannot determine ERTS version from #{erts_path}")
-          dir -> dir
+  defp detect_from_releases_subdir(erts_path) do
+    releases_path = erts_path |> Path.join("releases")
+
+    with {:ok, entries} <- File.ls(releases_path),
+         [dir | _] <-
+           Enum.filter(entries, fn e ->
+             File.dir?(Path.join(releases_path, e)) and
+               e not in [".", ".."] and
+               valid_otp_version_string?(e)
+           end) do
+      dir
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp detect_from_otp_version_file(erts_path) do
+    case find_releases_subdir(erts_path) do
+      nil ->
+        nil
+
+      version ->
+        path =
+          erts_path
+          |> Path.join("releases")
+          |> Path.join(version)
+          |> Path.join("OTP_VERSION")
+
+        with {:ok, content} <- File.read(path) do
+          content |> String.trim() |> normalise_otp_vsn()
+        else
+          _ -> nil
         end
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp detect_from_start_erl_data(erts_path) do
+    case find_releases_subdir(erts_path) do
+      nil ->
+        nil
+
+      version ->
+        path =
+          erts_path
+          |> Path.join("releases")
+          |> Path.join(version)
+          |> Path.join("start_erl.data")
+
+        with {:ok, content} <- File.read(path) do
+          case String.split(String.trim(content)) do
+            [otp_ver | _] -> otp_ver
+            _ -> nil
+          end
+        else
+          _ -> nil
+        end
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp find_releases_subdir(erts_path) do
+    releases_path = erts_path |> Path.join("releases")
+
+    with {:ok, entries} <- File.ls(releases_path),
+         [dir | _] <-
+           Enum.filter(entries, fn e ->
+             File.dir?(Path.join(releases_path, e)) and e not in [".", ".."]
+           end) do
+      dir
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp valid_otp_version_string?(s) do
+    case String.split(s, ".") do
+      [n] -> Integer.parse(n) != :error
+      [n1, n2] -> Integer.parse(n1) != :error and Integer.parse(n2) != :error
+      [n1, n2, n3] ->
+        Integer.parse(n1) != :error and
+          Integer.parse(n2) != :error and
+          Integer.parse(n3) != :error
+
+      _ ->
+        false
     end
   end
 
-  defp find_first_subdir(path) do
-    with true <- File.exists?(path),
-         {:ok, entries} <- File.ls(path) do
-      entries
-      |> Enum.find(fn entry ->
-        full = Path.join(path, entry)
-        File.dir?(full) and entry not in [".", ".."]
-      end)
-    else
+  defp normalise_otp_vsn(vsn) do
+    case String.split(vsn, ".") do
+      [major] -> major
+      [major, minor | _] -> "#{major}.#{minor}"
       _ -> nil
     end
   end
