@@ -107,4 +107,40 @@ defmodule Batamanta.EscriptPackagerTest do
       assert size > 0
     end
   end
+
+  # Mirrors the layout tests in `Batamanta.PackagerTest`. Escripts on
+  # Windows had the same `Cannot determine ERTS version` failure mode;
+  # see Packager's get_erts_version/1 moduledoc for the layout table.
+  describe "get_erts_version/1 ERTS layout detection" do
+    setup do
+      base = Path.join(System.tmp_dir!(), "bat_escript_erts_#{:erlang.unique_integer([:positive])}")
+      File.mkdir_p!(base)
+      on_exit(fn -> File.rm_rf!(base) end)
+      %{base: base}
+    end
+
+    test "layout 1 (Linux/Mac) via erts-X.Y/", %{base: base} do
+      File.mkdir_p!(Path.join(base, "erts-14.2/bin"))
+      File.write!(Path.join([base, "erts-14.2", "bin", "erlexec"]), "fake")
+      assert EscriptPackager.get_erts_version(base) == "14.2"
+    end
+
+    test "layout 3 (Windows raw-style) via releases/<vsn>/OTP_VERSION", %{base: base} do
+      File.mkdir_p!(Path.join([base, "releases", "28.0"]))
+      File.write!(Path.join([base, "releases", "28.0", "OTP_VERSION"]), "28.0.1\n")
+      assert EscriptPackager.get_erts_version(base) == "28.0"
+    end
+
+    test "falls back to start_erl.data when OTP_VERSION missing", %{base: base} do
+      File.mkdir_p!(Path.join([base, "releases", "27"]))
+      File.write!(Path.join([base, "releases", "27", "start_erl.data"]), "27 1.0.0\n")
+      assert EscriptPackager.get_erts_version(base) == "27"
+    end
+
+    test "raises when no layout matches", %{base: base} do
+      assert_raise RuntimeError, ~r/no erts-\* subdir/, fn ->
+        EscriptPackager.get_erts_version(base)
+      end
+    end
+  end
 end

@@ -105,11 +105,15 @@ defmodule Batamanta.DaemonConfigTest do
       assert DaemonConfig.with_resolved_user_app(cfg) == cfg
     end
 
-    test "raises when Mix.Project is not available" do
+    test "falls back to Mix.Project.config()[:app] when user_app is nil" do
       cfg = %DaemonConfig{user_app: nil}
-      assert_raise RuntimeError, fn ->
-        DaemonConfig.with_resolved_user_app(cfg)
-      end
+      resolved = DaemonConfig.with_resolved_user_app(cfg)
+      # During `mix test` Mix.Project is available, so user_app resolves
+      # to the consuming app's `:app` key. The project under test is
+      # `:batamanta` itself, so we expect that value.
+      assert resolved.user_app == "batamanta"
+      assert resolved.var == cfg.var
+      assert resolved.enabled == cfg.enabled
     end
   end
 

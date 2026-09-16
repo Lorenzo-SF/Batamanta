@@ -68,9 +68,11 @@ defmodule Batamanta.DaemonTest do
     test "returns error when user_app is not resolved", %{dir: dir} do
       cfg = %DaemonConfig{enabled: true, user_app: nil, var: "FOO"}
       fake_erts = Path.join(dir, "fake_erts")
-      File.mkdir_p!(Path.join(fake_erts, "bin"))
-      File.write!(Path.join(fake_erts, "bin", "erlc"), "#!/bin/sh\n")
-      File.chmod!(Path.join(fake_erts, "bin", "erlc"), 0o755)
+      fake_bin = Path.join(fake_erts, "bin")
+      File.mkdir_p!(fake_bin)
+      erlc_path = Path.join(fake_bin, "erlc")
+      File.write!(erlc_path, "#!/bin/sh\n")
+      File.chmod!(erlc_path, 0o755)
       assert {:error, msg} = Daemon.compile(dir, fake_erts, cfg)
       assert msg =~ "user_app must be resolved"
     end

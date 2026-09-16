@@ -148,13 +148,13 @@ invoke_cli(Args, StderrServer) ->
     CliModule =
         case os:getenv("BATAMANTA_DAEMON_CLI_MODULE", "") of
             "" -> undefined;
-            M  -> list_to_atom(M)
+            EnvMod -> list_to_atom(EnvMod)
         end,
     Candidates = candidates_for(Args, CliModule),
     case find_main_fun(Candidates) of
-        {ok, M} ->
+        {ok, FunMod} ->
             try
-                Code = M:main(Args),
+                Code = FunMod:main(Args),
                 {ok, exit_code(Code)}
             catch
                 Class:Reason ->

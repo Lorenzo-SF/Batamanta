@@ -77,8 +77,13 @@ defmodule Batamanta.Daemon do
   @spec build_hash_for(Path.t()) :: String.t()
   def build_hash_for(path) do
     case File.read(path) do
-      {:ok, Bin} ->
-        :crypto.hash(:sha256, Bin)
+      {:ok, bin} ->
+        # File.read can return iodata-shaped binaries on some platforms
+        # (particularly for short files). Normalise to a plain binary
+        # before slicing so binary_part/3 always receives the right shape.
+        plain = IO.iodata_to_binary(bin)
+
+        :crypto.hash(:sha256, plain)
         |> binary_part(0, 6)
         |> Base.encode16(case: :lower)
 

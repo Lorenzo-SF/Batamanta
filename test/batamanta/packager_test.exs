@@ -61,4 +61,74 @@ defmodule Batamanta.PackagerTest do
       assert File.exists?(test_file)
     end
   end
+
+  # Regression tests for the Windows ERTS-detection bug
+  # (https://github.com/Lorenzo-SF/Batamanta/issues/...) — some
+  # erlang/otp Windows prebuilt zips lay out files at the root
+  # without an `erts-<vsn>/` subdir. The packager must detect the
+  # version from the `releases/<vsn>/` subtree instead.
+  describe "get_erts_version/1 ERTS layout detection" do
+    setup do
+      base = Path.join(System.tmp_dir!(), "bat_erts_layout_#{:erlang.unique_integer([:positive])}")
+      File.mkdir_p!(base)
+      on_exit(fn -> File.rm_rf!(base) end)
+      %{base: base}
+    end
+
+    test "layout 1: Linux/Mac release-style with erts-X.Y/ subdir", %{base: base} do
+      File.mkdir_p!(Path.join(base, "erts-14.2/bin"))
+      File.write!(Path.join([base, "erts-14.2", "bin", "erlexec"]), "fake")
+      assert Packager.get_erts_version(base) == "14.2"
+    end
+
+    test "layout 1 variant: erts-X/ without minor", %{base: base} do
+      File.mkdir_p!(Path.join(base, "erts-28/bin"))
+      assert Packager.get_erts_version(base) == "28"
+    end
+
+    test "layout 3: Windows raw-style (no erts-*/ subdir, releases/<vsn>/ exists)", %{
+      base: base
+    } do
+      # No erts-X.Y/ subdir — layout 3 / Windows raw-style.
+      File.mkdir_p!(Path.join([base, "bin"]))
+      File.write!(Path.join([base, "bin", "erl.exe"]), "fake")
+      File.write!(Path.join(base, "start.boot"), "fake")
+      # releases/<vsn>/ has the canonical files.
+      File.mkdir_p!(Path.join([base, "releases", "28.0"]))
+      File.write!(Path.join([base, "releases", "28.0", "OTP_VERSION"]), "28.0.1\n")
+      File.write!(Path.join([base, "releases", "28.0", "start_erl.data"]), "28.0.1 1.0.0\n")
+
+      assert Packager.get_erts_version(base) == "28.0"
+    end
+
+    test "fallback to start_erl.data when OTP_VERSION is missing", %{base: base} do
+      File.mkdir_p!(Path.join([base, "releases", "27"]))
+      File.write!(Path.join([base, "releases", "27", "start_erl.data"]), "27 1.0.0\n")
+      assert Packager.get_erts_version(base) == "27"
+    end
+
+    test "ignores non-version directories under releases/", %{base: base} do
+      # These are common noise files that File.ls may return in any order.
+      File.mkdir_p!(Path.join([base, "releases", "28.0"]))
+      File.mkdir_p!(Path.join([base, "releases", ".DS_Store"]))
+      File.write!(Path.join([base, "releases", "28.0", "OTP_VERSION"]), "28.0.1\n")
+      File.write!(Path.join([base, "releases", ".DS_Store", "dummy"]), "x")
+      assert Packager.get_erts_version(base) == "28.0"
+    end
+
+    test "raises with a descriptive message when no layout matches", %{base: base} do
+      # Empty directory — neither erts-* nor releases/<vsn>/ exist.
+      assert_raise RuntimeError, ~r/no erts-\* subdir/, fn ->
+        Packager.get_erts_version(base)
+      end
+    end
+
+    test "raises when releases/ exists but contains no versioned subdirs", %{base: base} do
+      File.mkdir_p!(Path.join(base, "releases"))
+      File.write!(Path.join(base, "releases/notes.txt"), "no version here")
+      assert_raise RuntimeError, ~r/no releases/, fn ->
+        Packager.get_erts_version(base)
+      end
+    end
+  end
 end
