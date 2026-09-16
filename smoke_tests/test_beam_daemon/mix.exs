@@ -26,9 +26,19 @@ defmodule TestBeamDaemon.MixProject do
       releases: [
         test_beam_daemon: [
           include_executables_for: [:unix],
+          # The BEAM daemon (`batamanta_daemon`) is NOT listed here.
+          # It's compiled separately by `mix batamanta` and its .beam
+          # files are bundled into the payload tar, but the release
+          # start script never auto-starts it — the Rust wrapper loads
+          # it on demand via `batamanta_daemon_bootstrap` so the BEAM
+          # can be reused across wrapper invocations.
+          #
+          # Listing it in `applications:` would force `mix release` to
+          # validate the OTP app at build time, which fails with
+          # "Could not find application :batamanta_daemon" because the
+          # app is compiled by batamanta itself, not by the consumer.
           applications: [
-            test_beam_daemon: :permanent,
-            batamanta_daemon: :permanent
+            test_beam_daemon: :permanent
           ],
           steps: [:assemble]
         ]
