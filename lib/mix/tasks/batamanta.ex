@@ -673,7 +673,7 @@ defmodule Mix.Tasks.Batamanta do
       daemon_config,
       erts_path,
       banner_ctx,
-      Mix.Project.build_path()
+      prod_build_path()
     )
 
     build_env =
@@ -742,7 +742,7 @@ defmodule Mix.Tasks.Batamanta do
       daemon_config,
       erts_path,
       banner_ctx,
-      Mix.Project.build_path()
+      prod_build_path()
     )
 
     escript_path = EscriptBuilder.build(config, banner_ctx, erts_path)
@@ -790,6 +790,15 @@ defmodule Mix.Tasks.Batamanta do
   #
   # Sólo se compila si `daemon: [enabled: true]` está en la config del
   # proyecto; en el caso contrario se omite silenciosamente.
+  # Mix.Project.build_path/0 returns the build path for the CURRENT MIX_ENV.
+  # When the smoke matrix runs `mix batamanta` with MIX_ENV=test for
+  # bundle install, we still want the daemon to land under _build/prod
+  # because the subsequent `mix release --overwrite` is invoked with
+  # MIX_ENV=prod. Use this helper to always pick the prod path.
+  defp prod_build_path do
+    Mix.Project.build_path(:prod) |> Path.absname()
+  end
+
   defp compile_daemon_for_build(daemon_config, erts_path, banner_ctx, build_path) do
     if Batamanta.DaemonConfig.enabled?(daemon_config) do
       case Daemon.compile_to_build_path(build_path, erts_path, daemon_config) do
