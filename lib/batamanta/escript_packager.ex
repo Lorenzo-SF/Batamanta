@@ -153,7 +153,6 @@ defmodule Batamanta.EscriptPackager do
     end
   end
 
-
   defp create_temp_directory do
     dir = Path.join(System.tmp_dir!(), "batamanta_escript_#{unique_id()}")
     File.mkdir_p!(dir)
