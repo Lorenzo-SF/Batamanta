@@ -11,7 +11,6 @@ defmodule Batamanta.Packager do
   - **Boot File Preparation**: Ensures correct .boot file for target platform
   """
 
-  alias Batamanta.Daemon
   alias Batamanta.DaemonConfig
 
   @doc """
@@ -58,22 +57,12 @@ defmodule Batamanta.Packager do
       remove_mix_bundled_erts(rel_path, erts_work)
       update_start_erl_data(rel_path, erts_work)
 
-      # Compile the BEAM daemon sources into the release's lib/ tree when
-      # the feature is enabled at build time. The compiled .beam files
-      # end up in the payload; they are *not* auto-started by the release
-      # — the wrapper Rust loads them on demand via `batamanta_daemon_bootstrap`.
-      #
-      # Only attempt this when the consumer opted into daemon mode via
-      # `batamanta: [daemon: [enabled: true, ...]]`. Without that, the
-      # payload stays slim (legacy size) and the wrapper falls back to
-      # single-shot execution.
-      if DaemonConfig.enabled?(daemon_config) do
-        case Daemon.compile(rel_path, erts_work, daemon_config) do
-          :ok -> :ok
-          :skip -> :ok
-          {:error, reason} -> raise "Failed to compile BEAM daemon: #{reason}"
-        end
-      end
+      # The BEAM daemon (when enabled) is compiled BEFORE `mix release`
+      # at `_build/prod/lib/batamanta_daemon-0.1.0/` so that Mix
+      # recognises it as a regular OTP application. After release
+      # assembly, the daemon's .beam files are already inside
+      # `rel_path/lib/batamanta_daemon-0.1.0/ebin/` and we just need
+      # to include them in the payload tar. No re-compilation here.
 
       # Generate <app>.run entry point script
       exec_mode = Keyword.get(bata_config, :execution_mode, :cli)

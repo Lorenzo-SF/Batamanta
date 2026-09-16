@@ -64,6 +64,41 @@ defmodule Batamanta.Daemon do
   def version, do: @daemon_vsn
 
   @doc """
+  Compiles the daemon into the project's standard build path so that
+  `mix release` (run AFTER this call) picks it up as a regular OTP app.
+
+  This is the entry point used by `mix batamanta` BEFORE invoking
+  `mix release`. The .beam files land at:
+
+      <build_path>/lib/batamanta_daemon-#{@daemon_vsn}/ebin/
+
+  Which mirrors the layout that `mix deps.compile` would produce for any
+  Hex-installed dependency. After `mix release` runs, the daemon .app
+  file is part of the release's lib/ tree and gets listed in
+  `releases/<vsn>/start_erl.data`'s application list automatically.
+
+  `build_path` typically resolves to `Mix.Project.build_path()/2` for
+  `MIX_ENV=prod`, i.e. `_build/prod/`.
+
+  ## Parameters
+
+    * `build_path` — Mix build root (e.g. `_build/prod`).
+    * `erts_path` — extracted ERTS root (must contain `bin/erlc`).
+    * `daemon_config` — `%Batamanta.DaemonConfig{}` (validated).
+
+  ## Returns
+
+    * `:ok` — compiled (or already up-to-date)
+    * `{:error, reason}` — compilation failed
+  """
+  @spec compile_to_build_path(Path.t(), Path.t(), DaemonConfig.t(), keyword()) ::
+          :ok | {:error, String.t()}
+  def compile_to_build_path(build_path, erts_path, daemon_config, opts \\ []) do
+    staging_dir = Path.join([build_path, "lib"])
+    compile(staging_dir, erts_path, daemon_config, opts)
+  end
+
+  @doc """
   Computes a stable 12-hex-char build hash from a payload file.
 
   Two binaries with the same payload produce the same hash; a rebuild
