@@ -88,7 +88,10 @@ defmodule Batamanta.RustTemplate do
     app_name_str = to_string(Keyword.get(config, :app, "app"))
     format_str = Atom.to_string(format)
     app_version_str = to_string(Keyword.get(config, :version, "0.0.0"))
-    target_str = Atom.to_string(target_triple)
+    # target_triple arrives as a string ("x86_64-unknown-linux-gnu") from
+    # the CLI option parser — Atom.to_string would crash with
+    # "1st argument: not an atom" in OTP 25+.
+    target_str = to_string(target_triple)
 
     daemon_config =
       Keyword.get(bata_config, :daemon)
