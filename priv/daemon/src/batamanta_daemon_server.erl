@@ -228,7 +228,7 @@ schedule_inactivity(TTLMs) when TTLMs > 0 ->
 %% out of `on_request_done/3` because Erlang's case-of-case analysis
 %% rejects a single `case` whose arms disagree on which variables they
 %% bind (e.g. one arm binds Rest, another doesn't).
--spec next_request(queue()) -> none | {pid(), request(), queue()}.
+-spec next_request([tuple()]) -> none | {pid(), map(), [tuple()]}.
 next_request([]) ->
     none;
 next_request([{ConnPid, _WorkerPid, Req} | Rest]) ->
@@ -237,7 +237,7 @@ next_request([{ConnPid, _WorkerPid, Req} | Rest]) ->
 %% Removes the entry for `ConnPid` from the queue, returning the tail.
 %% Extracted so the case doesn't have to bind Rest in some arms and not
 %% in others (unsafe under OTP 27+'s stricter Erlang compiler).
--spec strip_queue(pid(), queue()) -> queue().
+-spec strip_queue(pid(), [tuple()]) -> [tuple()].
 strip_queue(_ConnPid, []) ->
     [];
 strip_queue(ConnPid, [{ConnPid, _, _} | Rest]) ->

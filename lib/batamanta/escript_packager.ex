@@ -53,7 +53,14 @@ defmodule Batamanta.EscriptPackager do
              compression_level <= 19 do
     temp_dir = create_temp_directory()
     app_name = Path.basename(escript_path, ".escript")
-    daemon_config = resolve_daemon_config(opts)
+
+    # Validate the daemon config here even though we don't use it
+    # locally — the BEAM daemon was compiled earlier by
+    # `mix batamanta.execute_escript_pipeline/8` and is already bundled
+    # into the escript zip. Validating here keeps the error reporting
+    # path the same as the legacy (post-build) code, so misconfigured
+    # projects still get a clear error before reaching the payload tar.
+    _daemon_config = resolve_daemon_config(opts)
 
     try do
       release_dir = Path.join([temp_dir, "release"])
