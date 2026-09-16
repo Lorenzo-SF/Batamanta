@@ -790,13 +790,17 @@ defmodule Mix.Tasks.Batamanta do
   #
   # Sólo se compila si `daemon: [enabled: true]` está en la config del
   # proyecto; en el caso contrario se omite silenciosamente.
-  # Mix.Project.build_path/0 returns the build path for the CURRENT MIX_ENV.
-  # When the smoke matrix runs `mix batamanta` with MIX_ENV=test for
-  # bundle install, we still want the daemon to land under _build/prod
-  # because the subsequent `mix release --overwrite` is invoked with
-  # MIX_ENV=prod. Use this helper to always pick the prod path.
+  # Mix.Project.build_path/0 returns the build path for the CURRENT
+  # MIX_ENV. When the smoke matrix runs `mix batamanta` with
+  # MIX_ENV=test, that returns _build/test, but the subsequent
+  # `mix release --overwrite` is invoked with MIX_ENV=prod and looks
+  # for the daemon .app under _build/prod. Construct the prod build
+  # path directly from the project config so the daemon always lands
+  # at _build/prod regardless of MIX_ENV (the public Mix.Project API
+  # only returns the path for the current env).
   defp prod_build_path do
-    Mix.Project.build_path(:prod) |> Path.absname()
+    build_root = Mix.Project.config()[:build_path] || "_build"
+    build_root |> Path.expand() |> Path.join("prod")
   end
 
   defp compile_daemon_for_build(daemon_config, erts_path, banner_ctx, build_path) do
