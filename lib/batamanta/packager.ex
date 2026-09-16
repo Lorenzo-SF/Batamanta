@@ -641,9 +641,8 @@ defmodule Batamanta.Packager do
           |> Path.join(version)
           |> Path.join("OTP_VERSION")
 
-        with {:ok, content} <- File.read(path) do
-          content |> String.trim() |> normalise_otp_vsn()
-        else
+        case File.read(path) do
+          {:ok, content} -> content |> String.trim() |> normalise_otp_vsn()
           _ -> nil
         end
     end
@@ -669,20 +668,24 @@ defmodule Batamanta.Packager do
 
       version ->
         path = Path.join([erts_path, "releases", version, "start_erl.data"])
-
-        case File.read(path) do
-          {:ok, content} ->
-            case String.split(String.trim(content)) do
-              [otp_ver | _] -> otp_ver
-              _ -> nil
-            end
-
-          {:error, _} ->
-            nil
-        end
+        parse_start_erl_data_file(path)
     end
   rescue
     _ -> nil
+  end
+
+  defp parse_start_erl_data_file(path) do
+    case File.read(path) do
+      {:ok, content} -> first_token(content)
+      _ -> nil
+    end
+  end
+
+  defp first_token(content) do
+    case String.split(String.trim(content)) do
+      [first | _] -> first
+      _ -> nil
+    end
   end
 
   defp find_releases_subdir(erts_path) do

@@ -92,13 +92,7 @@ defmodule Batamanta.EscriptPackager do
       # `batamanta: [daemon: [enabled: true, ...]]`. Without that, the
       # payload stays slim (legacy size) and the wrapper falls back to
       # single-shot execution.
-      if DaemonConfig.enabled?(daemon_config) do
-        case Daemon.compile(release_dir, erts_path, daemon_config) do
-          :ok -> :ok
-          :skip -> :ok
-          {:error, reason} -> throw({:error, "daemon compile failed: #{reason}"})
-        end
-      end
+      compile_daemon_if_enabled(release_dir, erts_path, daemon_config)
 
       # Copy boot files to release/bin/ so erlexec (which uses
       # $ROOTDIR/bin/ for boot file resolution via ERL_ROOTDIR)
@@ -131,6 +125,21 @@ defmodule Batamanta.EscriptPackager do
     end
   catch
     {:error, reason} -> {:error, reason}
+  end
+
+  # Compiles the daemon Erlang sources into `<release_dir>/lib/...` when
+  # the consumer opted in. Extracted from `package/5` to keep that
+  # function's cyclomatic complexity below credo strict's threshold.
+  # Throws `{:error, _}` so the surrounding `catch` in `package/5`
+  # propagates a single error type upward.
+  defp compile_daemon_if_enabled(release_dir, erts_path, daemon_config) do
+    if DaemonConfig.enabled?(daemon_config) do
+      case Daemon.compile(release_dir, erts_path, daemon_config) do
+        :ok -> :ok
+        :skip -> :ok
+        {:error, reason} -> throw({:error, "daemon compile failed: #{reason}"})
+      end
+    end
   end
 
   defp create_temp_directory do
@@ -530,9 +539,8 @@ defmodule Batamanta.EscriptPackager do
           |> Path.join(version)
           |> Path.join("OTP_VERSION")
 
-        with {:ok, content} <- File.read(path) do
-          content |> String.trim() |> normalise_otp_vsn()
-        else
+        case File.read(path) do
+          {:ok, content} -> content |> String.trim() |> normalise_otp_vsn()
           _ -> nil
         end
     end
@@ -552,17 +560,20 @@ defmodule Batamanta.EscriptPackager do
           |> Path.join(version)
           |> Path.join("start_erl.data")
 
-        with {:ok, content} <- File.read(path) do
-          case String.split(String.trim(content)) do
-            [otp_ver | _] -> otp_ver
-            _ -> nil
-          end
-        else
+        case File.read(path) do
+          {:ok, content} -> first_token(content)
           _ -> nil
         end
     end
   rescue
     _ -> nil
+  end
+
+  defp first_token(content) do
+    case String.split(String.trim(content)) do
+      [first | _] -> first
+      _ -> nil
+    end
   end
 
   defp find_releases_subdir(erts_path) do
