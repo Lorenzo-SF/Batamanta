@@ -278,11 +278,11 @@ jobs:
       - name: Clean cached ERTS (avoid cached build bypassing new code)
         shell: bash
         run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            Remove-Item -Recurse -Force "$HOME/.cache/batamanta" -ErrorAction SilentlyContinue
-          else
-            rm -rf ~/.cache/batamanta
-          fi
+          # \`rm -rf\` works under both Git-for-Windows bash and the
+          # Linux/macOS runners — the previous \`Remove-Item\` line is
+          # PowerShell-only and fails with 'Remove-Item: command not
+          # found' on the bash shell this step uses.
+          rm -rf "$HOME/.cache/batamanta"
 
       - name: Pick smoke_test directory
         id: pick
@@ -660,11 +660,11 @@ jobs:
       - name: Clean cached ERTS
         shell: bash
         run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            Remove-Item -Recurse -Force "$HOME/.cache/batamanta" -ErrorAction SilentlyContinue
-          else
-            rm -rf ~/.cache/batamanta
-          fi
+          # \`rm -rf\` works under both Git-for-Windows bash and the
+          # Linux/macOS runners — the previous \`Remove-Item\` line is
+          # PowerShell-only and fails with 'Remove-Item: command not
+          # found' on the bash shell this step uses.
+          rm -rf "$HOME/.cache/batamanta"
 
       - name: Pick smoke_test directory
         id: pick
