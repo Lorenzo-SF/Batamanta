@@ -78,12 +78,34 @@ else
         # Escript mode has different naming; handled separately above
         :
     fi
-    
+
     # If still not found, try without .run extension (legacy)
     BINARY="${BINARY:-$(find . -maxdepth 1 -type f -perm /111 -name "*-${MODE}-*" ! -name "*.run" 2>/dev/null | head -1 || true)}"
-    
-    # Last resort: any executable file
-    BINARY="${BINARY:-$(find . -maxdepth 1 -type f -perm /111 ! -name "*.sh" ! -name "*.run" 2>/dev/null | head -1 || true)}"
+
+    # Final fallback: any plain executable file (no extension) that
+    # isn't this script or a known extension. Earlier perms like `-perm
+    # /111` fail on some `find` implementations when the binary is
+    # missing the group-execute bit (e.g. macOS smoke where `mix
+    # batamanta` produces `app-version-arch-os` with no `.run` suffix
+    # and chmod 0755 but platform `find` may not match `-perm /111`).
+    # Use `-type f` + skipping known noise extensions + size>0 as a
+    # robust last resort.
+    if [[ -z "$BINARY" ]]; then
+        BINARY=$(find . -maxdepth 1 -type f \
+            \( ! -name "*.sh" -a ! -name "*.run" -a ! -name "*.exs" \
+               -a ! -name "*.ex"   -a ! -name "*.beam" \
+               -a ! -name "*.app"  -a ! -name "*.appup" \
+               -a ! -name "*.boot" -a ! -name "mix.lock" \
+               -a ! -name "mix.exs" -a ! -name "build" \) \
+            ! -size 0 \
+            2>/dev/null | head -1 || true)
+        # Make sure it's at least readable and probably executable.
+        # Some `find` builds don't honor `-perm /111` when the only
+        # `+x` bit set is `o+x`. We chmod defensively.
+        if [[ -n "$BINARY" ]] && [[ ! -x "$BINARY" ]]; then
+            chmod +x "$BINARY" 2>/dev/null || true
+        fi
+    fi
 fi
 
 if [[ -z "$BINARY" ]]; then
