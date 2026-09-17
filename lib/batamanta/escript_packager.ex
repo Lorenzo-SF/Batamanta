@@ -497,13 +497,36 @@ defmodule Batamanta.EscriptPackager do
   """
   @spec get_erts_version(Path.t()) :: String.t()
   def get_erts_version(erts_path) do
-    detect_from_erts_subdir(erts_path) ||
-      detect_from_releases_subdir(erts_path) ||
-      detect_from_otp_version_file(erts_path) ||
-      detect_from_start_erl_data(erts_path) ||
-      raise("Cannot determine ERTS version from #{erts_path} " <>
+    get_erts_version(erts_path, erts_path)
+  end
+
+  @spec get_erts_version(Path.t(), Path.t()) :: String.t()
+  def get_erts_version(erts_work, erts_path) do
+    detect_from_erts_subdir(erts_work) ||
+      detect_from_releases_subdir(erts_work) ||
+      detect_from_otp_version_file(erts_work) ||
+      detect_from_start_erl_data(erts_work) ||
+      detect_from_cache_dir_name(erts_path) ||
+      raise("Cannot determine ERTS version from #{erts_work} " <>
               "(no erts-* subdir, no releases/<vsn>/ subdir, " <>
-              "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data)")
+              "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data, " <>
+              "no erts-<vsn>-<platform_key> cache name recoverable)")
+  end
+
+  defp detect_from_cache_dir_name(erts_path) do
+    case Path.basename(erts_path) do
+      "erts-" <> rest ->
+        case String.split(rest, "-", parts: 2) do
+          [vsn, _platform] ->
+            if valid_otp_version_string?(vsn), do: vsn, else: nil
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
   end
 
   defp detect_from_erts_subdir(erts_path) do
@@ -512,7 +535,8 @@ defmodule Batamanta.EscriptPackager do
            Enum.filter(entries, fn e ->
              String.starts_with?(e, "erts-") and File.dir?(Path.join(erts_path, e))
            end) do
-      dir |> String.trim_leading("erts-")
+      vsn = String.trim_leading(dir, "erts-")
+      if valid_otp_version_string?(vsn), do: vsn, else: nil
     else
       _ -> nil
     end

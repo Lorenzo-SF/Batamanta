@@ -67,7 +67,7 @@ defmodule Batamanta.PackagerTest do
   # erlang/otp Windows prebuilt zips lay out files at the root
   # without an `erts-<vsn>/` subdir. The packager must detect the
   # version from the `releases/<vsn>/` subtree instead.
-  describe "get_erts_version/1 ERTS layout detection" do
+  describe "get_erts_version/2 ERTS layout detection" do
     setup do
       base = Path.join(System.tmp_dir!(), "bat_erts_layout_#{:erlang.unique_integer([:positive])}")
       File.mkdir_p!(base)
@@ -191,6 +191,57 @@ defmodule Batamanta.PackagerTest do
       File.write!(Path.join([base, "releases", "28.5", "OTP_VERSION"]), "28.5.1\n")
 
       assert Packager.get_erts_version(base) == "28.5"
+    end
+
+    test "recovers version from the cache-dir name when no embedded layout exists", %{
+      base: base
+    } do
+      # Regression for the upstream Windows `runtime only` zip:
+      # https://github.com/erlang/otp/releases ships a windows-amd64.zip
+      # containing only ~12 flat files (erl.exe, erlc.exe, *.boot,
+      # typer.exe, werl.exe, ...). NO `erts-*` subdir, NO `releases/`
+      # subdir, NO OTP_VERSION file anywhere. The four file-based
+      # detectors all miss.
+      #
+      # The Packager's `erts_path` argument IS the Fetcher's cache
+      # directory, whose name follows the convention
+      # `erts-<vsn>-<platform_key>`. The packager's new fallback
+      # detector parses that convention so we can recover the
+      # requested version without any embedded layout.
+      cache = Path.join(System.tmp_dir!(), "erts-28.5-windows-amd64")
+      File.rm_rf!(cache)
+      File.mkdir_p!(cache)
+
+      try do
+        # Simulate the upstream Windows zip — only flat executables + boots.
+        Enum.each(
+          ["erl.exe", "erlc.exe", "werl.exe", "start.boot"],
+          fn f -> File.write!(Path.join(cache, f), "fake") end
+        )
+
+        assert Packager.get_erts_version(cache) == "28.5"
+      after
+        File.rm_rf!(cache)
+      end
+    end
+
+    test "recovers version from cache-dir name when platform key has dashes", %{
+      base: base
+    } do
+      # Some platform keys contain dashes (e.g. `windows-arm64-gnu`).
+      # The detector splits on the FIRST dash after the version,
+      # so the rest of the platform string is discarded rather
+      # than mis-parsed as another version segment.
+      cache = Path.join(System.tmp_dir!(), "erts-27.3-windows-arm64-gnu")
+      File.rm_rf!(cache)
+      File.mkdir_p!(cache)
+
+      try do
+        File.write!(Path.join(cache, "erl.exe"), "fake")
+        assert Packager.get_erts_version(cache) == "27.3"
+      after
+        File.rm_rf!(cache)
+      end
     end
   end
 end

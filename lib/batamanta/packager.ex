@@ -57,8 +57,15 @@ defmodule Batamanta.Packager do
       File.cp_r!(erts_path, erts_work_path)
       erts_work = erts_work_path
 
-      # Capture ERTS version BEFORE prepare_erts modifies the structure
-      erts_version = get_erts_version(erts_work)
+      # Capture ERTS version BEFORE prepare_erts modifies the structure.
+      # We pass both `erts_path` (the Fetcher cache dir, whose name follows
+      # the `erts-<vsn>-<platform_key>` convention) AND `erts_work`
+      # (the flattened work area). Layout-1/2 detectors read `erts_work`
+      # only; the cache-name fallback reads `erts_path` only — useful
+      # for upstream erlang/otp Windows `.zip` prebuilts which ship as a
+      # flat root with no `erts-*/`, no `releases/<vsn>/`, no OTP_VERSION
+      # anywhere on disk.
+      erts_version = get_erts_version(erts_work, erts_path)
 
       prepare_erts(erts_work)
 
@@ -66,8 +73,8 @@ defmodule Batamanta.Packager do
       |> then(&prepare_start_boot(rel_path, &1, erts_work))
 
       relativize_release_scripts(rel_path)
-      remove_mix_bundled_erts(rel_path, erts_work)
-      update_start_erl_data(rel_path, erts_work)
+      remove_mix_bundled_erts(rel_path, erts_work, erts_path)
+      update_start_erl_data(rel_path, erts_work, erts_path)
 
       # The BEAM daemon (when enabled) is compiled BEFORE `mix release`
       # at `_build/prod/lib/batamanta_daemon-0.1.0/` so that Mix
@@ -325,8 +332,8 @@ defmodule Batamanta.Packager do
   # MIX BUNDLED ERTS REMOVAL
   # ============================================================================
 
-  defp remove_mix_bundled_erts(rel_path, erts_work) do
-    erts_version = detect_erts_version(erts_work)
+  defp remove_mix_bundled_erts(rel_path, erts_work, erts_path \\ erts_work) do
+    erts_version = detect_erts_version(erts_work, erts_path)
 
     if erts_version do
       mix_erts_path = Path.join(rel_path, "erts-#{erts_version}")
@@ -342,11 +349,11 @@ defmodule Batamanta.Packager do
     end
   end
 
-  defp update_start_erl_data(rel_path, erts_work) do
+  defp update_start_erl_data(rel_path, erts_work, erts_path \\ erts_work) do
     start_erl_path = Path.join([rel_path, "releases", "start_erl.data"])
 
     if File.exists?(start_erl_path) do
-      erts_version = detect_erts_version(erts_work)
+      erts_version = detect_erts_version(erts_work, erts_path)
       releases_dir = Path.join(rel_path, "releases")
 
       app_vsn =
@@ -556,12 +563,16 @@ defmodule Batamanta.Packager do
   no layout matches.
   """
   @spec get_erts_version(Path.t()) :: String.t()
-  def get_erts_version(erts_path) do
-    case detect_erts_version(erts_path) do
+  def get_erts_version(erts_path), do: get_erts_version(erts_path, erts_path)
+
+  @spec get_erts_version(Path.t(), Path.t()) :: String.t()
+  def get_erts_version(erts_work, erts_path) do
+    case detect_erts_version(erts_work, erts_path) do
       nil ->
-        raise "Cannot determine ERTS version from #{erts_path} " <>
+        raise "Cannot determine ERTS version from #{erts_work} " <>
                 "(no erts-* subdir, no releases/<vsn>/ subdir, " <>
-                "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data)"
+                "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data, " <>
+                "no erts-<vsn>-<platform_key> cache name recoverable)"
 
       version ->
         version
@@ -575,11 +586,45 @@ defmodule Batamanta.Packager do
   cleanup rather than abort the whole packager run.
   """
   @spec detect_erts_version(Path.t()) :: String.t() | nil
-  def detect_erts_version(erts_path) do
-    detect_from_erts_subdir(erts_path) ||
-      detect_from_releases_subdir(erts_path) ||
-      detect_from_otp_version_file(erts_path) ||
-      detect_from_start_erl_data(erts_path)
+  def detect_erts_version(erts_path), do: detect_erts_version(erts_path, erts_path)
+
+  @spec detect_erts_version(Path.t(), Path.t()) :: String.t() | nil
+  def detect_erts_version(erts_work, erts_path) do
+    detect_from_erts_subdir(erts_work) ||
+      detect_from_releases_subdir(erts_work) ||
+      detect_from_otp_version_file(erts_work) ||
+      detect_from_start_erl_data(erts_work) ||
+      detect_from_cache_dir_name(erts_path)
+  end
+
+  # Layout 3 fallback 2: the parent of <erts_path> carries the cache
+  # directory name "erts-<vsn>-<platform_key>" (Fetcher's convention).
+  # We can't help with layouts that lack the version internally AND
+  # whose cache name was renamed out of the convention, but in every
+  # Fetcher-produced cache dir this name preserves the original
+  # `otp_version` argument verbatim, so we can recover the version
+  # without needing any file inside <erts_path>.
+  #
+  # This is what makes a Windows prebuilt zip (root-only files,
+  # no `erts-*/releases/` tree at all) usable: the upstream
+  # Erlang/OTP Windows .zip does not embed the OTP version anywhere
+  # on disk, so the layout-1/2 detectors all miss. The cache-name
+  # fallback is the only thing standing between the user and the
+  # `Cannot determine ERTS version` raised by `get_erts_version/1`.
+  defp detect_from_cache_dir_name(erts_path) do
+    case Path.basename(erts_path) do
+      "erts-" <> rest ->
+        case String.split(rest, "-", parts: 2) do
+          [vsn, _platform] when is_binary(vsn) ->
+            if valid_otp_version_string?(vsn), do: vsn, else: nil
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
   end
 
   # Layout 1/2: a directory named `erts-<vsn>/` exists at the root.
