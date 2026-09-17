@@ -30,6 +30,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/test_beam_daemon"
 ITERATIONS="${1:-15}"
 
+# An overall wall-time cap. The CI smoke step passes us 60s as
+# TIMEOUT (see smoke_test_runner.sh). Without a cap this script will
+# happily iterate 15 times even when each invocation stalls — which
+# in CI lingo means the job hits its 6-hour soft limit while one
+# stalled binary sits in a syscall. Default 90s gives us one slow
+# cold-boot (~5-30s) plus 14 fast warm calls; raise it if you need
+# more iterations via the BATAMANTA_DAEMON_SMOKE_TIMEOUT env var.
+SMOKE_TIMEOUT="${BATAMANTA_DAEMON_SMOKE_TIMEOUT:-90}"
+
 cd "$SCRIPT_DIR/.."
 
 # Find the resulting binary. If missing, try to build it (unless the
@@ -52,20 +61,39 @@ echo "==> Binary: $BIN"
 # Run N invocations with daemon mode enabled.
 export BATAMANTA_BEAM_ALIVE=30000
 
-echo "==> Running $ITERATIONS invocations..."
-TOTAL_START=$(date +%s%N)
+echo "==> Running $ITERATIONS invocations (overall cap: ${SMOKE_TIMEOUT}s)..."
+TOTAL_START_NS=$(date +%s%N)
+TOTAL_START_S=$(date +%s)
+LAST_OUTPUT=""
 for i in $(seq 1 "$ITERATIONS"); do
-    OUT=$("$BIN" "iter=$i" 2>&1) || {
-        echo "FAIL: invocation $i exited non-zero" >&2
+    # Per-call timeout so a single hung binary can't stall the whole
+    # smoke run. The first call pays the cold-boot cost so we give it
+    # 60s; subsequent warm calls finish in ms.
+    PER_CALL_TIMEOUT=60
+    if [[ "$i" -gt 1 ]]; then
+        PER_CALL_TIMEOUT=10
+    fi
+    OUT=$(timeout "$PER_CALL_TIMEOUT" "$BIN" "iter=$i" 2>&1) || {
+        rc=$?
+        echo "FAIL: invocation $i exited non-zero (rc=$rc, per-call-timeout=${PER_CALL_TIMEOUT}s)" >&2
         echo "$OUT" >&2
         exit 1
     }
     if [[ "$i" -eq 1 ]]; then
         FIRST_OUTPUT="$OUT"
     fi
+    LAST_OUTPUT="$OUT"
+
+    # Stop iterating if we'd blow past the overall cap; still pass if
+    # we've got at least 2 successful calls (cold + warm).
+    ELAPSED=$(( $(date +%s) - TOTAL_START_S ))
+    if (( ELAPSED > SMOKE_TIMEOUT )) && (( i >= 3 )); then
+        echo "==> Hit overall smoke cap (${SMOKE_TIMEOUT}s) after $i invocations; stopping early."
+        break
+    fi
 done
-TOTAL_END=$(date +%s%N)
-TOTAL_MS=$(( (TOTAL_END - TOTAL_START) / 1000000 ))
+TOTAL_END_NS=$(date +%s%N)
+TOTAL_MS=$(( (TOTAL_END_NS - TOTAL_START_NS) / 1000000 ))
 
 echo "==> Total wall-time: ${TOTAL_MS}ms across $ITERATIONS invocations"
 
@@ -75,7 +103,6 @@ if ! grep -q "invocation: 1" <<< "$FIRST_OUTPUT"; then
     echo "$FIRST_OUTPUT" >&2
     exit 1
 fi
-LAST_OUTPUT="$OUT"
 if ! grep -q "invocation: $ITERATIONS" <<< "$LAST_OUTPUT"; then
     echo "FAIL: last invocation didn't show invocation: $ITERATIONS" >&2
     echo "$LAST_OUTPUT" >&2
@@ -84,12 +111,12 @@ fi
 
 # Time individual invocations AFTER the first (warm path).
 echo "==> Timing warm-path invocations (iterations 2..$ITERATIONS)..."
-WARM_START=$(date +%s%N)
+WARM_START_NS=$(date +%s%N)
 for i in $(seq 2 "$ITERATIONS"); do
-    "$BIN" "iter=$i" >/dev/null 2>&1
+    timeout 10 "$BIN" "iter=$i" >/dev/null 2>&1
 done
-WARM_END=$(date +%s%N)
-WARM_MS=$(( (WARM_END - WARM_START) / 1000000 ))
+WARM_END_NS=$(date +%s%N)
+WARM_MS=$(( (WARM_END_NS - WARM_START_NS) / 1000000 ))
 PER_CALL_MS=$(( WARM_MS / (ITERATIONS - 1) ))
 
 echo "==> Warm-path total: ${WARM_MS}ms (${PER_CALL_MS}ms per call)"
