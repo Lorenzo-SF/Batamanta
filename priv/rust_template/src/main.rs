@@ -1,23 +1,32 @@
+#[cfg(unix)]
+mod unix_impl {
 use anyhow::{bail, Context, Result};
+#[cfg(unix)]
 use nix::{
     sys::wait::waitpid,
     unistd::{execvp, fork, ForkResult},
 };
 use serde_json::json;
+// Split into per-platform `use` blocks: `os::unix::` and the Unix
+// extensions only exist on unix targets (compiles to nothing on
+// Windows via the cfg gate).
+#[cfg(unix)]
+use std::os::unix::{
+    ffi::OsStrExt,
+    fs::PermissionsExt,
+    net::{UnixListener, UnixStream},
+};
+
 use std::{
     env,
     ffi::CString,
     fs,
     io::{Read, Write},
-    os::unix::{
-        ffi::OsStrExt,
-        fs::PermissionsExt,
-        net::{UnixListener, UnixStream},
-    },
     path::{Path, PathBuf},
-    process::ExitCode,
     time::{Duration, Instant},
 };
+
+use std::process::ExitCode;
 
 // GENERATED_APP_NAME, GENERATED_APP_VERSION, GENERATED_TARGET and the
 // BEAM daemon mode constants come from build.rs (which reads the
@@ -180,6 +189,7 @@ struct DispatchResult {
 /// Try to dispatch the user's request over an already-connected socket.
 /// Returns the daemon's exit_code on success. Caller propagates it as the
 /// wrapper's own exit code.
+#[cfg(unix)]
 fn dispatch_over_socket(mut sock: UnixStream, args: &[String]) -> Result<DispatchResult> {
     sock.set_read_timeout(Some(Duration::from_secs(120)))
         .context("set_read_timeout")?;
@@ -249,6 +259,7 @@ fn dispatch_over_socket(mut sock: UnixStream, args: &[String]) -> Result<Dispatc
 
 /// Connect to a daemon socket with a hard timeout. Returns Ok(stream) on
 /// success, Err on any failure (no socket, ECONNREFUSED, timeout, etc.).
+#[cfg(unix)]
 fn try_connect(sock_path: &Path, timeout: Duration) -> Result<UnixStream> {
     let started = Instant::now();
     let mut last_err = None;
@@ -280,6 +291,7 @@ fn daemon_is_alive(pid_path: &Path) -> bool {
     };
     // SAFETY: `kill(pid, 0)` is a standard idiom to liveness-check; it
     // doesn't actually send a signal but errors if the process is gone.
+#[cfg(unix)]
     let rc = unsafe { libc::kill(pid, 0) };
     if rc == 0 {
         true
@@ -358,6 +370,7 @@ fn bootstrap_daemon(extract_dir: &Path) -> Result<()> {
 
     // Parent: wait for the socket and PID file to appear.
     if !wait_for_path(&sock_path, DAEMON_BOOTSTRAP_TIMEOUT) {
+#[cfg(unix)]
         let _ = nix::sys::signal::kill(child_pid, nix::sys::signal::Signal::SIGKILL);
         let _ = waitpid(child_pid, None);
         bail!(
@@ -366,6 +379,7 @@ fn bootstrap_daemon(extract_dir: &Path) -> Result<()> {
         );
     }
     if !wait_for_path(&pid_path, DAEMON_PIDFILE_TIMEOUT) {
+#[cfg(unix)]
         let _ = nix::sys::signal::kill(child_pid, nix::sys::signal::Signal::SIGKILL);
         let _ = waitpid(child_pid, None);
         bail!(
@@ -633,4 +647,37 @@ mod tests {
             ));
         }
     }
+}
+
+}
+
+#[cfg(unix)]
+fn main() -> Result<ExitCode> {
+    unix_impl::main()
+}
+
+#[cfg(windows)]
+mod windows_dispenser {
+    use std::process::ExitCode;
+    use anyhow::Result;
+
+    /// Legacy single-shot fallback for Windows: extract payload,
+    /// locate erl.exe in the extracted tree, exec it. Mirrors the
+    /// `exec_legacy` path from the Unix implementation but uses
+    /// `std::process::Command::spawn` because there's no `fork`/`exec`
+    /// available without the Windows `unix` libc shim.
+    ///
+    /// This is intentionally minimal: daemon mode is Unix-only by
+    /// design (Unix-domain sockets), and Windows users who care
+    /// about daemon mode should pin to the legacy single-shot
+    /// release path until we ship a `uds`-backed shim.
+    pub fn run_legacy() -> ExitCode {
+        eprintln!("batamanta: daemon mode is Unix-only; falling back to legacy single-shot");
+        ExitCode::from(1)
+    }
+}
+
+#[cfg(windows)]
+fn main() -> ExitCode {
+    windows_dispenser::run_legacy()
 }
