@@ -24,6 +24,45 @@
 set -euo pipefail
 
 
+# ----------------------------------------------------------------------------
+# Portable timeout(1):
+#   * On Linux + Git for Windows `timeout` is in coreutils and works.
+#   * On stock macOS there is NO `timeout` binary — `gtimeout` only ships
+#     if you `brew install coreutils`. To avoid a hard dependency on
+#     Homebrew we implement a portable fallback: spawn `$@` in the
+#     background, `wait`, and if it exceeded $1 seconds, SIGKILL it.
+#     The syntax used by callers (`timeout N cmd args...`) is preserved.
+# ----------------------------------------------------------------------------
+if ! command -v timeout >/dev/null 2>&1; then
+    _portable_timeout() {
+        local secs=$1
+        shift
+        "$@" &
+        local pid=$!
+        # Use `sleep` + `kill` for portability — bash on macOS still
+        # honours SIGTERM by default.
+        ( sleep "$secs"; kill -TERM "$pid" 2>/dev/null || true ) &
+        local watchdog=$!
+        wait "$pid"
+        local rc=$?
+        # If we got here because the watchdog fired, return 124
+        # (matches GNU coreutils timeout convention).
+        kill -TERM "$watchdog" 2>/dev/null || true
+        wait "$watchdog" 2>/dev/null || true
+        # `kill -0` + extra check isn't needed because rc==124 would
+        # mean the wrapped process exited with that code naturally;
+        # our convention is that rc==143 (SIGTERM=128+15) means timeout.
+        if [[ $rc -eq 143 ]]; then
+            return 124
+        fi
+        return $rc
+    }
+    timeout() {
+        _portable_timeout "$@"
+    }
+fi
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="${1:-}"
 MODE="${2:-cli}"
