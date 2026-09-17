@@ -332,7 +332,8 @@ defmodule Batamanta.Packager do
   # MIX BUNDLED ERTS REMOVAL
   # ============================================================================
 
-  defp remove_mix_bundled_erts(rel_path, erts_work, erts_path \\ erts_work) do
+  defp remove_mix_bundled_erts(rel_path, erts_work, erts_path \\ nil) do
+    erts_path = erts_path || erts_work
     erts_version = detect_erts_version(erts_work, erts_path)
 
     if erts_version do
@@ -349,7 +350,8 @@ defmodule Batamanta.Packager do
     end
   end
 
-  defp update_start_erl_data(rel_path, erts_work, erts_path \\ erts_work) do
+  defp update_start_erl_data(rel_path, erts_work, erts_path \\ nil) do
+    erts_path = erts_path || erts_work
     start_erl_path = Path.join([rel_path, "releases", "start_erl.data"])
 
     if File.exists?(start_erl_path) do
