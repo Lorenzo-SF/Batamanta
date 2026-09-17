@@ -316,6 +316,12 @@ jobs:
 
       - name: Build with Batamanta
         if: steps.pick.outputs.skip != 'true'
+        # NB: explicit `shell: bash` matters on Windows runners, where the
+        # default is PowerShell 7+. The conditional below uses bash's
+        # `[[ ... ]]` syntax which PowerShell rejects with 'Missing ('
+        # after 'if' in if statement.' — without this override the
+        # windows-* smoke cells crash before mix batamanta even runs.
+        shell: bash
         working-directory: ${{ steps.pick.outputs.dir }}
         env:
           # Hint batamanta to the correct target on musl cells; the rest
@@ -695,6 +701,12 @@ jobs:
 
       - name: Build with Batamanta
         if: steps.pick.outputs.skip != 'true'
+        # NB: explicit `shell: bash` matters on Windows runners, where the
+        # default is PowerShell 7+. The conditional below uses bash's
+        # `[[ ... ]]` syntax which PowerShell rejects with 'Missing ('
+        # after 'if' in if statement.' — without this override the
+        # windows-* smoke cells crash before mix batamanta even runs.
+        shell: bash
         working-directory: ${{ steps.pick.outputs.dir }}
         env:
           BATAMANTA_TARGET: ${{ matrix.target }}
