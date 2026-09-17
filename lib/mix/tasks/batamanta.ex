@@ -101,6 +101,7 @@ defmodule Mix.Tasks.Batamanta do
   use Mix.Task
 
   alias Batamanta.Banner
+  alias Batamanta.Daemon
   alias Batamanta.EnvCleaner
   alias Batamanta.ERTS
   alias Batamanta.EscriptBuilder
@@ -454,8 +455,14 @@ defmodule Mix.Tasks.Batamanta do
               ">> 📦 Packaging Escript for #{app_name} (Zstd level #{app_compression})..."
             )
 
+            app_daemon_config =
+              Keyword.get(app_bata_config, :daemon)
+              |> Batamanta.DaemonConfig.from_config()
+              |> Batamanta.DaemonConfig.with_resolved_user_app()
+
             case EscriptPackager.package(escript_path, erts_path, payload_path, app_compression,
-                   execution_mode: app_exec_mode
+                   execution_mode: app_exec_mode,
+                   daemon_config: app_daemon_config
                  ) do
               {:ok, _} ->
                 compile_wrapper(
@@ -656,6 +663,19 @@ defmodule Mix.Tasks.Batamanta do
        ) do
     Logger.info(banner_ctx, ">> 📦 Creating Release...")
 
+    bata_config = Keyword.get(config, :batamanta, [])
+    daemon_config =
+      Keyword.get(bata_config, :daemon)
+      |> Batamanta.DaemonConfig.from_config()
+      |> Batamanta.DaemonConfig.with_resolved_user_app()
+
+    compile_daemon_for_build(
+      daemon_config,
+      erts_path,
+      banner_ctx,
+      prod_build_path()
+    )
+
     build_env =
       EnvCleaner.build_env(erts_path)
       |> Map.new()
@@ -712,6 +732,19 @@ defmodule Mix.Tasks.Batamanta do
        ) do
     Logger.info(banner_ctx, ">> 📦 Creating Escript...")
 
+    bata_config = Keyword.get(config, :batamanta, [])
+    daemon_config =
+      Keyword.get(bata_config, :daemon)
+      |> Batamanta.DaemonConfig.from_config()
+      |> Batamanta.DaemonConfig.with_resolved_user_app()
+
+    compile_daemon_for_build(
+      daemon_config,
+      erts_path,
+      banner_ctx,
+      prod_build_path()
+    )
+
     escript_path = EscriptBuilder.build(config, banner_ctx, erts_path)
 
     payload_path =
@@ -721,9 +754,14 @@ defmodule Mix.Tasks.Batamanta do
 
     bata_config = Keyword.get(config, :batamanta, [])
     exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
+    daemon_config =
+      Keyword.get(bata_config, :daemon)
+      |> Batamanta.DaemonConfig.from_config()
+      |> Batamanta.DaemonConfig.with_resolved_user_app()
 
     case EscriptPackager.package(escript_path, erts_path, payload_path, compression,
-           execution_mode: exec_mode
+           execution_mode: exec_mode,
+           daemon_config: daemon_config
          ) do
       {:ok, _} ->
         compile_wrapper(
@@ -741,6 +779,43 @@ defmodule Mix.Tasks.Batamanta do
       {:error, reason} ->
         Banner.set_image(banner_ctx, :error)
         Mix.raise("Escript packaging error: #{reason}")
+    end
+  end
+
+  # Compila el BEAM daemon al `_build/prod/lib/` ANTES de `mix release`
+  # o `mix escript.build` para que Mix lo trate como una OTP app más.
+  # Sin este paso, la línea `applications: [batamanta_daemon: :permanent]`
+  # del release del proyecto consumidor falla con
+  # `Could not find application :batamanta_daemon`.
+  #
+  # Sólo se compila si `daemon: [enabled: true]` está en la config del
+  # proyecto; en el caso contrario se omite silenciosamente.
+  # Mix.Project.build_path/0 returns the build path for the CURRENT
+  # MIX_ENV. When the smoke matrix runs `mix batamanta` with
+  # MIX_ENV=test, that returns _build/test, but the subsequent
+  # `mix release --overwrite` is invoked with MIX_ENV=prod and looks
+  # for the daemon .app under _build/prod. Construct the prod build
+  # path directly from the project config so the daemon always lands
+  # at _build/prod regardless of MIX_ENV (the public Mix.Project API
+  # only returns the path for the current env).
+  defp prod_build_path do
+    build_root = Mix.Project.config()[:build_path] || "_build"
+    build_root |> Path.expand() |> Path.join("prod")
+  end
+
+  defp compile_daemon_for_build(daemon_config, erts_path, banner_ctx, build_path) do
+    if Batamanta.DaemonConfig.enabled?(daemon_config) do
+      case Daemon.compile_to_build_path(build_path, erts_path, daemon_config) do
+        :ok ->
+          Logger.info(banner_ctx, ">> ⚙️  BEAM daemon compiled at #{build_path}/lib/")
+
+        :skip ->
+          Logger.info(banner_ctx, ">> ⚙️  BEAM daemon already up-to-date")
+
+        {:error, reason} ->
+          Banner.set_image(banner_ctx, :error)
+          Mix.raise("Failed to compile BEAM daemon: #{reason}")
+      end
     end
   end
 

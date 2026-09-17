@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **BEAM daemon mode** (`batamanta: [daemon: [enabled: true, ...]]`):
+  keep a BEAM alive across wrapper invocations so each subsequent call
+  skips the BEAM boot (emulator + kernel/stdlib + user app startup).
+  - Per-binary Unix-domain socket namespaced by `{app, version, target}`
+    under `$XDG_RUNTIME_DIR/batamanta/` (fallback to `/tmp`).
+  - Build-hash check (12-hex SHA-256 of the payload) so a stale daemon
+    from a previous deploy is shut down and a fresh one spawned.
+  - Per-request FIFO/1 concurrency, per-request timeout, stdout/stderr
+    capture via a custom group-leader io_server, inactivity TTL.
+  - New modules: `Batamanta.DaemonConfig`, `Batamanta.Daemon`,
+    `priv/daemon/src/batamanta_daemon_{app,sup,server,protocol,
+    app_controller}.erl` and `priv/daemon/src/batamanta_daemon.hrl`.
+  - New smoke project `smoke_tests/test_beam_daemon/` plus
+    `smoke_tests/test_beam_daemon_runner.sh` which asserts that 15
+    successive invocations of the same binary average under 100ms per
+    call on the warm path (vs. ~200-500ms each in legacy mode).
+  - Rust wrapper extended with a daemon client: try-connect at
+    100ms timeout → either dispatch over the existing socket, fork a
+    bootstrap child that runs `<app>.run batamanta_daemon_bootstrap`
+    and binds the socket, or fall back to legacy single-shot.
+
+### Design notes
+
+- Reuses the same `execution_mode` as the user's CLI app (typically
+  `:cli`); the daemon dispatches to `<App>.CLI.main(args)` on every
+  request. The two daemon concepts in the project — `execution_mode:
+  :daemon` (long-running background service lifecycle) and `daemon:
+  [enabled: true]` (BEAM-keeps-alive wrapper optimisation) — are
+  orthogonal and explicitly named to avoid confusion.
+- See `batamanta-daemon-mode-spec.md` for the spec that motivated this
+  implementation and the test matrix it must satisfy.
+
 ## [2.0.0] - 2026-08-30
 
 ### Added

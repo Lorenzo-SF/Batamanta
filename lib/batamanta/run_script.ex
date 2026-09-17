@@ -76,6 +76,18 @@ defmodule Batamanta.RunScript do
     # is the user's first arg).
     [ "$1" = "--" ] && shift
 
+    # Special arg set by the Rust wrapper when it wants to bootstrap the
+    # BEAM daemon (bind the Unix-domain socket) without running any CLI
+    # command yet. The wrapper will then send its own request over the
+    # socket and exit, leaving the BEAM alive for the next invocation.
+    if [ "$1" = "batamanta_daemon_bootstrap" ]; then
+      shift
+      # Run the daemon app and park. The user app is started by the
+      # release's start.boot as usual (sibling to the daemon); only the
+      # CLI dispatch is routed over the socket.
+      exec "$RELEASE_ROOT/bin/__APP_NAME__" eval 'application:ensure_all_started(batamanta_daemon), receive _ -> ok end' "$@"
+    fi
+
     # Determine our own path. Three sources, in order of preference:
     #   1. BATAMANTA_RUN_SCRIPT — set by the Rust wrapper on Windows
     #      (which `source`s this script, so $0 is "bash" and the

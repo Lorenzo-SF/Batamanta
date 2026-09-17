@@ -24,10 +24,12 @@ defmodule Batamanta.RustTemplateTest do
       assert :ok = RustTemplate.initialize_dispenser(dest_dir)
       assert File.dir?(dest_dir)
 
-      # Verificar que se copiaron los archivos del template
+      # Cargo.toml is the only mandatory file in the template — Cargo.lock
+      # is generated on first `cargo build` and intentionally not committed
+      # to the repo (a stale lock would lie about dependency resolution).
       assert File.exists?(Path.join(dest_dir, "Cargo.toml"))
-      assert File.exists?(Path.join(dest_dir, "Cargo.lock"))
-      assert File.exists?(Path.join(dest_dir, Path.join("src", "main.rs")))
+      assert File.exists?(Path.join(dest_dir, "build.rs"))
+      assert File.exists?(Path.join(Path.join(dest_dir, "src"), "main.rs"))
     end
   end
 
