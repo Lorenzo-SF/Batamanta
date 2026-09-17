@@ -194,7 +194,7 @@ defmodule Batamanta.PackagerTest do
     end
 
     test "recovers version from the cache-dir name when no embedded layout exists", %{
-      base: base
+      base: _base
     } do
       # Regression for the upstream Windows `runtime only` zip:
       # https://github.com/erlang/otp/releases ships a windows-amd64.zip
@@ -226,7 +226,7 @@ defmodule Batamanta.PackagerTest do
     end
 
     test "recovers version from cache-dir name when platform key has dashes", %{
-      base: base
+      base: _base
     } do
       # Some platform keys contain dashes (e.g. `windows-arm64-gnu`).
       # The detector splits on the FIRST dash after the version,
