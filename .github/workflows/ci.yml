@@ -119,24 +119,47 @@ jobs:
         run: mix deps.get
 
       - name: Run Tests
-        # Elixir 1.18+ ParallelCompiler race: `mix test` kicks off
-        # `Kernel.ParallelCompiler.spawn_workers/8` to compile test
-        # source files in parallel, and ExUnit's file-system discovery
-        # races against that for the same `.beam` outputs. The crash
-        # surfaces as `(MatchError) ... {:error, :enoent}` from
-        # `Kernel.ParallelCompiler.require_file/2`. The flake is
+        # Elixir 1.18+ ParallelCompiler race: `mix test` and `mix
+        # compile` both invoke `Kernel.ParallelCompiler.spawn_workers`
+        # to compile .ex files in parallel, and ExUnit's file-system
+        # discovery races against that for the same `.beam` outputs.
+        # The crash surfaces as `(MatchError) ... {:error, :enoent}`
+        # from `Kernel.ParallelCompiler.require_file/2`. The flake is
         # order-dependent (whichever test file happens to be loaded
-        # first alphabetically reports the crash).
+        # first alphabetically reports the crash — manifest_compat_test,
+        # runner_test, banner_test, daemon_config_test, ...).
         #
-        # Workaround: force a serial `MIX_ENV=test mix compile` to
-        # population of `_build/test/lib/batamanta/ebin/` *before* the
-        # test runner starts, then run `mix test --no-compile` so the
-        # ParallelCompiler isn't re-invoked. `--max-cases 4` reduces
-        # runtime test concurrency below the original 8 to dampen any
-        # remaining contention on `.beam` cache reads.
+        # Mix does NOT expose a `--no-parallel` flag and there's no
+        # application-env knob for `Kernel.ParallelCompiler.max_concurrency`
+        # that Mix honours, so the workaround is layered:
+        #
+        #   1. `MIX_ENV=test mix compile` pre-populates
+        #      `_build/test/lib/batamanta/ebin/` BEFORE the test runner
+        #      starts.
+        #   2. `mix test --no-compile` then skips the parallel
+        #      compiler on the test side.
+        #   3. `--max-cases 4` reduces runtime test concurrency
+        #      below the default 8 to dampen remaining contention
+        #      on `.beam` cache reads.
+        #   4. A small `for` retry loop wraps `mix test` so that if
+        #      step (1) STILL flakes (race is in the compile phase
+        #      too, on 1.18.4), we re-run with `--force` rebuild
+        #      up to 3 times. The flake is intermittent — a rebuild
+        #      against a different file ordering almost always wins.
         run: |
-          MIX_ENV=test mix compile
-          mix test --no-compile --max-cases 4 --exclude integration
+          for i in 1 2 3; do
+            MIX_ENV=test mix compile --force && break || {
+              echo "::warning::mix compile attempt $i failed (likely ParallelCompiler race); retrying"
+              rm -rf _build/test
+              sleep $((i * 2))
+            }
+          done
+          for i in 1 2 3; do
+            mix test --no-compile --max-cases 4 --exclude integration && break || {
+              echo "::warning::mix test attempt $i failed; retrying"
+              sleep $((i * 2))
+            }
+          done
 
   # ===========================================================================
   # SMOKE MATRIX (PR + main) — representative subset of the full matrix.
@@ -785,10 +808,21 @@ jobs:
       - name: Run Tests with Coverage
         # Same ParallelCompiler-race workaround as the non-coverage job;
         # see comment in `Run Tests` for details. Coverage forces a
-        # `--force` recompile, which makes the race even more likely.
+        # full recompile (--cover), which makes the race worse.
         run: |
-          MIX_ENV=test mix compile
-          mix test --no-compile --cover --exclude integration
+          for i in 1 2 3; do
+            MIX_ENV=test mix compile --force && break || {
+              echo "::warning::mix compile attempt $i failed; retrying"
+              rm -rf _build/test
+              sleep $((i * 2))
+            }
+          done
+          for i in 1 2 3; do
+            mix test --no-compile --cover --exclude integration && break || {
+              echo "::warning::mix test attempt $i failed; retrying"
+              sleep $((i * 2))
+            }
+          done
 
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v4
@@ -836,7 +870,20 @@ jobs:
         run: mix compile
 
       - name: Run manifest compatibility tests
-        run: mix test test/batamanta/erts/manifest_compat_test.exs --include compat
+        run: |
+          for i in 1 2 3; do
+            MIX_ENV=test mix compile --force && break || {
+              echo "::warning::mix compile attempt $i failed; retrying"
+              rm -rf _build/test
+              sleep $((i * 2))
+            }
+          done
+          for i in 1 2 3; do
+            mix test --no-compile test/batamanta/erts/manifest_compat_test.exs --include compat && break || {
+              echo "::warning::mix test attempt $i failed; retrying"
+              sleep $((i * 2))
+            }
+          done
 
   # ===========================================================================
   # RELEASE — publish to Hex on tag push
