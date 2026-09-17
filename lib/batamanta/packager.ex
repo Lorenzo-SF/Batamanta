@@ -11,6 +11,8 @@ defmodule Batamanta.Packager do
   - **Boot File Preparation**: Ensures correct .boot file for target platform
   """
 
+  alias Batamanta.DaemonConfig
+
   @doc """
   Packages the release and the ERTS into a single compressed tarball.
 
@@ -28,6 +30,23 @@ defmodule Batamanta.Packager do
     temp = Path.join(System.tmp_dir!(), "bat_pkg_#{:erlang.unique_integer([:positive])}")
     config = Mix.Project.config()
     app_name = config[:app] |> to_string()
+    bata_config = Keyword.get(config, :batamanta, [])
+
+    # The daemon is compiled BEFORE `mix release` by mix batamanta's
+    # execute_release_pipeline (see compile_daemon_for_build/4), so the
+    # compiled .beam + .app already exist under _build/prod/lib/ and
+    # get picked up automatically when `mix release` runs. The compiled
+    # .app ends up in rel_path/lib/ without further intervention, and
+    # the payload tar below includes rel_path/lib/** as part of files.
+    #
+    # We still validate the daemon config here so callers see the same
+    # error messages they used to get from Daemon.compile/4 inside the
+    # try/rescue boundary.
+    _daemon_config =
+      bata_config
+      |> Keyword.get(:daemon)
+      |> DaemonConfig.from_config()
+      |> DaemonConfig.with_resolved_user_app()
 
     try do
       File.mkdir_p!(temp)
@@ -50,8 +69,14 @@ defmodule Batamanta.Packager do
       remove_mix_bundled_erts(rel_path, erts_work)
       update_start_erl_data(rel_path, erts_work)
 
+      # The BEAM daemon (when enabled) is compiled BEFORE `mix release`
+      # at `_build/prod/lib/batamanta_daemon-0.1.0/` so that Mix
+      # recognises it as a regular OTP application. After release
+      # assembly, the daemon's .beam files are already inside
+      # `rel_path/lib/batamanta_daemon-0.1.0/ebin/` and we just need
+      # to include them in the payload tar. No re-compilation here.
+
       # Generate <app>.run entry point script
-      bata_config = Keyword.get(config, :batamanta, [])
       exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
       run_script = Batamanta.RunScript.generate(app_name, exec_mode, :release, erts_version)
       run_script_path = Path.join([rel_path, "bin", "#{app_name}.run"])
@@ -301,7 +326,7 @@ defmodule Batamanta.Packager do
   # ============================================================================
 
   defp remove_mix_bundled_erts(rel_path, erts_work) do
-    erts_version = extract_erts_version(erts_work)
+    erts_version = detect_erts_version(erts_work)
 
     if erts_version do
       mix_erts_path = Path.join(rel_path, "erts-#{erts_version}")
@@ -321,7 +346,7 @@ defmodule Batamanta.Packager do
     start_erl_path = Path.join([rel_path, "releases", "start_erl.data"])
 
     if File.exists?(start_erl_path) do
-      erts_version = extract_erts_version(erts_work)
+      erts_version = detect_erts_version(erts_work)
       releases_dir = Path.join(rel_path, "releases")
 
       app_vsn =
@@ -500,38 +525,228 @@ defmodule Batamanta.Packager do
   # that lets the Rust dispenser pick the right decompressor.
 
   @doc """
-  Extracts the ERTS numeric version (e.g., `"14.2"`) from an ERTS work
-  directory by looking for the `erts-*` subdirectory.
+  Extracts the ERTS numeric version (e.g., `"14.2"` or `"28"`) from an ERTS
+  cache or work directory.
 
-  Must be called BEFORE `prepare_erts/1` flattens the structure.
+  ## Layouts supported
+
+  The Fetcher handles three upstream tarball/zip layouts (see
+  `Batamanta.ERTS.Fetcher.erts_valid?/2` for the validator):
+
+    1. **Linux/Mac release-style**: `<root>/erts-<vsn>/bin/erlexec` exists.
+    2. **Windows release-style**: `<root>/bin/erl.exe` + `<root>/releases/<vsn>/`.
+    3. **Windows raw-style** (some erlang/otp Windows prebuilt zips):
+       `erl.exe`, `start.boot` etc. all at the root — no `erts-<vsn>/` subdir.
+
+  Layouts 1 and 2 are picked up by the `erts-<vsn>/` glob. Layout 3 needs
+  a fallback to `<root>/releases/<vsn>/OTP_VERSION` (file) or
+  `<root>/releases/<vsn>/start_erl.data` (parses "OTPVSN PRODVSN").
+
+  ## Why this matters for Windows
+
+  `Path.wildcard(Path.join(erts_path, "erts-*"))` is the original detection
+  mechanism but it only matches layout 1/2. On Windows, layout 3 (no
+  `erts-<vsn>/` subdir) is the one some prebuilt zips actually use, so
+  `mix batamanta` on Windows would raise `Cannot determine ERTS version`
+  even though the cache is valid.
+
+  ## Returns
+
+  A string like `"28"` or `"14.2"`. Raises with a descriptive message if
+  no layout matches.
   """
   @spec get_erts_version(Path.t()) :: String.t()
   def get_erts_version(erts_path) do
-    case Path.wildcard(Path.join(erts_path, "erts-*")) do
-      [dir | _] ->
-        dir |> Path.basename() |> String.trim_leading("erts-")
+    case detect_erts_version(erts_path) do
+      nil ->
+        raise "Cannot determine ERTS version from #{erts_path} " <>
+                "(no erts-* subdir, no releases/<vsn>/ subdir, " <>
+                "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data)"
 
-      [] ->
-        # Fallback: try to read from the top-level releases/ directory
-        case extract_erts_version(erts_path) do
-          nil -> raise "Cannot determine ERTS version from #{erts_path}"
-          otp_ver -> otp_ver
-        end
+      version ->
+        version
     end
   end
 
-  defp extract_erts_version(erts_path) do
-    releases_path = Path.join(erts_path, "releases")
+  @doc """
+  Like `get_erts_version/1` but returns `nil` instead of raising when no
+  layout matches. Used by helpers like `remove_mix_bundled_erts/2` and
+  `update_start_erl_data/2` that want to fall back to a glob-based
+  cleanup rather than abort the whole packager run.
+  """
+  @spec detect_erts_version(Path.t()) :: String.t() | nil
+  def detect_erts_version(erts_path) do
+    detect_from_erts_subdir(erts_path) ||
+      detect_from_releases_subdir(erts_path) ||
+      detect_from_otp_version_file(erts_path) ||
+      detect_from_start_erl_data(erts_path)
+  end
 
-    with true <- File.exists?(releases_path),
-         {:ok, entries} <- File.ls(releases_path) do
-      entries
-      |> Enum.find(fn entry ->
-        full = Path.join(releases_path, entry)
-        File.dir?(full) and entry not in [".", ".."]
-      end)
+  # Layout 1/2: a directory named `erts-<vsn>/` exists at the root.
+  # We use `File.ls/1` + filter rather than `Path.wildcard/1` because:
+  #   * Wildcard treats backslashes vs forward slashes inconsistently
+  #     on Windows when the input path mixes separators (which the
+  #     BatPkg temp dirs frequently do).
+  #   * Wildcard returns files too on some platforms; we want only
+  #     directories and only those whose name starts with `erts-`.
+  #
+  # The `<vsn>` suffix MUST be a numeric OTP version (e.g. "14.2", "28").
+  # This is critical because the Fetcher's cache directory is also named
+  # `erts-<otp_version>-<platform_key>` (e.g. `erts-28.5-windows-amd64`).
+  # The packager does `File.cp_r!(erts_cache, erts_work)` before calling
+  # get_erts_version/1, so `erts_work` contains the cache directory as a
+  # subdirectory. Without the `valid_otp_version_string?/1` check the
+  # cascade would happily return "28.5-windows-amd64" as if it were a
+  # version, breaking every packager run on Windows (and any other
+  # platform whose cache directory name starts with `erts-` and gets
+  # sorted before the upstream `erts-<X.Y>` runtime dir).
+  defp detect_from_erts_subdir(erts_path) do
+    with {:ok, entries} <- File.ls(erts_path),
+         [dir | _] <-
+           Enum.filter(entries, fn e ->
+             String.starts_with?(e, "erts-") and
+               File.dir?(Path.join(erts_path, e)) and
+               valid_otp_version_string?(
+                 e |> String.trim_leading("erts-")
+               )
+           end) do
+      dir |> String.trim_leading("erts-")
     else
       _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # Layout 1/2/3: a directory under `<root>/releases/` whose name looks
+  # like an OTP version (e.g. `28`, `28.0`, `28.0.1`). The directory
+  # typically contains `start_erl.data` and `OTP_VERSION`.
+  defp detect_from_releases_subdir(erts_path) do
+    releases_path = Path.join(erts_path, "releases")
+
+    with {:ok, entries} <- File.ls(releases_path),
+         [dir | _] <-
+           Enum.filter(entries, fn e ->
+             File.dir?(Path.join(releases_path, e)) and
+               e not in [".", ".."] and
+               valid_otp_version_string?(e)
+           end) do
+      dir
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # Layout 3 (Windows raw): a top-level `releases/<vsn>/OTP_VERSION` file.
+  # The file content is the OTP release tag (e.g. "28" or "28.0.1") — we
+  # trim and return it. The `Batamanta.RunScript` consumer of this value
+  # only needs the major.minor prefix to construct `erts-<X.Y>` paths,
+  # so we collapse "X.Y.Z" to "X.Y" for consistency with layout 1/2.
+  defp detect_from_otp_version_file(erts_path) do
+    case find_releases_subdir(erts_path) do
+      nil ->
+        nil
+
+      version ->
+        path =
+          erts_path
+          |> Path.join("releases")
+          |> Path.join(version)
+          |> Path.join("OTP_VERSION")
+
+        case File.read(path) do
+          {:ok, content} -> content |> String.trim() |> normalise_otp_vsn()
+          _ -> nil
+        end
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp normalise_otp_vsn(vsn) do
+    case String.split(vsn, ".") do
+      [major] -> major
+      [major, minor | _] -> "#{major}.#{minor}"
+      _ -> nil
+    end
+  end
+
+  # Layout 3 fallback: `releases/<vsn>/start_erl.data` has the form
+  # "OTPVSN PRODVSN\n" (newline-terminated). We split on whitespace and
+  # return the first token.
+  defp detect_from_start_erl_data(erts_path) do
+    case find_releases_subdir(erts_path) do
+      nil ->
+        nil
+
+      version ->
+        path = Path.join([erts_path, "releases", version, "start_erl.data"])
+        parse_start_erl_data_file(path)
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp parse_start_erl_data_file(path) do
+    case File.read(path) do
+      {:ok, content} -> first_token(content)
+      _ -> nil
+    end
+  end
+
+  defp first_token(content) do
+    case String.split(String.trim(content)) do
+      [first | _] -> first
+      _ -> nil
+    end
+  end
+
+  defp find_releases_subdir(erts_path) do
+    releases_path = Path.join(erts_path, "releases")
+
+    with {:ok, entries} <- File.ls(releases_path),
+         [dir | _] <-
+           Enum.filter(entries, fn e ->
+             File.dir?(Path.join(releases_path, e)) and
+               e not in [".", ".."]
+           end) do
+      dir
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # An OTP version is one of:
+  #   * "X"     — major only (e.g. "28")
+  #   * "X.Y"   — major.minor (e.g. "28.0")
+  #   * "X.Y.Z" — major.minor.patch (e.g. "28.0.1")
+  # We accept all three so we don't accidentally pick a non-version
+  # directory like "start_erl.data" or ".DS_Store".
+  #
+  # We require Integer.parse/1 to consume the WHOLE segment (i.e. the
+  # remainder tuple must be empty). `Integer.parse("28-windows-amd64")`
+  # returns `{28, "-windows-amd64"}` — not `:error` — so a naive
+  # `!= :error` check would accept the Fetcher cache directory name
+  # `erts-28-windows-amd64` after `trim_leading("erts-")` and silently
+  # produce a wrong version. See the Windows ERTS-detection bug
+  # regression in test/batamanta/packager_test.exs.
+  defp valid_otp_version_string?(s) do
+    case String.split(s, ".") do
+      [n] -> parse_consumes_whole?(n)
+      [n1, n2] -> parse_consumes_whole?(n1) and parse_consumes_whole?(n2)
+      [n1, n2, n3] -> parse_consumes_whole?(n1) and parse_consumes_whole?(n2) and parse_consumes_whole?(n3)
+      _ -> false
+    end
+  end
+
+  defp parse_consumes_whole?(segment) do
+    case Integer.parse(segment) do
+      {_int, ""} -> true
+      _ -> false
     end
   end
 end

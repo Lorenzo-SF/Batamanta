@@ -33,6 +33,8 @@ defmodule Batamanta.EscriptPackager do
   - Reproducible builds with fixed ownership and timestamps
   """
 
+  alias Batamanta.DaemonConfig
+
   @doc """
   Packages an escript with minimal ERTS into a compressed tarball.
 
@@ -52,25 +54,31 @@ defmodule Batamanta.EscriptPackager do
     temp_dir = create_temp_directory()
     app_name = Path.basename(escript_path, ".escript")
 
+    # Validate the daemon config here even though we don't use it
+    # locally — the BEAM daemon was compiled earlier by
+    # `mix batamanta.execute_escript_pipeline/8` and is already bundled
+    # into the escript zip. Validating here keeps the error reporting
+    # path the same as the legacy (post-build) code, so misconfigured
+    # projects still get a clear error before reaching the payload tar.
+    _daemon_config = resolve_daemon_config(opts)
+
     try do
       release_dir = Path.join([temp_dir, "release"])
-
       File.mkdir_p!(Path.join([release_dir, "bin"]))
-
-      escript_file =
-        if File.exists?(escript_path) do
-          escript_path
-        else
-          Path.join(Path.dirname(escript_path), Path.basename(escript_path, ".escript"))
-        end
-
-      File.cp!(escript_file, Path.join([release_dir, "bin", app_name]))
+      copy_escript_into_release(release_dir, escript_path, app_name)
 
       # Capture ERTS version BEFORE prepare_minimal_erts flattens
       erts_version = get_erts_version(erts_path)
 
       minimal_erts_path = Path.join([release_dir, "erts-#{erts_version}"])
       prepare_minimal_erts(erts_path, minimal_erts_path)
+
+      # The BEAM daemon (when enabled) is compiled BEFORE `mix escript.build`
+      # at `_build/prod/lib/batamanta_daemon-0.1.0/` so that Mix
+      # recognises it as a regular OTP application. After escript
+      # assembly, the daemon's .beam files are already inside the
+      # escript zip and we just need to include them in the payload
+      # tar. No re-compilation here.
 
       # Copy boot files to release/bin/ so erlexec (which uses
       # $ROOTDIR/bin/ for boot file resolution via ERL_ROOTDIR)
@@ -80,29 +88,69 @@ defmodule Batamanta.EscriptPackager do
         Path.join([release_dir, "bin"])
       )
 
-      # Generate <app>.run entry point script
-      exec_mode = Keyword.get(opts, :execution_mode, :cli)
-      run_script = Batamanta.RunScript.generate(app_name, exec_mode, :escript, erts_version)
-      run_script_path = Path.join([release_dir, "bin", "#{app_name}.run"])
-      File.write!(run_script_path, run_script)
-      File.chmod!(run_script_path, 0o755)
+      write_run_script(release_dir, app_name, opts, erts_version)
 
       tar_path = String.replace_trailing(output_path, ".tar.zst", ".tar")
-
-      case create_tarball(temp_dir, tar_path) do
-        :ok -> :ok
-        {:error, _} = error -> throw(error)
-      end
-
-      case Batamanta.Compression.compress(:zstd, tar_path, output_path, compression_level) do
-        {:ok, ^output_path} -> {:ok, output_path}
-        {:error, _} = error -> throw(error)
-      end
+      create_tarball(temp_dir, tar_path) |> tar_or_throw()
+      compress_output(tar_path, output_path, compression_level)
     after
       File.rm_rf(temp_dir)
     end
   catch
     {:error, reason} -> {:error, reason}
+  end
+
+  # Pulls the DaemonConfig out of opts, normalising the two supported
+  # shapes (`:daemon_config` already-built struct or `:daemon` keyword
+  # list) into a single resolved struct. Kept as a separate function
+  # for clarity; the `case` inside would otherwise push package/5
+  # over credo strict's cyclomatic complexity budget.
+  defp resolve_daemon_config(opts) do
+    case Keyword.fetch(opts, :daemon_config) do
+      {:ok, %DaemonConfig{} = cfg} ->
+        DaemonConfig.with_resolved_user_app(cfg)
+
+      :error ->
+        opts
+        |> Keyword.get(:daemon)
+        |> DaemonConfig.from_config()
+        |> DaemonConfig.with_resolved_user_app()
+    end
+  end
+
+  # The wrapper accepts both `<app>.escript` and the bare `<app>` binary
+  # produced by `mix escript.build` (depending on the version / flags).
+  # Both end up at the same place in the staged release tree.
+  defp copy_escript_into_release(release_dir, escript_path, app_name) do
+    escript_file =
+      if File.exists?(escript_path) do
+        escript_path
+      else
+        Path.join(Path.dirname(escript_path), Path.basename(escript_path, ".escript"))
+      end
+
+    File.cp!(escript_file, Path.join([release_dir, "bin", app_name]))
+  end
+
+  # Writes the `<app>.run` entry-point shell script at the standard
+  # release location. `Batamanta.RunScript` is shared with the release
+  # packager, so this is just a thin wrapper that picks the right opts.
+  defp write_run_script(release_dir, app_name, opts, erts_version) do
+    exec_mode = Keyword.get(opts, :execution_mode, :cli)
+    run_script = Batamanta.RunScript.generate(app_name, exec_mode, :escript, erts_version)
+    run_script_path = Path.join([release_dir, "bin", "#{app_name}.run"])
+    File.write!(run_script_path, run_script)
+    File.chmod!(run_script_path, 0o755)
+  end
+
+  defp tar_or_throw(:ok), do: :ok
+  defp tar_or_throw({:error, _} = err), do: throw(err)
+
+  defp compress_output(tar_path, output_path, compression_level) do
+    case Batamanta.Compression.compress(:zstd, tar_path, output_path, compression_level) do
+      {:ok, ^output_path} -> {:ok, output_path}
+      {:error, _} = err -> throw(err)
+    end
   end
 
   defp create_temp_directory do
@@ -438,34 +486,141 @@ defmodule Batamanta.EscriptPackager do
   end
 
   @doc """
-  Extracts the ERTS numeric version (e.g., `"14.2"`) from an ERTS cache
-  directory by looking for the `erts-*` subdirectory.
+  Extracts the ERTS numeric version (e.g., `"14.2"` or `"28"`) from an ERTS
+  cache or work directory.
+
+  Mirrors `Batamanta.Packager.get_erts_version/1` — see that function's
+  moduledoc for the full layout table and rationale. Kept in lockstep
+  so the release and escript packaging paths agree on what an ERTS
+  cache looks like (important on Windows where `Path.wildcard("erts-*")`
+  alone misses the "raw" zip layout).
   """
   @spec get_erts_version(Path.t()) :: String.t()
   def get_erts_version(erts_path) do
-    case Path.wildcard(Path.join(erts_path, "erts-*")) do
-      [dir | _] ->
-        dir |> Path.basename() |> String.trim_leading("erts-")
+    detect_from_erts_subdir(erts_path) ||
+      detect_from_releases_subdir(erts_path) ||
+      detect_from_otp_version_file(erts_path) ||
+      detect_from_start_erl_data(erts_path) ||
+      raise("Cannot determine ERTS version from #{erts_path} " <>
+              "(no erts-* subdir, no releases/<vsn>/ subdir, " <>
+              "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data)")
+  end
 
-      [] ->
-        release_in_erts = find_first_subdir(Path.join(erts_path, "releases"))
+  defp detect_from_erts_subdir(erts_path) do
+    with {:ok, entries} <- File.ls(erts_path),
+         [dir | _] <-
+           Enum.filter(entries, fn e ->
+             String.starts_with?(e, "erts-") and File.dir?(Path.join(erts_path, e))
+           end) do
+      dir |> String.trim_leading("erts-")
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
 
-        case release_in_erts do
-          nil -> raise("Cannot determine ERTS version from #{erts_path}")
-          dir -> dir
+  defp detect_from_releases_subdir(erts_path) do
+    releases_path = erts_path |> Path.join("releases")
+
+    with {:ok, entries} <- File.ls(releases_path),
+         [dir | _] <-
+           Enum.filter(entries, fn e ->
+             File.dir?(Path.join(releases_path, e)) and
+               e not in [".", ".."] and
+               valid_otp_version_string?(e)
+           end) do
+      dir
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp detect_from_otp_version_file(erts_path) do
+    case find_releases_subdir(erts_path) do
+      nil ->
+        nil
+
+      version ->
+        path =
+          erts_path
+          |> Path.join("releases")
+          |> Path.join(version)
+          |> Path.join("OTP_VERSION")
+
+        case File.read(path) do
+          {:ok, content} -> content |> String.trim() |> normalise_otp_vsn()
+          _ -> nil
         end
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp detect_from_start_erl_data(erts_path) do
+    case find_releases_subdir(erts_path) do
+      nil ->
+        nil
+
+      version ->
+        path =
+          erts_path
+          |> Path.join("releases")
+          |> Path.join(version)
+          |> Path.join("start_erl.data")
+
+        case File.read(path) do
+          {:ok, content} -> first_token(content)
+          _ -> nil
+        end
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp first_token(content) do
+    case String.split(String.trim(content)) do
+      [first | _] -> first
+      _ -> nil
     end
   end
 
-  defp find_first_subdir(path) do
-    with true <- File.exists?(path),
-         {:ok, entries} <- File.ls(path) do
-      entries
-      |> Enum.find(fn entry ->
-        full = Path.join(path, entry)
-        File.dir?(full) and entry not in [".", ".."]
-      end)
+  defp find_releases_subdir(erts_path) do
+    releases_path = erts_path |> Path.join("releases")
+
+    with {:ok, entries} <- File.ls(releases_path),
+         [dir | _] <-
+           Enum.filter(entries, fn e ->
+             File.dir?(Path.join(releases_path, e)) and e not in [".", ".."]
+           end) do
+      dir
     else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp valid_otp_version_string?(s) do
+    case String.split(s, ".") do
+      [n] -> Integer.parse(n) != :error
+      [n1, n2] -> Integer.parse(n1) != :error and Integer.parse(n2) != :error
+      [n1, n2, n3] ->
+        Integer.parse(n1) != :error and
+          Integer.parse(n2) != :error and
+          Integer.parse(n3) != :error
+
+      _ ->
+        false
+    end
+  end
+
+  defp normalise_otp_vsn(vsn) do
+    case String.split(vsn, ".") do
+      [major] -> major
+      [major, minor | _] -> "#{major}.#{minor}"
       _ -> nil
     end
   end

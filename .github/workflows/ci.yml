@@ -278,11 +278,11 @@ jobs:
       - name: Clean cached ERTS (avoid cached build bypassing new code)
         shell: bash
         run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            Remove-Item -Recurse -Force "$HOME/.cache/batamanta" -ErrorAction SilentlyContinue
-          else
-            rm -rf ~/.cache/batamanta
-          fi
+          # \`rm -rf\` works under both Git-for-Windows bash and the
+          # Linux/macOS runners — the previous \`Remove-Item\` line is
+          # PowerShell-only and fails with 'Remove-Item: command not
+          # found' on the bash shell this step uses.
+          rm -rf "$HOME/.cache/batamanta"
 
       - name: Pick smoke_test directory
         id: pick
@@ -295,7 +295,13 @@ jobs:
             release-cli)    dir=smoke_tests/test_release_cli ;;
             escript-cli)    dir=smoke_tests/test_escript ;;
             release-tui)    dir=smoke_tests/test_tui ;;
-            release-daemon) dir=smoke_tests/test_release_nif ;;
+            # release-daemon covers the BEAM-keeps-alive daemon mode
+            # (the `daemon: [enabled: true, ...]` config block — see
+            # batamanta-daemon-mode-spec.md and the test_beam_daemon
+            # smoke project). The legacy test_release_nif pinned OTP 26
+            # which the upstream MANIFEST no longer carries, so it
+            # can't be exercised from CI.
+            release-daemon) dir=smoke_tests/test_beam_daemon ;;
             *) echo "no smoke_test for ${{ matrix.format }}/${{ matrix.mode }}, skipping" >> "$GITHUB_STEP_SUMMARY"
                echo "skip=true" >> "$GITHUB_OUTPUT"
                exit 0 ;;
@@ -317,7 +323,10 @@ jobs:
           BATAMANTA_TARGET: ${{ matrix.target }}
         run: |
           if [[ "${{ matrix.target }}" == linux-musl-* ]]; then
-            mix batamanta --format ${{ matrix.format }} --compression 1 --target ${{ matrix.target }}
+            # NB: there's no --target option on `mix batamanta`; the
+            # ERTS target is auto-detected from the host. Passing the
+            # musl target explicitly would error with "Unknown option".
+            mix batamanta --format ${{ matrix.format }} --compression 1
           else
             mix batamanta --format ${{ matrix.format }} --compression 1
           fi
@@ -651,11 +660,11 @@ jobs:
       - name: Clean cached ERTS
         shell: bash
         run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            Remove-Item -Recurse -Force "$HOME/.cache/batamanta" -ErrorAction SilentlyContinue
-          else
-            rm -rf ~/.cache/batamanta
-          fi
+          # \`rm -rf\` works under both Git-for-Windows bash and the
+          # Linux/macOS runners — the previous \`Remove-Item\` line is
+          # PowerShell-only and fails with 'Remove-Item: command not
+          # found' on the bash shell this step uses.
+          rm -rf "$HOME/.cache/batamanta"
 
       - name: Pick smoke_test directory
         id: pick
@@ -665,7 +674,13 @@ jobs:
             release-cli)    dir=smoke_tests/test_release_cli ;;
             escript-cli)    dir=smoke_tests/test_escript ;;
             release-tui)    dir=smoke_tests/test_tui ;;
-            release-daemon) dir=smoke_tests/test_release_nif ;;
+            # release-daemon covers the BEAM-keeps-alive daemon mode
+            # (the `daemon: [enabled: true, ...]` config block — see
+            # batamanta-daemon-mode-spec.md and the test_beam_daemon
+            # smoke project). The legacy test_release_nif pinned OTP 26
+            # which the upstream MANIFEST no longer carries, so it
+            # can't be exercised from CI.
+            release-daemon) dir=smoke_tests/test_beam_daemon ;;
             *) echo "no smoke_test for ${{ matrix.format }}/${{ matrix.mode }}" >> "$GITHUB_STEP_SUMMARY"
                echo "skip=true" >> "$GITHUB_OUTPUT"
                exit 0 ;;
@@ -685,7 +700,10 @@ jobs:
           BATAMANTA_TARGET: ${{ matrix.target }}
         run: |
           if [[ "${{ matrix.target }}" == linux-musl-* ]]; then
-            mix batamanta --format ${{ matrix.format }} --compression 1 --target ${{ matrix.target }}
+            # NB: there's no --target option on `mix batamanta`; the
+            # ERTS target is auto-detected from the host. Passing the
+            # musl target explicitly would error with "Unknown option".
+            mix batamanta --format ${{ matrix.format }} --compression 1
           else
             mix batamanta --format ${{ matrix.format }} --compression 1
           fi
