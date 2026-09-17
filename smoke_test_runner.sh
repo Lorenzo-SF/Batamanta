@@ -140,10 +140,17 @@ case "$MODE" in
         # Branch on PROJECT_DIR so the new runner is used automatically
         # when CI maps `release-daemon` to test_beam_daemon.
         if [[ "$(basename "$PROJECT_DIR")" == "test_beam_daemon" ]]; then
-            beam_runner="$PROJECT_DIR/../test_beam_daemon_runner.sh"
+            # Resolve relative PROJECT_DIR against SCRIPT_DIR (where this
+            # script lives) rather than CWD — earlier we'd cd into the
+            # project dir before reaching this branch, and `$PROJECT_DIR/..`
+            # then resolved against `$CWD/smoke_tests/test_beam_daemon`,
+            # producing a doubly-nested path that did not exist and
+            # crashed the daemon smoke with 'No such file or directory'.
+            abs_project_dir="$(cd "$SCRIPT_DIR/$PROJECT_DIR" 2>/dev/null && pwd || echo "$PROJECT_DIR")"
+            beam_runner="$abs_project_dir/../test_beam_daemon_runner.sh"
             if [[ ! -x "$beam_runner" ]]; then
                 # Allow repo-relative path (CI runs from repo root).
-                beam_runner="smoke_tests/test_beam_daemon_runner.sh"
+                beam_runner="$SCRIPT_DIR/smoke_tests/test_beam_daemon_runner.sh"
             fi
             echo "🧪 Running BEAM-daemon smoke (test_beam_daemon)..."
             exec "$beam_runner" "${TIMEOUT:-15}"
