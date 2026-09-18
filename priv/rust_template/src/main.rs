@@ -1,32 +1,27 @@
-#[cfg(unix)]
-mod unix_impl {
 use anyhow::{bail, Context, Result};
+// nix is Unix-only (see Cargo.toml target-gated deps). Windows uses
+// std::process::Command + bash instead of fork/execvp.
 #[cfg(unix)]
 use nix::{
     sys::wait::waitpid,
     unistd::{execvp, fork, ForkResult},
 };
-use serde_json::json;
-// Split into per-platform `use` blocks: `os::unix::` and the Unix
-// extensions only exist on unix targets (compiles to nothing on
-// Windows via the cfg gate).
 #[cfg(unix)]
-use std::os::unix::{
-    ffi::OsStrExt,
-    fs::PermissionsExt,
-    net::{UnixListener, UnixStream},
-};
-
+use serde_json::json;
 use std::{
     env,
-    ffi::CString,
     fs,
-    io::{Read, Write},
     path::{Path, PathBuf},
+    process::ExitCode,
+};
+// CString + Unix ext traits only exist where the daemon/fork path does.
+#[cfg(unix)]
+use std::{
+    ffi::CString,
+    io::{Read, Write},
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt, net::UnixStream},
     time::{Duration, Instant},
 };
-
-use std::process::ExitCode;
 
 // GENERATED_APP_NAME, GENERATED_APP_VERSION, GENERATED_TARGET and the
 // BEAM daemon mode constants come from build.rs (which reads the
@@ -36,13 +31,16 @@ include!(concat!(env!("OUT_DIR"), "/generated_config.rs"));
 
 /// Maximum time we wait when trying to connect to an existing daemon
 /// before falling back to the bootstrap path.
+#[cfg(unix)]
 const DAEMON_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Maximum time we wait for a freshly-bootstrapped daemon to bind its
 /// socket before giving up.
+#[cfg(unix)]
 const DAEMON_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum time we wait for the daemon to write its PID file.
+#[cfg(unix)]
 const DAEMON_PIDFILE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 24h cap, consistent with `Batamanta.DaemonConfig.validate!/1`.
@@ -52,16 +50,19 @@ const TTL_MAX_MS: u64 = 86_400_000;
 // Path derivation
 // ============================================================================
 
-/// Directory where the daemon's runtime files live.
+/// Directory where the daemon's runtime files live (Unix-only: daemon
+/// mode uses AF_UNIX sockets, unsupported on Windows).
+#[cfg(unix)]
 fn runtime_dir() -> PathBuf {
     let base = env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
+        .unwrap_or_else(env::temp_dir);
     base.join("batamanta")
 }
 
 /// Path of the AF_UNIX socket the daemon listens on.
+#[cfg(unix)]
 fn daemon_sock_path() -> PathBuf {
     runtime_dir().join(format!(
         "{}-{}-{}.sock",
@@ -70,6 +71,7 @@ fn daemon_sock_path() -> PathBuf {
 }
 
 /// Path of the daemon's PID file.
+#[cfg(unix)]
 fn daemon_pid_path() -> PathBuf {
     runtime_dir().join(format!(
         "{}-{}-{}.pid",
@@ -92,12 +94,15 @@ fn legacy_run_script_path(extract_dir: &Path) -> PathBuf {
 
 /// Why we're not in daemon mode (for diagnostics + log lines).
 #[derive(Debug)]
+#[allow(dead_code)] // fields are only surfaced via {:?} in the stderr warning
 enum NoDaemonReason {
     FeatureDisabled,
     EnvUnset,
     EnvZero,
     EnvInvalid(String),
     TtlOutOfRange(u64),
+    /// Daemon mode needs AF_UNIX sockets + fork/exec: Unix-only.
+    UnsupportedOs,
 }
 
 /// Outcome of `resolve_dispatch`: either take the daemon path or fall back
@@ -109,10 +114,16 @@ enum DispatchDecision {
     Legacy(NoDaemonReason),
 }
 
+#[allow(unreachable_code)]
 fn resolve_dispatch() -> DispatchDecision {
     if !GENERATED_DAEMON_ENABLED {
         return DispatchDecision::Legacy(NoDaemonReason::FeatureDisabled);
     }
+
+    // Daemon mode needs AF_UNIX sockets + fork/exec: Unix-only. Fall back
+    // to legacy single-shot on Windows (with a stderr warning below).
+    #[cfg(windows)]
+    return DispatchDecision::Legacy(NoDaemonReason::UnsupportedOs);
 
     let raw = env::var(GENERATED_DAEMON_VAR).unwrap_or_default();
     let trimmed = raw.trim();
@@ -161,6 +172,7 @@ fn extract_payload_if_needed(extract_dir: &Path, bytes: &[u8]) -> Result<()> {
 // ============================================================================
 
 /// Frame format: 4-byte big-endian length prefix + JSON payload.
+#[cfg(unix)]
 fn write_framed<W: Write>(w: &mut W, payload: &[u8]) -> std::io::Result<()> {
     let len = payload.len() as u32;
     w.write_all(&len.to_be_bytes())?;
@@ -169,6 +181,7 @@ fn write_framed<W: Write>(w: &mut W, payload: &[u8]) -> std::io::Result<()> {
 }
 
 /// Read exactly one 4-byte-prefixed frame.
+#[cfg(unix)]
 fn read_framed<R: Read>(r: &mut R) -> Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     r.read_exact(&mut len_buf).context("short read on length prefix")?;
@@ -182,6 +195,7 @@ fn read_framed<R: Read>(r: &mut R) -> Result<Vec<u8>> {
 }
 
 #[derive(Debug)]
+#[cfg(unix)]
 struct DispatchResult {
     exit_code: i32,
 }
@@ -280,6 +294,7 @@ fn try_connect(sock_path: &Path, timeout: Duration) -> Result<UnixStream> {
 
 /// Liveness check: read the PID file, send `kill(pid, 0)`. Returns true
 /// only if the process exists and we have permission to signal it.
+#[cfg(unix)]
 fn daemon_is_alive(pid_path: &Path) -> bool {
     let pid_str = match fs::read_to_string(pid_path) {
         Ok(s) => s,
@@ -291,7 +306,6 @@ fn daemon_is_alive(pid_path: &Path) -> bool {
     };
     // SAFETY: `kill(pid, 0)` is a standard idiom to liveness-check; it
     // doesn't actually send a signal but errors if the process is gone.
-#[cfg(unix)]
     let rc = unsafe { libc::kill(pid, 0) };
     if rc == 0 {
         true
@@ -306,6 +320,7 @@ fn daemon_is_alive(pid_path: &Path) -> bool {
 }
 
 /// Poll for the appearance of `path` until it exists or `timeout` elapses.
+#[cfg(unix)]
 fn wait_for_path(path: &Path, timeout: Duration) -> bool {
     let started = Instant::now();
     while started.elapsed() < timeout {
@@ -321,6 +336,7 @@ fn wait_for_path(path: &Path, timeout: Duration) -> bool {
 /// socket + write its PID file. The child process gets all the env vars
 /// the daemon needs; it runs `<app>.run batamanta_daemon_bootstrap` which
 /// is the run-script mode that loads only the daemon app and parks.
+#[cfg(unix)]
 fn bootstrap_daemon(extract_dir: &Path) -> Result<()> {
     let sock_path = daemon_sock_path();
     let pid_path = daemon_pid_path();
@@ -341,7 +357,7 @@ fn bootstrap_daemon(extract_dir: &Path) -> Result<()> {
         bail!("run script missing at {}", run_script.display());
     }
 
-    let run_script_cstr = CString::new(run_script.as_os_str().as_bytes())
+    let run_script_cstr = CString::new(run_script.as_os_str().as_encoded_bytes())
         .context("invalid run script path")?;
     let bootstrap_arg = CString::new("batamanta_daemon_bootstrap").unwrap();
 
@@ -370,7 +386,6 @@ fn bootstrap_daemon(extract_dir: &Path) -> Result<()> {
 
     // Parent: wait for the socket and PID file to appear.
     if !wait_for_path(&sock_path, DAEMON_BOOTSTRAP_TIMEOUT) {
-#[cfg(unix)]
         let _ = nix::sys::signal::kill(child_pid, nix::sys::signal::Signal::SIGKILL);
         let _ = waitpid(child_pid, None);
         bail!(
@@ -379,7 +394,6 @@ fn bootstrap_daemon(extract_dir: &Path) -> Result<()> {
         );
     }
     if !wait_for_path(&pid_path, DAEMON_PIDFILE_TIMEOUT) {
-#[cfg(unix)]
         let _ = nix::sys::signal::kill(child_pid, nix::sys::signal::Signal::SIGKILL);
         let _ = waitpid(child_pid, None);
         bail!(
@@ -395,6 +409,7 @@ fn bootstrap_daemon(extract_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn set_daemon_env_for_bootstrap(sock_path: &Path, pid_path: &Path) {
     // Called from the freshly-forked child between fork() and execvp().
     // Strictly speaking, `std::env::set_var` is not async-signal-safe, but
@@ -420,6 +435,8 @@ fn set_daemon_env_for_bootstrap(sock_path: &Path, pid_path: &Path) {
 // Daemon dispatch (orchestrator)
 // ============================================================================
 
+/// Unix daemon dispatch (AF_UNIX socket + fork/exec bootstrap).
+#[cfg(unix)]
 fn dispatch_via_daemon(args: &[String]) -> Result<i32> {
     let sock_path = daemon_sock_path();
     let pid_path = daemon_pid_path();
@@ -486,8 +503,9 @@ fn dispatch_via_daemon(args: &[String]) -> Result<i32> {
 // Legacy path
 // ============================================================================
 
+#[cfg(unix)]
 fn build_argv_for(program: &Path, args: &[String]) -> Result<Vec<CString>> {
-    let program_cstr = CString::new(program.as_os_str().as_bytes())
+    let program_cstr = CString::new(program.as_os_str().as_encoded_bytes())
         .context("invalid program path")?;
     let mut argv = vec![program_cstr];
     for arg in args {
@@ -496,6 +514,160 @@ fn build_argv_for(program: &Path, args: &[String]) -> Result<Vec<CString>> {
     Ok(argv)
 }
 
+// Convert a Windows path to MSYS2/Git-Bash style so bash can find the
+// executable on PATH. Passing `C:/...` doesn't work (bash won't translate
+// it back); drive letters must become `/c/...`. Restored verbatim from the
+// pre-daemon wrapper.
+#[cfg(windows)]
+fn to_msys2_path(p: &str) -> String {
+    let s = p;
+    // Strip the Windows extended-length prefix \\?\ if present.
+    let s = s.strip_prefix(r"\\?\").unwrap_or(s);
+    // Convert drive letter "C:\" or "C:/" to "/c/".
+    let s = if let Some(rest) = s.strip_prefix(|c: char| c.is_ascii_alphabetic()) {
+        if let Some(after_colon) = rest.strip_prefix(':') {
+            // Drive-letter path: "C:\foo" or "C:/foo" -> "/c/foo"
+            let drive = s.chars().next().unwrap().to_ascii_lowercase();
+            format!("/{}{}", drive, after_colon.replace('\\', "/"))
+        } else {
+            s.to_string()
+        }
+    } else {
+        s.to_string()
+    };
+    s
+}
+
+/// Windows legacy path: the .run script in the payload is a POSIX shell
+/// script and Windows can't execute it directly. Shell out to bash.exe
+/// (provided by Git for Windows, already a build prereq) and wait for the
+/// child.
+///
+/// The whole chain boots EXCLUSIVELY from the bundled ERTS inside the
+/// payload (.run → bin/<app> → releases/elixir → erts erl.exe — the
+/// packager patches ERL_EXEC to the PE launcher at build time). System
+/// Erlang is never consulted: no PATH probing, no BATAMANTA_ERL, no
+/// ERL_BINDIR override.
+#[cfg(windows)]
+fn exec_legacy(run_script: &Path, _args: &[String]) -> Result<ExitCode> {
+    let bash = locate_bash_exe()?;
+
+    // Build a small bash wrapper:
+    //   1. Clean POSIX PATH with just Git usr/bin (readlink, dirname, pwd
+    //      for the .run script). Deliberately NOT passing through the
+    //      parent's `;`-separated $PATH (corrupts bash's parser).
+    //   2. BATAMANTA_RUN_SCRIPT so the .run script finds itself (we
+    //      `source` it, so $0 is "bash").
+    //   3. BATAMANTA_USER_ARGS round-trip for multi-word CLI args.
+    //   4. `source` the original .run script verbatim.
+    let script_posix = to_msys2_path(&run_script.to_string_lossy());
+    let mut script = String::new();
+    script.push_str("set -e\n");
+    script.push_str(&format!("export BATAMANTA_RUN_SCRIPT=\"{script_posix}\"\n"));
+
+    // Serialize the user's CLI args into BATAMANTA_USER_ARGS (single-quoted,
+    // `'` escaped as `'\''`) so multi-word args survive the
+    // `bash -c` -> `source` -> `exec` chain. No-op on POSIX (execvp path).
+    let user_args_str: String = env::args_os()
+        .skip(1)
+        .map(|a| {
+            let s = a.to_string_lossy();
+            let escaped = s.replace('\'', "'\\''");
+            format!("'{escaped}'")
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    script.push_str(&format!(
+        "export BATAMANTA_USER_ARGS=\"{user_args_str}\"\n"
+    ));
+
+    // Minimal POSIX PATH: Git usr/bin only. The sourced .run script
+    // prepends the payload's own erts bin dir itself. Never pass through
+    // the parent's `;`-separated $PATH (breaks bash's parser).
+    if let Some(tools_bin) = git_tools_bin(&bash) {
+        let tools_bin_posix = to_msys2_path(&tools_bin.to_string_lossy());
+        script.push_str(&format!("export PATH=\"{tools_bin_posix}\"\n"));
+    } else {
+        eprintln!("[batamanta] WARNING: could not find Git usr/bin for dirname/readlink/pwd; .run script may fail");
+    }
+    script.push_str("export ERL_FLAGS=\"\" ERL_AFLAGS=\"\" ERL_ZFLAGS=\"\"\n");
+    script.push_str(&format!("source \"{script_posix}\"\n"));
+
+    let mut cmd = std::process::Command::new(&bash);
+    // `bash -c "script" -- args...`: the `--` keeps the first user arg out
+    // of $0 (else it gets eaten and the .run script mis-shifts $@).
+    cmd.arg("-c").arg(&script).arg("--");
+    for arg in env::args_os().skip(1) {
+        cmd.arg(arg);
+    }
+
+    let status = cmd
+        .status()
+        .context("Failed to spawn bash for .run script")?;
+    let code = status.code().unwrap_or(1) as u8;
+    Ok(ExitCode::from(code))
+}
+
+// Locate bash.exe: BATAMANTA_BASH override, then current PATH, then the
+// conventional Git for Windows install dirs.
+#[cfg(windows)]
+fn locate_bash_exe() -> Result<String> {
+    if let Ok(p) = std::env::var("BATAMANTA_BASH") {
+        if std::path::Path::new(&p).exists() {
+            return Ok(p);
+        }
+    }
+
+    let candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\usr\bin\bash.exe",
+    ];
+    for c in candidates {
+        if std::path::Path::new(c).exists() {
+            return Ok(c.to_string());
+        }
+    }
+
+    anyhow::bail!(
+        "Could not find bash.exe. Install Git for Windows (scoop install git) \
+         or set BATAMANTA_BASH to the full path of bash.exe."
+    )
+}
+
+// Given bash.exe, find Git for Windows' companion `usr\bin` (dirname,
+// readlink, pwd...). The sourced .run script needs these tools.
+#[cfg(windows)]
+fn git_tools_bin(bash_path: &str) -> Option<std::path::PathBuf> {
+    let p = std::path::Path::new(bash_path);
+    let dir = p.parent()?;
+    let dir_str = dir.to_string_lossy();
+
+    // .../Git/bin/bash.exe -> .../Git/usr/bin
+    if dir_str.ends_with("Git\\bin") || dir_str.ends_with("Git/bin") {
+        let candidate = dir.parent()?.join("usr").join("bin");
+        if candidate.join("dirname.exe").exists() {
+            return Some(candidate);
+        }
+    }
+    // .../Git/usr/bin/bash.exe -> right here
+    if dir_str.ends_with("Git\\usr\\bin") || dir_str.ends_with("Git/usr/bin") {
+        if dir.join("dirname.exe").exists() {
+            return Some(dir.to_path_buf());
+        }
+    }
+    // .../Git/mingw64/bin/bash.exe -> .../Git/usr/bin
+    if dir_str.ends_with("Git\\mingw64\\bin") || dir_str.ends_with("Git/mingw64/bin") {
+        let candidate = dir.parent()?.parent()?.join("usr").join("bin");
+        if candidate.join("dirname.exe").exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
 fn exec_legacy(run_script: &Path, args: &[String]) -> Result<()> {
     let argv = build_argv_for(run_script, args)?;
     let program = &argv[0];
@@ -516,6 +688,9 @@ fn main() -> Result<ExitCode> {
     let args: Vec<String> = env::args().skip(1).collect();
 
     match resolve_dispatch() {
+        // Daemon mode needs AF_UNIX sockets + fork/exec: Unix-only. On
+        // Windows resolve_dispatch never yields Daemon (UnsupportedOs).
+        #[cfg(unix)]
         DispatchDecision::Daemon => {
             let extract_dir = extract_dir_from_payload();
             let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/payload.tar.zst"));
@@ -567,6 +742,7 @@ fn main() -> Result<ExitCode> {
                     | NoDaemonReason::EnvInvalid(_)
                     | NoDaemonReason::TtlOutOfRange(_)
                     | NoDaemonReason::EnvZero
+                    | NoDaemonReason::UnsupportedOs
             ) {
                 eprintln!(
                     "batamanta: daemon mode requested ({:?}); running legacy single-shot",
@@ -574,9 +750,21 @@ fn main() -> Result<ExitCode> {
                 );
             }
 
-            exec_legacy(&run_script, &args)?;
-            Ok(ExitCode::from(1))
+            // Unix execvp never returns; Windows returns the child's code.
+            #[cfg(unix)]
+            {
+                exec_legacy(&run_script, &args)?;
+                Ok(ExitCode::from(1))
+            }
+            #[cfg(windows)]
+            {
+                exec_legacy(&run_script, &args)
+            }
         }
+        // Unreachable on Windows (resolve_dispatch never yields Daemon
+        // there); keeps the match exhaustive under cfg.
+        #[cfg(windows)]
+        _ => unreachable!("daemon mode is Unix-only"),
     }
 }
 
@@ -589,6 +777,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)]
     fn daemon_sock_path_is_namespaced() {
         let path = daemon_sock_path();
         let path_str = path.to_string_lossy();
@@ -599,6 +788,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn daemon_pid_path_matches_sock_path_dir() {
         let sock = daemon_sock_path();
         let pid = daemon_pid_path();
@@ -606,6 +796,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn frame_roundtrip() {
         let payload = b"hello world";
         let mut buf: Vec<u8> = Vec::new();
@@ -616,6 +807,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn frame_rejects_oversize() {
         // Construct a fake "header" declaring 100 MiB, then verify we
         // bail before trying to allocate.
@@ -647,37 +839,4 @@ mod tests {
             ));
         }
     }
-}
-
-}
-
-#[cfg(unix)]
-fn main() -> Result<ExitCode> {
-    unix_impl::main()
-}
-
-#[cfg(windows)]
-mod windows_dispenser {
-    use std::process::ExitCode;
-    use anyhow::Result;
-
-    /// Legacy single-shot fallback for Windows: extract payload,
-    /// locate erl.exe in the extracted tree, exec it. Mirrors the
-    /// `exec_legacy` path from the Unix implementation but uses
-    /// `std::process::Command::spawn` because there's no `fork`/`exec`
-    /// available without the Windows `unix` libc shim.
-    ///
-    /// This is intentionally minimal: daemon mode is Unix-only by
-    /// design (Unix-domain sockets), and Windows users who care
-    /// about daemon mode should pin to the legacy single-shot
-    /// release path until we ship a `uds`-backed shim.
-    pub fn run_legacy() -> ExitCode {
-        eprintln!("batamanta: daemon mode is Unix-only; falling back to legacy single-shot");
-        ExitCode::from(1)
-    }
-}
-
-#[cfg(windows)]
-fn main() -> ExitCode {
-    windows_dispenser::run_legacy()
 }
