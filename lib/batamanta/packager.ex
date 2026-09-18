@@ -73,6 +73,7 @@ defmodule Batamanta.Packager do
       |> then(&prepare_start_boot(rel_path, &1, erts_work))
 
       relativize_release_scripts(rel_path)
+      patch_windows_elixir_exec(rel_path, erts_work)
       remove_mix_bundled_erts(rel_path, erts_work, erts_path)
       update_start_erl_data(rel_path, erts_work, erts_path)
 
@@ -400,6 +401,58 @@ defmodule Batamanta.Packager do
   end
 
   # ============================================================================
+  # WINDOWS ELIXIR-LAUNCHER PATCH (bundled ERTS only, no system Erlang)
+  # ============================================================================
+
+  # On Windows payloads, `mix release` generates `releases/<vsn>/elixir`
+  # (and `iex`) shell scripts that end with `ERL_EXEC="erl"` +
+  # `exec "$ERTS_BIN$ERL_EXEC"`. Under Git Bash, `$ERTS_BIN/erl` resolves
+  # to the POSIX `erl` shell script shipped inside `erts-*/bin/`, which
+  # tries to exec a Unix-only `erlexec` binary that doesn't exist on
+  # Windows (the Windows launcher is `erl.exe`, next to `erlexec.dll`).
+  #
+  # Point ERL_EXEC at the PE launcher so the whole chain
+  # (.run → bin/<app> → releases/elixir → erts erl.exe) boots EXCLUSIVELY
+  # from the bundled ERTS. System Erlang is never consulted.
+  #
+  # Windows payload detection is content-based (not host-based): the host
+  # building a Linux payload on Windows must NOT get this patch. A Windows
+  # ERTS tree always carries `bin/erl.exe`; POSIX trees never do.
+  @spec patch_windows_elixir_exec(Path.t(), Path.t()) :: :ok
+  defp patch_windows_elixir_exec(rel_path, erts_work) do
+    # NOTE: Path.wildcard/1 needs forward slashes on Windows (a backlash
+    # base matches nothing) — absname both inputs like every other
+    # packager step does (cf. relativize_release_scripts/1).
+    if windows_erts?(Path.absname(erts_work)) do
+      rel_path
+      |> Path.absname()
+      |> Path.join("releases/*/{elixir,iex}")
+      |> Path.wildcard()
+      |> Enum.each(&patch_erl_exec/1)
+    end
+
+    :ok
+  end
+
+  defp windows_erts?(erts_work) do
+    erts_work |> Path.join("bin/erl.exe") |> File.exists?()
+  end
+
+  defp patch_erl_exec(script) do
+    if File.regular?(script) do
+      content = File.read!(script)
+
+      patched = String.replace(content, ~s(ERL_EXEC="erl"), ~s(ERL_EXEC="erl.exe"))
+
+      if patched != content do
+        File.write!(script, patched)
+      end
+    end
+
+    :ok
+  end
+
+  # ============================================================================
   # bin/<app> PATCHES FOR BUNDLED erlexec
   # ============================================================================
 
@@ -628,19 +681,25 @@ defmodule Batamanta.Packager do
       |> String.split("/")
       |> Enum.reject(&(&1 == "" or &1 == "." or &1 == ".."))
 
-    case segments do
-      [last | _] ->
-        case last do
-          "erts-" <> rest ->
-            case String.split(rest, "-", parts: 2) do
-              [vsn, _platform] ->
-                if valid_otp_version_string?(vsn), do: vsn, else: nil
+    case List.last(segments) do
+      nil ->
+        nil
 
-              _ ->
-                nil
-            end
+      "erts-" <> rest ->
+        case String.split(rest, "-", parts: 2) do
+          [vsn, _platform] ->
+            if valid_otp_version_string?(vsn), do: vsn, else: nil
 
           _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # Layout 1/2: a directory named `erts-<vsn>/` exists at the root.
             nil
         end
 
@@ -673,9 +732,7 @@ defmodule Batamanta.Packager do
            Enum.filter(entries, fn e ->
              String.starts_with?(e, "erts-") and
                File.dir?(Path.join(erts_path, e)) and
-               valid_otp_version_string?(
-                 e |> String.trim_leading("erts-")
-               )
+               valid_otp_version_string?(e |> String.trim_leading("erts-"))
            end) do
       dir |> String.trim_leading("erts-")
     else
@@ -803,10 +860,17 @@ defmodule Batamanta.Packager do
   # regression in test/batamanta/packager_test.exs.
   defp valid_otp_version_string?(s) do
     case String.split(s, ".") do
-      [n] -> parse_consumes_whole?(n)
-      [n1, n2] -> parse_consumes_whole?(n1) and parse_consumes_whole?(n2)
-      [n1, n2, n3] -> parse_consumes_whole?(n1) and parse_consumes_whole?(n2) and parse_consumes_whole?(n3)
-      _ -> false
+      [n] ->
+        parse_consumes_whole?(n)
+
+      [n1, n2] ->
+        parse_consumes_whole?(n1) and parse_consumes_whole?(n2)
+
+      [n1, n2, n3] ->
+        parse_consumes_whole?(n1) and parse_consumes_whole?(n2) and parse_consumes_whole?(n3)
+
+      _ ->
+        false
     end
   end
 
