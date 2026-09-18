@@ -106,12 +106,10 @@ defmodule Batamanta.RunScript do
     ERTS_DIR="$RELEASE_ROOT/__ERTS_DIR__"
     ERTS_BIN="$ERTS_DIR/bin"
 
-    # ERL_BINDIR may be set externally (e.g. by the Windows Rust wrapper
-    # which auto-locates a working system Erlang). If so, honour it: the
-    # bundled `bin/erl.exe` in the payload is the NSIS installer shim and
-    # crashes (0xC0000005) when invoked outside the installer's context
-    # on Windows. On POSIX the bundled erl is real, so when ERL_BINDIR
-    # is NOT set we fall back to the payload's own bin/.
+    # ERL_BINDIR may be set externally as a manual escape hatch. If so,
+    # honour it. Otherwise the payload's own bin/ is used, so the release
+    # boots EXCLUSIVELY from the bundled ERTS (system Erlang is never
+    # consulted by the wrapper).
     if [ -n "$ERL_BINDIR" ]; then
       ERTS_BIN="$ERL_BINDIR"
     fi

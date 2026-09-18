@@ -343,6 +343,10 @@ En modo auto, si la versión exacta no está disponible:
 | **Linux (musl)** | x86_64, aarch64 | CLI, Daemon | ✅ Soportado |
 | **Windows 10+** | x86_64 | CLI | ✅ Soportado |
 
+> **Nota Windows:** los binarios arrancan exclusivamente del ERTS empaquetado
+> (nunca usan el Erlang del sistema). En ejecución solo necesitan Git for
+> Windows (bash) para el lanzador `.run`.
+
 ### Restricciones
 
 - ❌ Windows + modo TUI (requiere terminal Unix)

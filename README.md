@@ -326,6 +326,10 @@ Sub-apps without `batamanta:` config are ignored. The umbrella root config provi
 | **Linux (musl)** | x86_64, aarch64 | CLI, Daemon | ✅ Supported |
 | **Windows 10+** | x86_64 | CLI | ✅ Supported |
 
+> **Windows note:** binaries boot exclusively from the bundled ERTS —
+> system Erlang is never consulted. At runtime they only need Git for
+> Windows (bash) to interpret the `.run` launcher.
+
 ### OTP / Elixir Versions
 
 | OTP | Elixir | Status |

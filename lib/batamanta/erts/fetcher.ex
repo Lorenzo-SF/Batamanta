@@ -761,29 +761,14 @@ defmodule Batamanta.ERTS.Fetcher do
   end
 
   defp erts_valid?(extract_dir, otp_version) do
-    # There are three known upstream layouts, depending on the target:
-    #
-    #   1. Linux/Mac release-style:
-    #        bin/erlexec, releases/<vsn>/OTP_VERSION, releases/<vsn>/<boot>,
-    #        lib/<erts-*>, erts-<vsn>/bin
-    #   2. Windows release-style (re-packaged from erlang/otp prebuilt):
-    #        bin/erl.exe, releases/<vsn>/OTP_VERSION, erts-<vsn>/bin,
-    #        erts-<vsn>/lib
-    #   3. Windows raw-style (some older re-packaged zips):
-    #        erl.exe, erlc.exe, werl.exe, start.boot, start_clean.boot,
-    #        start_sasl.boot, no_dot_erlang.boot  (everything at the root)
-    #
-    # Layouts 1 and 2 are what the Fetcher was originally written for. Layout
-    # 3 is a third variant that some Erlang/OTP Windows prebuilt zips use —
-    # we accept it by checking for `erl.exe` + at least one `*.boot` file
-    # at the root.
-    # The 2-check threshold is what makes a layout "self-consistent" — a
-    # single hit (e.g. only `lib/`) is not enough to call it valid, but
-    # two strongly-correlated hits (e.g. `bin/erlexec` + `releases/<vsn>/`)
-    # describe a complete release-style tree. For the raw Windows layout
-    # (everything at the root, no subdirs) we count each top-level
-    # executable / boot file as its own check, so a healthy raw layout
-    # passes 4+ of them.
+    # Layouts 1 (Linux/Mac) y 2 (Windows release-style) son los únicos que
+    # batamanta puede empaquetar: necesitan `bin/`, `lib/`, `releases/<vsn>/`
+    # y/o `erts-*/`. El layout 3 "raw" (solo 12 ficheros en root: erl.exe,
+    # start.boot... sin subdirs) es un asset truncado del mirror (bug de
+    # `process_windows_zip` que empaquetaba solo `bin/`, ~320KB vs ~183MB
+    # upstream) y SIEMPRE falla después en `Packager.get_erts_version/2`
+    # porque no hay versión recuperable dentro. Por eso el raw solo ya no
+    # valida: exigimos evidencia estructural además del conteo.
     checks = [
       # --- Linux/Mac release-style ---
       File.exists?(Path.join(extract_dir, "bin/erlexec")),
@@ -794,14 +779,35 @@ defmodule Batamanta.ERTS.Fetcher do
       has_valid_release_dir?(extract_dir),
       # --- Shared: present in both release-style and some raw zips ---
       File.dir?(Path.join(extract_dir, "lib")),
+      has_erts_subdir?(extract_dir),
       # --- Windows raw-style (everything at the root, no bin/ or releases/) ---
+      # Se cuentan pero ya no bastan por sí solos (ver structural? abajo).
       File.regular?(Path.join(extract_dir, "erl.exe")),
       File.regular?(Path.join(extract_dir, "erlc.exe")),
       File.regular?(Path.join(extract_dir, "werl.exe")),
       File.regular?(Path.join(extract_dir, "start.boot"))
     ]
 
-    Enum.count(checks, & &1) >= 2
+    structural? =
+      File.dir?(Path.join(extract_dir, "lib")) or
+        has_valid_release_dir?(extract_dir) or
+        has_erts_subdir?(extract_dir) or
+        File.dir?(Path.join(extract_dir, "bin"))
+
+    Enum.count(checks, & &1) >= 2 and structural?
+  end
+
+  defp has_erts_subdir?(extract_dir) do
+    case File.ls(extract_dir) do
+      {:ok, entries} ->
+        Enum.any?(entries, fn e ->
+          String.starts_with?(e, "erts-") and
+            File.dir?(Path.join(extract_dir, e))
+        end)
+
+      _ ->
+        false
+    end
   end
 
   defp has_valid_release_dir?(extract_dir) do
