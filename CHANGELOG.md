@@ -461,3 +461,7 @@ Erlang consulted).
 - **Error Handling**: Migrated to result-tuple based error propagation (`{:ok, term} | {:error, reason}`) for more reliable orchestration.
 - **Unit Testing**: Full test suite covering target resolution, packaging logic, and cache management.
 - **CI/CD Integration**: Pre-configured GitHub Actions to validate compatibility across multiple Elixir and OTP versions.
+
+[v3.0.0]: https://hex.pm/packages/batamanta/3.0.0
+[v2.0.0]: https://hex.pm/packages/batamanta/2.0.0
+[Unreleased]: https://github.com/Lorenzo-SF/Batamanta/compare/v3.0.0...HEAD
