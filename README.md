@@ -96,7 +96,7 @@ If no image support is detected, the banner falls back to text-only mode.
 ```elixir
 # mix.exs
 def deps do
-  [{:batamanta, "~> 1.0", runtime: false}]
+  [{:batamanta, "~> 3.0", runtime: false}]
 end
 ```
 

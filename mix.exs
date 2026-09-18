@@ -59,7 +59,28 @@ defmodule Batamanta.MixProject do
       logo: "assets/batamantaman.png",
       extras: ["README.md", "README_ES.md", "CHANGELOG.md"],
       source_url: @source_url,
-      source_ref: "v#{@version}"
+      source_ref: "v#{@version}",
+      groups_for_modules: [
+        Core: [Batamanta, Batamanta.Application, Batamanta.Runner, Batamanta.Runner.Native],
+        Packaging: [
+          Batamanta.Packager,
+          Batamanta.EscriptPackager,
+          Batamanta.EscriptBuilder,
+          Batamanta.Compression,
+          Batamanta.Compression.Backend,
+          Batamanta.Compression.Gzip,
+          Batamanta.Compression.None,
+          Batamanta.Compression.Zstd,
+          Batamanta.Release.Step,
+          Batamanta.RunScript,
+          Batamanta.RustTemplate
+        ],
+        ERTS: [Batamanta.ERTS.Fetcher, Batamanta.ERTS.LibcDetector, Batamanta.Target],
+        Daemon: [Batamanta.Daemon, Batamanta.DaemonConfig],
+        Display: [Batamanta.Banner, Batamanta.Logger],
+        Utilities: [Batamanta.EnvCleaner, Batamanta.Validator],
+        "Mix Tasks": [Mix.Tasks.Batamanta, Mix.Tasks.Batamanta.Clean, Mix.Tasks.Rust.Test]
+      ]
     ]
   end
 
