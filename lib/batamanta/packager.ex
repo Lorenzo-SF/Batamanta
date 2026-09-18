@@ -612,11 +612,33 @@ defmodule Batamanta.Packager do
   # fallback is the only thing standing between the user and the
   # `Cannot determine ERTS version` raised by `get_erts_version/1`.
   defp detect_from_cache_dir_name(erts_path) do
-    case Path.basename(erts_path) do
-      "erts-" <> rest ->
-        case String.split(rest, "-", parts: 2) do
-          [vsn, _platform] when is_binary(vsn) ->
-            if valid_otp_version_string?(vsn), do: vsn, else: nil
+    # `Path.basename/1` on Windows honours the platform separator only
+    # (`\\`), so a path with mixed `\\` and `/` (which `Path.join` happily
+    # produces when one arg ends in `\\` and the other in `/`) makes
+    # basename return the WHOLE STRING instead of the trailing dir.
+    # To avoid that we instead split on both kinds of separators and
+    # take the last segment, regardless of platform. This is what
+    # `:filename.basename/1` would do under the hood, but the
+    # Erlang stdlib version only knows about the OS native separator,
+    # so it misbehaves on the same mixed-separator input.
+    segments =
+      erts_path
+      |> to_string()
+      |> String.replace(~r/[\\/]+/, "/")
+      |> String.split("/")
+      |> Enum.reject(&(&1 == "" or &1 == "." or &1 == ".."))
+
+    case segments do
+      [last | _] ->
+        case last do
+          "erts-" <> rest ->
+            case String.split(rest, "-", parts: 2) do
+              [vsn, _platform] ->
+                if valid_otp_version_string?(vsn), do: vsn, else: nil
+
+              _ ->
+                nil
+            end
 
           _ ->
             nil
