@@ -700,15 +700,6 @@ defmodule Batamanta.Packager do
   end
 
   # Layout 1/2: a directory named `erts-<vsn>/` exists at the root.
-            nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  # Layout 1/2: a directory named `erts-<vsn>/` exists at the root.
   # We use `File.ls/1` + filter rather than `Path.wildcard/1` because:
   #   * Wildcard treats backslashes vs forward slashes inconsistently
   #     on Windows when the input path mixes separators (which the

@@ -41,6 +41,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - See `batamanta-daemon-mode-spec.md` for the spec that motivated this
   implementation and the test matrix it must satisfy.
 
+## [3.0.0] - 2026-09-18
+
+Windows packaging end-to-end: `mix batamanta` on Windows now produces a
+working binary that boots exclusively from its bundled ERTS. Verified
+with `alaja.exe --help` (exit 0, OTP 28 / ERTS 16.4.0.2, no system
+Erlang consulted).
+
+### Fixed
+
+- **Truncated Windows ERTS in the mirror**: `windows-amd64.zip` assets
+  only contained `bin/` (12 files, ~320KB) because `process_windows_zip`
+  zipped the first subdirectory instead of the full upstream tree.
+  Rebuilt from the complete tree (~150-180MB); `mix batamanta` on
+  Windows gets past payload packaging.
+- **`Packager.get_erts_version/2` fallback**: `detect_from_cache_dir_name`
+  took the first path segment (`c:`) instead of the last, so the
+  `erts-<vsn>-<platform>` cache-name fallback never fired.
+- **Dispenser didn't compile on MSVC**: `nix`, `os::unix`, `fork/execvp`
+  and `UnixStream` are Unix-only. Unix/Windows code is now `cfg`-gated;
+  Windows shells out to Git Bash + the `.run` script (restored
+  pre-daemon logic).
+- **Release booted the wrong `erl` on Windows**: `releases/<vsn>/elixir`
+  exec'd the POSIX `erl` script (which needs a Unix-only `erlexec`).
+  The packager now patches `ERL_EXEC="erl.exe"` on Windows payloads so
+  the bundled PE launcher boots.
+
+### Changed
+
+- **Daemon mode is Unix-only**: on Windows `resolve_dispatch` always
+  yields legacy single-shot (`NoDaemonReason::UnsupportedOs`) with a
+  stderr warning. Documented in the README restrictions (already listed).
+- **Bundled ERTS is exclusive on Windows**: the wrapper no longer probes
+  for system Erlang (`locate_system_erl_bin`, `ERL_BINDIR` override and
+  `BATAMANTA_ERL` removed). Runtime needs Git for Windows (bash) only.
+- **`@version` bumped to `3.0.0`**: both `lib/batamanta.ex` and
+  `mix.exs` read the same version.
+
+### Added
+
+- **`Fetcher.erts_valid?/2` structural gate**: a cache dir with only
+  root-level exes (truncated asset) no longer validates — `bin/`,
+  `lib/`, `releases/` or `erts-*/` evidence is required, so a broken
+  download is re-fetched instead of failing later in the packager.
+- **Regression tests** for the cache-dir-name detector and the Windows
+  `ERL_EXEC` patch (`test/batamanta/packager_test.exs`).
+- **README note** (EN/ES): Windows binaries boot exclusively from the
+  bundled ERTS; only Git for Windows is needed at runtime.
+
 ## [2.0.0] - 2026-08-30
 
 ### Added
