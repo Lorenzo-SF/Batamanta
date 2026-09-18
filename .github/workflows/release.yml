@@ -1,0 +1,83 @@
+name: Release — publish to Hex on tag push
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Manual override tag (e.g. v2.0.1)'
+        required: false
+        type: string
+
+# Hex publish needs the tag's release artifacts signed. The CI
+# `install-hex: true` step in the existing CI workflow downloads
+# Hex for those jobs but doesn't publish. This dedicated workflow
+# publishes the package to hex.pm when a `v*` tag lands on main.
+#
+# HEX_API_KEY is a user-scoped secret stored as a GitHub Actions
+# secret (or HEX_PM_KEY — both names work; we accept either).
+# To rotate: `mix hex.user auth` and `open https://hex.pm/account`.
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: mix hex.publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v4
+        with:
+          version-file: .tool-versions
+          version-type: strict
+          install-hex: true
+
+      - name: Resolve HEI/PB version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::No tag provided and GITHUB_REF is not a tag"
+            exit 1
+          fi
+
+      - name: Verify tag is at HEAD
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse ${{ steps.ver.outputs.version }})" ]; then
+            echo "::error::Tag ${{ steps.ver.outputs.version }} does not point at HEAD"
+            exit 1
+          fi
+
+      - name: mix deps.get
+        run: mix deps.get
+
+      - name: mix compile (sanity)
+        run: mix compile --warnings-as-errors --force
+
+      - name: Publish to Hex
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY || secrets.HEX_PM_KEY }}
+          MIX_ENV: test
+        run: |
+          if [ -z "$HEX_API_KEY" ]; then
+            echo "::error::Neither HEX_API_KEY nor HEX_PM_KEY is set as a repo secret."
+            echo "To rotate/create:"
+            echo "  1. mix hex.user auth             # log in with your hex.pm account"
+            echo "  2. https://hex.pm/account         # copy the API key"
+            echo "  3. gh secret set HEX_API_KEY --repo Lorenzo-SF/Batamanta  (paste)"
+            exit 1
+          fi
+          mix hex.publish \
+            --tag "${{ steps.ver.outputs.version }}" \
+            --confirm
