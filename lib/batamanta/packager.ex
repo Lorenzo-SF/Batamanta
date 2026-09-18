@@ -624,7 +624,7 @@ defmodule Batamanta.Packager do
     segments =
       erts_path
       |> to_string()
-      |> String.replace(~r/[\\/]+/, "/")
+      |> String.replace(~r{[\\/]+}, "/")
       |> String.split("/")
       |> Enum.reject(&(&1 == "" or &1 == "." or &1 == ".."))
 
