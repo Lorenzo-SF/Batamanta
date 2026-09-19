@@ -3,18 +3,19 @@ name: Release — publish to Hex on tag push
 on:
   push:
     tags:
-      - 'v*'
+      - '*.*.*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Manual override tag (e.g. v2.0.1)'
+        description: 'Manual override tag (e.g. 2.0.1)'
         required: false
         type: string
 
 # Hex publish needs the tag's release artifacts signed. The CI
 # `install-hex: true` step in the existing CI workflow downloads
 # Hex for those jobs but doesn't publish. This dedicated workflow
-# publishes the package to hex.pm when a `v*` tag lands on main.
+# publishes the package to hex.pm when a version tag (`*.*.*`, no `v`
+# prefix) lands on main.
 #
 # HEX_API_KEY is a user-scoped secret stored as a GitHub Actions
 # secret (or HEX_PM_KEY — both names work; we accept either).
