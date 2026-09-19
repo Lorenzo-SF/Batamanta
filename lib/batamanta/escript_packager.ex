@@ -507,26 +507,31 @@ defmodule Batamanta.EscriptPackager do
       detect_from_otp_version_file(erts_work) ||
       detect_from_start_erl_data(erts_work) ||
       detect_from_cache_dir_name(erts_path) ||
-      raise("Cannot determine ERTS version from #{erts_work} " <>
-              "(no erts-* subdir, no releases/<vsn>/ subdir, " <>
-              "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data, " <>
-              "no erts-<vsn>-<platform_key> cache name recoverable)")
+      raise(
+        "Cannot determine ERTS version from #{erts_work} " <>
+          "(no erts-* subdir, no releases/<vsn>/ subdir, " <>
+          "no releases/<vsn>/OTP_VERSION, no releases/<vsn>/start_erl.data, " <>
+          "no erts-<vsn>-<platform_key> cache name recoverable)"
+      )
   end
 
   defp detect_from_cache_dir_name(erts_path) do
-    case Path.basename(erts_path) do
-      "erts-" <> rest ->
-        case String.split(rest, "-", parts: 2) do
-          [vsn, _platform] ->
-            if valid_otp_version_string?(vsn), do: vsn, else: nil
+    erts_path |> Path.basename() |> parse_cache_dir_basename()
+  end
 
-          _ ->
-            nil
-        end
+  defp parse_cache_dir_basename(nil), do: nil
+  defp parse_cache_dir_basename("erts-" <> rest), do: parse_cache_dir_rest(rest)
+  defp parse_cache_dir_basename(_), do: nil
 
-      _ ->
-        nil
+  defp parse_cache_dir_rest(rest) do
+    case String.split(rest, "-", parts: 2) do
+      [vsn, _platform] -> version_or_nil(vsn)
+      _ -> nil
     end
+  end
+
+  defp version_or_nil(vsn) do
+    if valid_otp_version_string?(vsn), do: vsn, else: nil
   end
 
   defp detect_from_erts_subdir(erts_path) do
@@ -629,8 +634,12 @@ defmodule Batamanta.EscriptPackager do
 
   defp valid_otp_version_string?(s) do
     case String.split(s, ".") do
-      [n] -> Integer.parse(n) != :error
-      [n1, n2] -> Integer.parse(n1) != :error and Integer.parse(n2) != :error
+      [n] ->
+        Integer.parse(n) != :error
+
+      [n1, n2] ->
+        Integer.parse(n1) != :error and Integer.parse(n2) != :error
+
       [n1, n2, n3] ->
         Integer.parse(n1) != :error and
           Integer.parse(n2) != :error and

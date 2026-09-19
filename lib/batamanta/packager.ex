@@ -681,22 +681,22 @@ defmodule Batamanta.Packager do
       |> String.split("/")
       |> Enum.reject(&(&1 == "" or &1 == "." or &1 == ".."))
 
-    case List.last(segments) do
-      nil ->
-        nil
+    segments |> List.last() |> parse_cache_dir_basename()
+  end
 
-      "erts-" <> rest ->
-        case String.split(rest, "-", parts: 2) do
-          [vsn, _platform] ->
-            if valid_otp_version_string?(vsn), do: vsn, else: nil
+  defp parse_cache_dir_basename(nil), do: nil
+  defp parse_cache_dir_basename("erts-" <> rest), do: parse_cache_dir_rest(rest)
+  defp parse_cache_dir_basename(_), do: nil
 
-          _ ->
-            nil
-        end
-
-      _ ->
-        nil
+  defp parse_cache_dir_rest(rest) do
+    case String.split(rest, "-", parts: 2) do
+      [vsn, _platform] -> version_or_nil(vsn)
+      _ -> nil
     end
+  end
+
+  defp version_or_nil(vsn) do
+    if valid_otp_version_string?(vsn), do: vsn, else: nil
   end
 
   # Layout 1/2: a directory named `erts-<vsn>/` exists at the root.

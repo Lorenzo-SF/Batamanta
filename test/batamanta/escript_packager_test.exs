@@ -113,7 +113,9 @@ defmodule Batamanta.EscriptPackagerTest do
   # see Packager's get_erts_version/1 moduledoc for the layout table.
   describe "get_erts_version/1 ERTS layout detection" do
     setup do
-      base = Path.join(System.tmp_dir!(), "bat_escript_erts_#{:erlang.unique_integer([:positive])}")
+      base =
+        Path.join(System.tmp_dir!(), "bat_escript_erts_#{:erlang.unique_integer([:positive])}")
+
       File.mkdir_p!(base)
       on_exit(fn -> File.rm_rf!(base) end)
       %{base: base}

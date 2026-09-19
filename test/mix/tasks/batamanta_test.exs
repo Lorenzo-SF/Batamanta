@@ -1,5 +1,12 @@
 defmodule Mix.Tasks.BatamantaTest do
-  use ExUnit.Case, async: true
+  # async: false a propósito: estos tests mutan estado global de la VM
+  # (`File.cd!/2` cambia el cwd del proceso BEAM entero y
+  # `Mix.Project.in_project/4` + `Mix.Project.build_path/0` tocan el
+  # stack global de proyectos Mix, igual que `System.put_env("PATH", …)`).
+  # En ejecución concurrente un test restaura el cwd mientras otro sigue
+  # dentro de su `cd!`, y en Windows el `rm_rf!` posterior falla porque
+  # el directorio a borrar es (transitoriamente) el cwd del proceso.
+  use ExUnit.Case, async: false
 
   alias Mix.Tasks.Batamanta
 
@@ -420,7 +427,7 @@ defmodule Mix.Tasks.BatamantaTest do
 
         File.cd!(tmp_root, fn ->
           path = Batamanta.get_release_path(:standalone)
-          assert path == Path.join([tmp_root, "_build", "prod", "rel", "standalone"])
+          assert_same_path(path, Path.join([tmp_root, "_build", "prod", "rel", "standalone"]))
         end)
       after
         File.rm_rf!(tmp_root)
@@ -437,7 +444,7 @@ defmodule Mix.Tasks.BatamantaTest do
       try do
         File.mkdir_p!(app_path)
         path = Batamanta.get_release_path(:app1, app_path)
-        assert path == Path.join([app_path, "_build", "prod", "rel", "app1"])
+        assert_same_path(path, Path.join([app_path, "_build", "prod", "rel", "app1"]))
       after
         File.rm_rf!(umbrella_root)
       end
@@ -456,7 +463,7 @@ defmodule Mix.Tasks.BatamantaTest do
       try do
         File.mkdir_p!(app_path)
         path = Batamanta.get_release_path(:bar, app_path)
-        assert path == Path.join([app_path, "_build", "prod", "rel", "bar"])
+        assert_same_path(path, Path.join([app_path, "_build", "prod", "rel", "bar"]))
       after
         File.rm_rf!(Path.dirname(Path.dirname(Path.dirname(app_path))))
       end
@@ -472,11 +479,20 @@ defmodule Mix.Tasks.BatamantaTest do
       try do
         File.mkdir_p!(app_path)
         path = Batamanta.get_release_path(:my_app, app_path)
-        assert String.starts_with?(path, app_path)
+        assert String.starts_with?(Path.expand(path), Path.expand(app_path))
         assert String.ends_with?(path, "_build/prod/rel/my_app")
       after
         File.rm_rf!(tmp)
       end
     end
+  end
+
+  # Compara rutas tras normalizarlas: en Windows `Path.absname/1`
+  # (que usa la implementación) devuelve `c:/…` con la unidad en
+  # minúsculas y barras `/`, mientras que `System.tmp_dir!/0` devuelve
+  # `C:\…`. Ambas formas nombran el mismo fichero; `Path.expand/2`
+  # las deja en forma canónica idéntica en todos los SO.
+  defp assert_same_path(left, right) do
+    assert Path.expand(left) == Path.expand(right)
   end
 end

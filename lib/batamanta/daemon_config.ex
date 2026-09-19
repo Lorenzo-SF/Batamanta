@@ -39,7 +39,8 @@ defmodule Batamanta.DaemonConfig do
   @default_var "BATAMANTA_BEAM_ALIVE"
   @default_default_ms 0
   @default_request_timeout_ms 60_000
-  @max_default_ms 86_400_000  # 24h cap
+  # 24h cap
+  @max_default_ms 86_400_000
 
   @type t :: %__MODULE__{
           enabled: boolean(),
@@ -76,8 +77,7 @@ defmodule Batamanta.DaemonConfig do
           atom when is_atom(atom) -> Atom.to_string(atom)
           bin when is_binary(bin) -> bin
         end,
-      request_timeout_ms:
-        Keyword.get(opts, :request_timeout_ms, @default_request_timeout_ms)
+      request_timeout_ms: Keyword.get(opts, :request_timeout_ms, @default_request_timeout_ms)
     }
     |> validate!()
   end
@@ -145,6 +145,7 @@ defmodule Batamanta.DaemonConfig do
   # If the user didn't override `cli_module`, default to `<UserApp>.CLI`,
   # mirroring the convention used by `Batamanta.RunScript`.
   defp cli_module_default(%__MODULE__{user_app: nil}), do: ""
+
   defp cli_module_default(%__MODULE__{user_app: app}) do
     app |> Macro.camelize() |> Kernel.<>(".CLI")
   end
