@@ -1,0 +1,12 @@
+# Enforce LF everywhere so `mix credo --strict` (Consistency.LineEndings)
+# passes identically on Windows, macOS and Linux / CI.
+* text=auto eol=lf
+*.ex text eol=lf
+*.exs text eol=lf
+*.erl text eol=lf
+*.hrl text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.sh text eol=lf

@@ -7,6 +7,7 @@ defmodule Batamanta.ERTS.Fetcher do
   2. Download MANIFEST.json from the official mirror
      (`Lorenzo-SF/Batamanta---ERTS-repository`, raw URL pinned to `main`)
   3. If download fails, use the cached or priv/ fallback MANIFEST.json
+     (the priv/ fallback only exists in a git checkout, not in the Hex package)
   4. Look up ERTS URL in MANIFEST for the OTP version and platform
   5. Download the asset (`.tar.gz` for Linux/macOS, `.zip` for Windows) and
      extract it. The remote mirror's manifest_key naming convention is

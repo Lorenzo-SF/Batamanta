@@ -10,16 +10,6 @@ defmodule Batamanta.MixProject do
       app: :batamanta,
       version: @version,
       elixir: @elixir_vsn,
-      # NB: we intentionally do NOT set `elixirc_paths/1` here. Doing so
-      # would make Mix treat `test/support/*.exs` as regular app source
-      # during `MIX_ENV=test`, which races with ExUnit's own discovery
-      # of those files. The race surfaces as `MatchError {:error, :enoent}`
-      # in `Kernel.ParallelCompiler.require_file/2` on Elixir 1.18+ —
-      # whichever test file happens to be loaded first alphabetically
-      # (banner_test, runner_test, target_test, ...) reports the crash.
-      # The support files are still loaded by `test_helper.exs` via
-      # `Code.require_file/1` (see test/test_helper.exs); only ExUnit
-      # discovery is excluded (see `test_ignore_filters` below).
       start_permanent: Mix.env() == :prod,
       description: description(),
       package: package(),
@@ -37,11 +27,6 @@ defmodule Batamanta.MixProject do
           threshold: 100
         ]
       ],
-      # Helpers used by ExUnit (loaded by test_helper.exs via
-      # Code.require_file) must NOT be treated as test modules; otherwise
-      # the parallel compiler will try to load them as such and fail with
-      # MatchError {:error, :enoent} on Elixir 1.18+ when support files
-      # are first discovered by the file-system glob.
       test_ignore_filters: [
         ~r/test\/support\/.*\.exs/,
         ~r/test\/test_httpc\.exs/
@@ -87,8 +72,13 @@ defmodule Batamanta.MixProject do
   defp package do
     [
       name: "batamanta",
+      # NOTE: `priv/plts` (local dialyzer artifacts) and
+      # `priv/erts_repository` (offline MANIFEST fallback, owned by the
+      # ERTS-repo CI and not tracked here) are intentionally NOT shipped:
+      # `mix hex.build` fails on missing entries, and the Fetcher already
+      # handles their absence (disk cache, then empty manifest).
       files: ~w(lib mix.exs README* LICENSE* CHANGELOG*
-                priv/assets priv/erts_repository priv/plts priv/daemon
+                priv/assets priv/daemon
                 priv/rust_template/Cargo.* priv/rust_template/src
                 priv/rust_template/build.rs
                 assets/batamantaman.png),

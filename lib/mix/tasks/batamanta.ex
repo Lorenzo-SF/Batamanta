@@ -664,6 +664,7 @@ defmodule Mix.Tasks.Batamanta do
     Logger.info(banner_ctx, ">> 📦 Creating Release...")
 
     bata_config = Keyword.get(config, :batamanta, [])
+
     daemon_config =
       Keyword.get(bata_config, :daemon)
       |> Batamanta.DaemonConfig.from_config()
@@ -733,6 +734,7 @@ defmodule Mix.Tasks.Batamanta do
     Logger.info(banner_ctx, ">> 📦 Creating Escript...")
 
     bata_config = Keyword.get(config, :batamanta, [])
+
     daemon_config =
       Keyword.get(bata_config, :daemon)
       |> Batamanta.DaemonConfig.from_config()
@@ -754,6 +756,7 @@ defmodule Mix.Tasks.Batamanta do
 
     bata_config = Keyword.get(config, :batamanta, [])
     exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
+
     daemon_config =
       Keyword.get(bata_config, :daemon)
       |> Batamanta.DaemonConfig.from_config()
