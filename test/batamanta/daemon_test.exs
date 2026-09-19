@@ -13,7 +13,12 @@ defmodule Batamanta.DaemonTest do
 
   describe "build_hash_for/1" do
     setup do
-      tmp = Path.join(System.tmp_dir!(), "batamanta_daemon_test_#{System.unique_integer([:positive])}")
+      tmp =
+        Path.join(
+          System.tmp_dir!(),
+          "batamanta_daemon_test_#{System.unique_integer([:positive])}"
+        )
+
       File.mkdir_p!(tmp)
       on_exit(fn -> File.rm_rf!(tmp) end)
       {:ok, dir: tmp}
@@ -50,7 +55,12 @@ defmodule Batamanta.DaemonTest do
 
   describe "compile/4 (missing erlc)" do
     setup do
-      tmp = Path.join(System.tmp_dir!(), "batamanta_daemon_compile_#{System.unique_integer([:positive])}")
+      tmp =
+        Path.join(
+          System.tmp_dir!(),
+          "batamanta_daemon_compile_#{System.unique_integer([:positive])}"
+        )
+
       File.mkdir_p!(tmp)
       on_exit(fn -> File.rm_rf!(tmp) end)
       {:ok, dir: tmp}
