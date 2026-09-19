@@ -1,5 +1,6 @@
 defmodule Batamanta.PackagerTest do
   use ExUnit.Case
+  alias Batamanta.Compression
   alias Batamanta.Packager
 
   setup do
@@ -31,13 +32,14 @@ defmodule Batamanta.PackagerTest do
     assert {:ok, ^ot} = Packager.package(rs, et, ot, 1)
     assert File.exists?(ot)
 
-    {info, 0} = System.cmd("file", [ot])
-    assert info =~ "Zstandard"
+    # Sin depender del binario `file(1)` (ausente en Windows):
+    # la detección por magic bytes es la misma que usa producción.
+    assert {:ok, :zstd} = Compression.detect(ot)
   end
 
   test "package/4 handles different compression levels", %{rs: rs, et: et} do
     for level <- [1, 9, 19] do
-      out = "/tmp/test_level_#{level}_#{:rand.uniform(100_000)}.tar.zst"
+      out = Path.join(System.tmp_dir!(), "bat_level_#{level}_#{:rand.uniform(100_000)}.tar.zst")
       on_exit(fn -> File.rm(out) end)
 
       assert {:ok, ^out} = Packager.package(rs, et, out, level)

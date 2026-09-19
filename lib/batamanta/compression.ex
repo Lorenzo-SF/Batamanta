@@ -66,22 +66,33 @@ defmodule Batamanta.Compression do
   @spec detect(Path.t()) :: {:ok, backend()} | {:error, String.t()}
   def detect(path) do
     case read_first_4_bytes(path) do
-      {:ok, head} when byte_size(head) == 4 ->
-        case magic_bytes_match(head) do
-          :zstd -> {:ok, :zstd}
-          :gzip -> {:ok, :gzip}
-          :none -> {:error, "unrecognised compression magic: #{inspect(head)}"}
-        end
-
-      {:error, reason} ->
-        {:error, "cannot read #{path}: #{inspect(reason)}"}
+      {:ok, head} -> detect_head(head, path)
+      {:error, reason} -> {:error, "cannot read #{path}: #{inspect(reason)}"}
     end
   end
 
+  defp detect_head(head, _path) when byte_size(head) == 4 do
+    case magic_bytes_match(head) do
+      :zstd -> {:ok, :zstd}
+      :gzip -> {:ok, :gzip}
+      :none -> {:error, "unrecognised compression magic: #{inspect(head)}"}
+    end
+  end
+
+  defp detect_head(head, path) do
+    {:error, "unrecognised compression magic: #{inspect(head)} (#{path} shorter than 4 bytes)"}
+  end
+
+  # NOTE: `File.open/3` con función envuelve el resultado una vez más
+  # (`{:ok, f_result}`), y `:file.read/2` devuelve a su vez
+  # `{:ok, bytes} | :eof | {:error, reason}`. Sin este desempaquetado
+  # `detect/1` recibía `{:ok, {:ok, bytes}}` y caía en CaseClauseError.
   defp read_first_4_bytes(path) do
-    File.open(path, [:read, :binary], fn f ->
-      :file.read(f, 4)
-    end)
+    case File.open(path, [:read, :binary], fn f -> :file.read(f, 4) end) do
+      {:ok, {:ok, bytes}} -> {:ok, bytes}
+      {:ok, :eof} -> {:ok, <<>>}
+      {:error, _} = error -> error
+    end
   end
 
   # Internal: detect which backend's magic-byte signature a 4-byte head matches.
