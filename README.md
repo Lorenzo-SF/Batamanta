@@ -29,6 +29,7 @@
 - **Cross-compilation**: Build for Linux (glibc/musl), macOS from any platform
 - **Zstandard compression**: Optimal balance between size and speed
 - **Multiple execution modes**: CLI, TUI, Daemon, and Escript support
+- **BEAM-keeps-alive daemon mode** (Unix): wraps a persistent Erlang VM behind the binary so repeated invocations skip the cold-start cost (mix release + cargo build + Erlang boot — ~10-25s → ~5-15ms on warm calls). Unix-domain socket + length-prefixed JSON protocol; per-app/version/target namespaced; configurable TTL
 - **Relativized releases**: Portable binaries with no absolute paths
 - **Automatic build cleanup**: Intermediate artifacts are wiped after build, leaving the system pristine while preserving ERTS cache
 - **Build Environment Isolation**: Automatically isolates the build from version managers (`asdf`, `mise`, `kerl`) to prevent ERTS mismatches
@@ -249,6 +250,142 @@ In auto mode, if the exact version is not available:
 | `:daemon` | Runs in background, no terminal I/O | N/A (detached) | Unix only |
 
 > **Note:** In `:cli` mode (cooked), the terminal processes input line-by-line - Enter sends the line, backspace works normally, and special keys like arrow keys are not directly captured. In `:tui` mode (raw), the app has direct control over the terminal and can capture individual keypresses including arrow keys, function keys, etc.
+
+---
+
+## BEAM Daemon Mode (Unix)
+
+> 🦇 **New in 2.0**: every invocation of your `batamanta` binary used to pay the full `mix release` + `cargo build` + Erlang boot cost — about 10-25 seconds per call. Daemon mode wraps a **persistent Erlang VM** behind the binary so subsequent invocations hit a warm, already-booted BEAM in **~5-15 ms** via Unix-domain socket.
+
+### What it does
+
+The first time you run your binary, the Rust wrapper extracts the payload and
+spawns a long-lived BEAM process that:
+
+1. Binds a Unix-domain socket under `$XDG_RUNTIME_DIR/batamanta/` (or `/tmp`
+   fallback) namespaced by `<app>-<version>-<target>`.
+2. Boots your app and parks on a receive loop.
+3. Writes a PID file alongside the socket.
+
+Subsequent invocations:
+
+- Connect to the existing socket
+- Send a length-prefixed JSON request (`<u32 length><json payload>`) with
+  the user's CLI args + environment
+- Wait for the matching JSON response
+- Exit
+
+The BEAM keeps running between calls. After `default_ttl_ms` of inactivity
+(default 30s) it shuts itself down. You can also send a `batamanta_daemon_kill`
+arg to ask it to exit cleanly.
+
+### Performance
+
+| Path | Cold call | Warm call (1-1000+) |
+|------|-----------|---------------------|
+| **Legacy single-shot** (`:cli`/`:tui`/`:escript`) | 10-25s | 10-25s (no caching) |
+| **Daemon mode** (`:daemon`) | 10-25s (first call) | **5-15 ms** (socket dispatch) |
+
+This is a **~50-300× speedup** for the warm path. Most useful in CI
+pipelines, batch jobs, and scripts that invoke the same binary many times
+in a row.
+
+### Configuration
+
+Add to your `mix.exs`:
+
+```elixir
+def project do
+  [
+    # ...
+    batamanta: [
+      execution_mode: :cli,         # your CLI module is invoked per call
+      daemon: [
+        enabled: true,              # turn on BEAM-keeps-alive
+        default_ttl_ms: 30_000,     # daemon self-shuts after 30s idle
+        request_timeout_ms: 60_000  # per-request upper bound
+      ]
+    ]
+  ]
+end
+```
+
+The `execution_mode` field controls which entry point the daemon dispatches
+to — typically `:cli` (it forwards the request to `YourApp.CLI.main/1`).
+`:daemon` mode is also valid for long-running service binaries.
+
+### Manual daemon control
+
+| Action | What to run |
+|--------|-------------|
+| Force-shutdown the daemon for the current app/version/target | `<binary> batamanta_daemon_kill` |
+| Override TTL for a single invocation | `<binary> --batamanta-daemon-ttl-ms 5000 …` (sends 5s TTL with this request) |
+| Disable daemon for one call | `<binary> --batamanta-daemon-disable …` (falls back to legacy) |
+| Bypass daemon entirely (e.g. fresh boot) | `<binary> --batamanta-daemon-bootstrap …` (always cold-start) |
+
+### Platform support
+
+| Platform | Status |
+|----------|--------|
+| Linux (glibc/musl) | ✅ Full daemon mode |
+| macOS (aarch64, x86_64) | ✅ Full daemon mode |
+| Windows | ⚠️ Compiles, falls back to legacy single-shot. The wrapper prints `daemon mode is Unix-only; falling back to legacy single-shot` and exits non-zero. A `uds`-backed Windows port is tracked in the post-2.0 backlog. |
+
+### How dispatch works
+
+```
+                +------------------------+
+$ ./mybin ...   |       Rust wrapper     |
+   ──────────►  |  (compiled C, ~600kB)  |
+                |                        |
+                | 1. If BATAMANTA_BEAM_  |
+                |    ALIVE=1 → connect   |
+                |    to $XDG_RUNTIME_    |
+                |    DIR/batamanta/      |
+                |    <app>-<v>-<t>.sock  |
+                |                        |
+                | 2. Send JSON request   |
+                |    over UDS:           |
+                |    <u32 length>        |
+                |    <utf-8 JSON body>   |
+                |                        |
+                | 3. Read framed reply   |
+                |    & exit with rc.     |
+                +──────────┬─────────────+
+                           │
+                           ▼
+              +─────────────────────────────+
+              │   BEAM daemon (long-lived)  │
+              │                             │
+              │   • YourApp.CLI.main(args)  │
+              │   • YourApp.Application     │
+              │   • Persistence (ets/dets)  │
+              │   • Process registry        │
+              │                             │
+              │  Park on receive; shut      │
+              │  down after TTL idle.       │
+              └─────────────────────────────┘
+```
+
+### Reset & cleanup
+
+The daemon's runtime files are under:
+
+- `$XDG_RUNTIME_DIR/batamanta/<app>-<version>-<target>.sock`
+- `$XDG_RUNTIME_DIR/batamanta/<app>-<version>-<target>.pid`
+
+These are cleaned up automatically when the daemon exits (TTL or kill
+arg). On hard kill, the next invocation of the same binary detects the
+stale PID file and bootstraps a fresh daemon.
+
+To wipe everything: `rm -rf "${XDG_RUNTIME_DIR:-/tmp}/batamanta"`.
+
+### Source of truth
+
+- Spec: `attachments/faf7f99e756c9e7b/batamanta-daemon-mode-spec.md`
+- Protocol: 4-byte big-endian length prefix + JSON
+- Build hash: SHA-256 of the payload, first 6 bytes hex (12 chars)
+- TTL cap: 86_400_000 ms (24h), validated client-side
 
 ---
 
