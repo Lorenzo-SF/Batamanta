@@ -147,18 +147,21 @@ defmodule Batamanta.RunScript do
       #      statement separator is a semicolon; a comma only separates
       #      arguments in a call.
       #
-      # (`application: ensure_all_started` was the original form and also
-      # needs the space after the colon — `application:ensure_all_started`
-      # reads as a keyword argument and dies with "keyword argument must be
-      # followed by space after: application:". Calling the bare
-      # `ensure_all_started/1` from Kernel sidesteps the ambiguity
-      # entirely, so that's what we do here.)
+      # 4. `Application.ensure_all_started/1` must be fully qualified.
+      #    The unqualified `ensure_all_started/1` does NOT exist — it is
+      #    not a Kernel function — and compiling it gives
+      #      error: undefined function ensure_all_started/1
+      #             (there is no such import)
+      #    The original `application:ensure_all_started(...)` instead
+      #    failed with "keyword argument must be followed by space after:
+      #    application:". Qualifying with `Application.` sidesteps that
+      #    ambiguity entirely.
       #
       # The daemon's own server process (batamanta_daemon_sup) binds the
       # listening socket during application start, so ensure_all_started
       # is enough to make the daemon reachable — the receive just keeps
       # the VM from shutting down after the caller returns.
-      exec "$RELEASE_ROOT/bin/__APP_NAME__" eval 'spawn(fn -> ensure_all_started(batamanta_daemon); receive do _ -> :ok end end)' "$@"
+      exec "$RELEASE_ROOT/bin/__APP_NAME__" eval 'spawn(fn -> Application.ensure_all_started(batamanta_daemon); receive do _ -> :ok end end)' "$@"
     fi
 
     # ─── exec ──────────────────────────────────────────────────────────────────
