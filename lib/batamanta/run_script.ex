@@ -128,7 +128,37 @@ defmodule Batamanta.RunScript do
       # Run the daemon app and park. The user app is started by the
       # release's start.boot as usual (sibling to the daemon); only the
       # CLI dispatch is routed over the socket.
-      exec "$RELEASE_ROOT/bin/__APP_NAME__" eval 'application:ensure_all_started(batamanta_daemon), receive _ -> ok end' "$@"
+      # Syntax notes, since both of these bit us and the failure mode is
+      # a bare SyntaxError with no hint about the real cause:
+      #
+      #   1. `receive do ... end` — the `do` form. `receive ... end`
+      #      without it parses as a bare `receive` with clauses and
+      #      blows up with "unexpected reserved word: end".
+      #   2. `spawn(fn -> ... end)` — the receive needs an enclosing
+      #      function body. `bin/<app> eval` runs the string via
+      #      Code.eval_string/3, which has no body, so a top-level
+      #      receive is a syntax error regardless of the do-form.
+      #      Wrapping in spawn gives it a body AND is the behaviour we
+      #      want: the spawned process parks on the receive while the
+      #      caller returns, leaving the BEAM up to serve the socket.
+      #   3. `;` not `,` between the ensure_all_started call and the
+      #      receive. A comma there is a syntax error:
+      #      "syntax error before: ','". Within a `fn` body the
+      #      statement separator is a semicolon; a comma only separates
+      #      arguments in a call.
+      #
+      # (`application: ensure_all_started` was the original form and also
+      # needs the space after the colon — `application:ensure_all_started`
+      # reads as a keyword argument and dies with "keyword argument must be
+      # followed by space after: application:". Calling the bare
+      # `ensure_all_started/1` from Kernel sidesteps the ambiguity
+      # entirely, so that's what we do here.)
+      #
+      # The daemon's own server process (batamanta_daemon_sup) binds the
+      # listening socket during application start, so ensure_all_started
+      # is enough to make the daemon reachable — the receive just keeps
+      # the VM from shutting down after the caller returns.
+      exec "$RELEASE_ROOT/bin/__APP_NAME__" eval 'spawn(fn -> ensure_all_started(batamanta_daemon); receive do _ -> :ok end end)' "$@"
     fi
 
     # ─── exec ──────────────────────────────────────────────────────────────────
