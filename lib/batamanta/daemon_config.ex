@@ -169,7 +169,8 @@ defmodule Batamanta.DaemonConfig do
   end
 
   defp validate_default_ms(v)
-       when is_integer(v) and v >= 0 and v <= @max_default_ms, do: :ok
+       when is_integer(v) and v >= 0 and v <= @max_default_ms,
+       do: :ok
 
   defp validate_default_ms(v) do
     raise ArgumentError,

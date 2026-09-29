@@ -156,8 +156,7 @@ defmodule Batamanta.Daemon do
   end
 
   defp ensure_daemon_app_dir(staging_dir) do
-    ebin_dir =
-      Path.join([staging_dir, "lib", "#{@daemon_app}-#{@daemon_vsn}", "ebin"])
+    ebin_dir = Path.join([staging_dir, "lib", "#{@daemon_app}-#{@daemon_vsn}", "ebin"])
 
     case File.mkdir_p(ebin_dir) do
       :ok -> {:ok, ebin_dir}

@@ -71,6 +71,60 @@ jobs:
           echo "Resolved OTP versions: min=$min max=$max"
 
   # ===========================================================================
+  # QUALITY GATES — the four commands the project must pass, verbatim.
+  #
+  # These are the same four the README documents and the same four
+  # release.yml gates on. They live in their own job (rather than
+  # hanging off unit_tests) so a formatting or credo regression is
+  # reported as "Quality gates" instead of being buried inside a
+  # matrix cell, and so the feedback lands in ~40s on a single
+  # toolchain instead of waiting for the two-version test matrix.
+  #
+  # Deliberately NOT in the matrix: `mix format` and `mix credo` are
+  # toolchain-sensitive (credo's strict rule set has shifted between
+  # Elixir minor versions), and a failure on 1.18 vs 1.20 would be
+  # noise. The matrix's job is to prove the *code* works on both; the
+  # gates' job is to prove the repo is clean on the canonical one.
+  # ===========================================================================
+  quality_gates:
+    name: Quality gates (format, warnings, credo)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Erlang/OTP and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.20.2'
+          otp-version: ${{ needs.resolve_otp_versions.outputs.otp_max }}
+          install-hex: true
+          install-rebar: true
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+
+      - name: mix deps.get
+        run: mix deps.get
+
+      # 1. Formatting. --check-formatted fails the job on drift rather
+      #    than silently rewriting, so a bad commit can't sneak through.
+      - name: mix format --check-formatted
+        run: mix format --check-formatted
+
+      # 2. Compiler warnings are errors. A release must not ship with
+      #    deprecation notices or unused-variable noise.
+      - name: mix compile --warnings-as-errors
+        run: mix compile --force --warnings-as-errors
+
+      # 3. Credo in strict mode, oneline so the log stays readable
+      #    when something does regress.
+      - name: mix credo --strict
+        run: mix credo --strict --format=oneline
+
+  # ===========================================================================
   # UNIT TESTS — fast feedback on PR (always runs)
   # ===========================================================================
   unit_tests:
@@ -887,10 +941,19 @@ jobs:
 
   # ===========================================================================
   # RELEASE — publish to Hex on tag push
+  #
+  # Gated on quality_gates + unit_tests + smoke_matrix + manifest_compat:
+  # nothing reaches hex.pm without a clean format, a warning-free
+  # compile, a passing credo --strict, a green test matrix, and
+  # manifest compatibility.
+  #
+  # `--yes` is what suppresses the interactive confirmation; with
+  # HEX_API_KEY present there is no 2FA prompt either, so this step
+  # is fully unattended.
   # ===========================================================================
   release:
     name: Publish to Hex.pm
-    needs: [unit_tests, smoke_matrix, manifest_compat]
+    needs: [quality_gates, unit_tests, smoke_matrix, manifest_compat]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
