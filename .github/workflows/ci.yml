@@ -953,18 +953,38 @@ jobs:
   # ===========================================================================
   release:
     name: Publish to Hex.pm
-    needs: [quality_gates, unit_tests, smoke_matrix, manifest_compat]
+    needs: [resolve_otp_versions, quality_gates, unit_tests, smoke_matrix, manifest_compat]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: `mix hex.build` reads the git describe/tag info
+          # for `source_ref`, and a shallow checkout on a tag push makes
+          # that lookup fail with "not a git repository" style errors.
+          fetch-depth: 0
+
       - uses: erlef/setup-beam@v1
         with:
           elixir-version: '1.20.2'
           otp-version: ${{ needs.resolve_otp_versions.outputs.otp_max }}
+          install-hex: true
+          install-rebar: true
+
+      - run: sudo apt-get update && sudo apt-get install -y zstd
       - run: mix deps.get
-      - run: mix compile
+
+      # --force so we never publish a build artefact compiled against a
+      # stale _build from a cached runner. The gates job already proved
+      # `--warnings-as-errors` is clean, so this re-compile is a
+      # correctness step, not a re-check.
+      - run: mix compile --force
+
       - run: mix hex.build
+
+      # `--yes` is what removes the interactive confirmation. With
+      # HEX_API_KEY present there's no 2FA prompt either, so this is
+      # fully unattended.
       - run: mix hex.publish --yes
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
