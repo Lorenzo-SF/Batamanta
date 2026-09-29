@@ -89,6 +89,11 @@ jobs:
   quality_gates:
     name: Quality gates (format, warnings, credo)
     runs-on: ubuntu-latest
+    # Needs resolve_otp_versions because the setup-beam step below reads
+    # its `otp_max` output. Without the explicit `needs`, GitHub has no
+    # job context to resolve that expression against, it interpolates to
+    # an empty string, and setup-beam fails before any mix command runs.
+    needs: [resolve_otp_versions]
 
     steps:
       - uses: actions/checkout@v4
