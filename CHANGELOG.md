@@ -41,6 +41,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - See `batamanta-daemon-mode-spec.md` for the spec that motivated this
   implementation and the test matrix it must satisfy.
 
+## [3.0.1] - 2026-09-29
+
+Documentation and CI-hardening release. No runtime behaviour changes to
+the packaging pipeline.
+
+### Fixed
+
+- **`batamanta_daemon_bootstrap` in the generated `.run` script could
+  never find the release binary.** The bootstrap branch (which the Rust
+  wrapper uses to spawn the persistent BEAM) did `exec
+  "$RELEASE_ROOT/bin/<app>"` *before* `RELEASE_ROOT` was derived from
+  `$0`, so the variable expanded to the empty string and the exec
+  resolved to `/bin/<app>`:
+
+  ```
+  test_beam_daemon.run: 34: exec: /bin/test_beam_daemon: not found
+  ```
+
+  The first invocation happened to work (the wrapper exports
+  `RELEASE_ROOT` into the environment before sourcing the script) which
+  is why this only showed up on warm-path invocations. The block now
+  sits below the `SELF` / `RELEASE_ROOT` / `ERTS_DIR` derivation, after
+  `PATH`, `BINDIR` and `RELEASE_ROOT` have all been exported.
+
+- Formatting drift in `lib/batamanta/daemon.ex` and
+  `lib/batamanta/daemon_config.ex` — `mix format --check-formatted`
+  now passes repo-wide.
+
+### Added
+
+- **`quality_gates` CI job.** Runs the four commands the project claims
+  to hold itself to, verbatim: `mix format --check-formatted`, `mix
+  compile --force --warnings-as-errors`, `mix credo --strict
+  --format=oneline`, and (via the existing coverage job) `mix test
+  --cover`. Publishing to Hex.pm is now gated on it, so a release can't
+  ship with formatting drift, compiler warnings, or credo violations.
+
+### Changed
+
+- The standalone `.github/workflows/release.yml` was removed. It
+  duplicated the `release` job already present in `ci.yml`, and being a
+  separate workflow it could not see the quality gates — so whichever
+  publisher fired first won, and the one that won was the one that
+  published ungated. There is now a single publish path, gated.
+
 ## [3.0.0] - 2026-09-18
 
 Windows packaging end-to-end: `mix batamanta` on Windows now produces a
@@ -462,6 +507,8 @@ Erlang consulted).
 - **Unit Testing**: Full test suite covering target resolution, packaging logic, and cache management.
 - **CI/CD Integration**: Pre-configured GitHub Actions to validate compatibility across multiple Elixir and OTP versions.
 
+[Unreleased]: https://github.com/Lorenzo-SF/Batamanta/compare/3.0.1...HEAD
+[3.0.1]: https://hex.pm/packages/batamanta/3.0.1
 [3.0.0]: https://hex.pm/packages/batamanta/3.0.0
 [2.0.0]: https://hex.pm/packages/batamanta/2.0.0
-[Unreleased]: https://github.com/Lorenzo-SF/Batamanta/compare/3.0.0...HEAD
+[1.6.1]: https://hex.pm/packages/batamanta/1.6.1
