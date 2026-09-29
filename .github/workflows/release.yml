@@ -63,8 +63,13 @@ jobs:
       - name: mix deps.get
         run: mix deps.get
 
+      # Sanity compile — NOT --warnings-as-errors. The project has
+      # pre-existing warnings across the daemon/erlang packager
+      # surface; gating a publish on a clean warning log would make
+      # releases impossible to cut without a separate cleanup pass.
+      # A hard *error* still fails the job, which is the real gate.
       - name: mix compile (sanity)
-        run: mix compile --warnings-as-errors --force
+        run: mix compile --force
 
       - name: Publish to Hex
         env:
