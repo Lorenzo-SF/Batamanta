@@ -53,7 +53,13 @@ version() -> "0.1.0".
 %% @doc Encode a JSON-encodable term into a 4-byte length prefix + payload.
 -spec encode(term()) -> {ok, binary()} | {error, term()}.
 encode(Term) ->
-    Json = json_encode(Term),
+    %% `json:encode/1` returns an IOLIST, not a binary. Calling
+    %% `byte_size/1` on it raised
+    %%   ** (error) {:badarg, {:erlang, :byte_size, [[[34, <<"ok">>, 34] | ...]]}}
+    %% on EVERY reply, so the connection process died before a single
+    %% byte reached the client and the wrapper blocked until it gave up.
+    %% iolist_size/1 + iolist_to_binary/1 is the correct pairing here.
+    Json = iolist_to_binary(json_encode(Term)),
     Len = byte_size(Json),
     case Len =< ?MAX_FRAME of
         true ->

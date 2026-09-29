@@ -120,6 +120,38 @@ def project do
 end
 ```
 
+### Banner image protocol
+
+With `show_banner: true` (the default) the build draws a banner image, which
+needs the terminal to speak an inline-image protocol. Detection reads the
+environment and picks one of:
+
+| Terminal | Protocol |
+|----------|----------|
+| kitty, ghostty, WezTerm, konsole, **WaveTerm** | kitty graphics |
+| iTerm2 | iTerm2 inline images |
+| Alacritty, foot, VS Code terminal | Sixel |
+| anything else, or stdout not a TTY | text only |
+
+If detection picks the wrong one — or your terminal supports a protocol that
+isn't in the table — pin it in the project config instead of rebuilding to
+test:
+
+```elixir
+batamanta: [show_banner: true, image_protocol: :kitty]
+```
+
+or for one build, without touching `mix.exs`:
+
+```bash
+BATAMANTA_IMAGE_PROTOCOL=iterm2 mix batamanta
+```
+
+The config value wins over the environment variable. An unrecognised value is
+a hard error rather than a silent downgrade, because a typo that fell back to
+text mode is indistinguishable from "this terminal can't do images" — the
+banner just quietly stops appearing.
+
 ### Configuration Options
 
 | Option | Type | Default | Description |
@@ -130,7 +162,8 @@ end
 | `execution_mode` | atom | `:cli` | `:cli`, `:tui`, or `:daemon` |
 | `compression` | integer | `3` | Zstd compression level (1-19) |
 | `binary_name` | string | app name | Custom binary name |
-| `show_banner` | boolean | `true` | Show build banner |
+| `show_banner` | boolean | `true` | Show build banner (an image, when the terminal supports it) |
+| `image_protocol` | atom | `:auto` | Force the banner image protocol: `:kitty`, `:iterm2`, `:sixel`, `:ascii` (see below) |
 | `umbrella` | boolean | `false` | Enable umbrella mode (see below) |
 | `force_os` | string | nil | Force OS: `"linux"`, `"macos"`, `"windows"` |
 | `force_arch` | string | nil | Force arch: `"x86_64"`, `"aarch64"` |
