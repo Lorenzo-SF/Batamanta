@@ -118,6 +118,39 @@ end
 
 ### Opciones de Configuración
 
+### Protocolo de imagen del banner
+
+Con `show_banner: true` (el default) la construcción dibuja un banner con
+imagen, lo que requiere que la terminal hable un protocolo de imagen inline.
+La detección lee el entorno y elige uno de:
+
+| Terminal | Protocolo |
+|----------|-----------|
+| kitty, ghostty, WezTerm, konsole, **WaveTerm** | kitty graphics |
+| iTerm2 | imágenes inline de iTerm2 |
+| Alacritty, foot, terminal de VS Code | Sixel |
+| cualquier otra, o stdout no es TTY | solo texto |
+
+Si la detección elige mal — o tu terminal soporta un protocolo que no está en
+la tabla — fíjalo en el config del proyecto en vez de reconstruir para probar:
+
+```elixir
+batamanta: [show_banner: true, image_protocol: :kitty]
+```
+
+o para una sola build, sin tocar `mix.exs`:
+
+```bash
+BATAMANTA_IMAGE_PROTOCOL=iterm2 mix batamanta
+```
+
+El valor del config gana sobre la variable de entorno. Un valor no reconocido
+es un error duro y no una degradación silenciosa, porque un typo que cayera a
+modo texto es indistinguible de "esta terminal no puede con imágenes": el
+banner simplemente deja de aparecer.
+
+### Opciones de configuración
+
 | Opción | Tipo | Default | Descripción |
 |--------|------|---------|-------------|
 | `erts_target` | atom | `:auto` | Plataforma objetivo (ver abajo) |
@@ -126,7 +159,8 @@ end
 | `execution_mode` | atom | `:cli` | `:cli`, `:tui`, o `:daemon` |
 | `compression` | integer | `3` | Nivel de compresión zstd (1-19) |
 | `binary_name` | string | nombre de app | Nombre personalizado del binario |
-| `show_banner` | boolean | `true` | Mostrar banner de construcción |
+| `show_banner` | boolean | `true` | Mostrar banner de construcción (con imagen, si la terminal la soporta) |
+| `image_protocol` | atom | `:auto` | Forzar el protocolo de imagen del banner: `:kitty`, `:iterm2`, `:sixel`, `:ascii` (ver abajo) |
 | `umbrella` | boolean | `false` | Activar modo umbrella (ver abajo) |
 | `force_os` | string | nil | Forzar SO: `"linux"`, `"macos"`, `"windows"` |
 | `force_arch` | string | nil | Forzar arquitectura: `"x86_64"`, `"aarch64"` |

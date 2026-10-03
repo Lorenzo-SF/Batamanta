@@ -41,21 +41,29 @@ defmodule Batamanta.Banner do
     show_banner = Keyword.get(opts, :show_banner, true)
     on_success_image = Keyword.get(opts, :on_success_image, @image_filename_happy)
     on_error_image = Keyword.get(opts, :on_error_image, @image_filename_sad)
+    image_protocol = Keyword.get(opts, :image_protocol, :auto)
 
-    protocol = detect_image_protocol()
+    case resolve_protocol(System.get_env(), image_protocol) do
+      {:ok, protocol} ->
+        render_banner(messages, show_banner, protocol, on_success_image, on_error_image)
 
+      {:error, message} ->
+        Mix.raise(message)
+    end
+  end
+
+  defp render_banner(messages, show_banner, protocol, on_success_image, on_error_image) do
     ctx =
       cond do
         show_banner == false ->
-          print_messages(messages)
+          text_only_ctx(messages, show_banner, on_success_image, on_error_image)
 
-          %Context{
-            mode: :text_only,
-            messages: messages,
-            show_banner: false,
-            on_success_image: on_success_image,
-            on_error_image: on_error_image
-          }
+        # The banner draws with cursor movement and image escapes, which
+        # is meaningless when stdout is a pipe or a file: the CI log ends
+        # up full of escape sequences and a 24-row block of blanks. Text
+        # mode is the honest output for a non-terminal.
+        not tty?() ->
+          text_only_ctx(messages, show_banner, on_success_image, on_error_image)
 
         # On terminals without an image protocol (Windows PowerShell,
         # cmd.exe, plain TTYs) the image can't render. Reserving the
@@ -64,15 +72,7 @@ defmodule Batamanta.Banner do
         # straight to text mode in that case so the user actually sees
         # the banner messages, not whitespace.
         protocol == :ascii ->
-          print_messages(messages)
-
-          %Context{
-            mode: :text_only,
-            messages: messages,
-            show_banner: true,
-            on_success_image: on_success_image,
-            on_error_image: on_error_image
-          }
+          text_only_ctx(messages, show_banner, on_success_image, on_error_image)
 
         true ->
           display_banner_with_streaming(messages, protocol, on_success_image, on_error_image)
@@ -80,6 +80,25 @@ defmodule Batamanta.Banner do
 
     Process.put(:batamanta_banner_ctx, ctx)
     ctx
+  end
+
+  defp text_only_ctx(messages, show_banner, on_success_image, on_error_image) do
+    print_messages(messages)
+
+    %Context{
+      mode: :text_only,
+      messages: messages,
+      show_banner: show_banner,
+      on_success_image: on_success_image,
+      on_error_image: on_error_image
+    }
+  end
+
+  defp tty? do
+    case IO.ANSI.enabled?() do
+      nil -> false
+      enabled -> enabled
+    end
   end
 
   def append_line(%Context{mode: :text_only} = passed_ctx, message) do
@@ -412,49 +431,142 @@ defmodule Batamanta.Banner do
     |> Enum.find(fn path -> File.exists?(path) end)
   end
 
+  @doc """
+  The inline-image protocol to use for the current terminal.
+
+  Kept as a thin wrapper over `resolve_protocol/2` for callers that just
+  want the answer for the ambient environment.
+  """
+  @spec detect_image_protocol() :: atom()
   def detect_image_protocol do
-    emulator_to_protocol(detect_emulator())
+    {:ok, protocol} = resolve_protocol(System.get_env(), :auto)
+    protocol
   end
 
   def supports_images?, do: detect_image_protocol() != :ascii
 
-  defp detect_emulator do
-    cond do
-      env_set?("KITTY_PID") ->
-        :kitty
+  @doc """
+  Resolves the image protocol from an explicit setting and the environment.
 
-      env_set?("ITERM_SESSION_ID") ->
-        :iterm2
+  `override` wins when it is anything other than `:auto`, so a project can
+  pin the protocol in its `batamanta:` config when detection guesses
+  wrong. When it is `:auto` the `BATAMANTA_IMAGE_PROTOCOL` environment
+  variable is consulted next, which is how you A/B a guess without
+  editing `mix.exs` and rebuilding.
 
-      true ->
-        case System.get_env("TERM_PROGRAM") do
-          "WezTerm" -> :wezterm
-          "ghostty" -> :ghostty
-          "Alacritty" -> :alacritty
-          "vscode" -> :vscode
-          _ -> detect_by_env()
+  Returns `{:ok, protocol}` or `{:error, message}`; a typo in the
+  override must not silently degrade to text-only, because that is
+  indistinguishable from "this terminal has no image support".
+  """
+  @spec resolve_protocol(map(), atom() | String.t() | nil) ::
+          {:ok, atom()} | {:error, String.t()}
+  def resolve_protocol(env, override \\ :auto) do
+    with {:ok, override} <- parse_protocol(override, "image_protocol"),
+         {:ok, from_env} <-
+           parse_protocol(env["BATAMANTA_IMAGE_PROTOCOL"], "BATAMANTA_IMAGE_PROTOCOL") do
+      protocol =
+        cond do
+          override != :auto -> override
+          from_env != :auto -> from_env
+          true -> env |> detect_emulator() |> emulator_to_protocol()
         end
+
+      {:ok, protocol}
     end
   end
 
-  defp detect_by_env do
-    cond do
-      env_set?("KONSOLE_VERSION") -> :konsole
-      env_match?("TERM", "foot") -> :foot
-      true -> :unknown
+  @protocol_names %{
+    "auto" => :auto,
+    "kitty" => :kitty,
+    "iterm2" => :iterm2,
+    "sixel" => :sixel,
+    "ascii" => :ascii,
+    "none" => :ascii
+  }
+
+  @spec parse_protocol(atom() | String.t() | nil, String.t()) ::
+          {:ok, atom()} | {:error, String.t()}
+  defp parse_protocol(nil, _source), do: {:ok, :auto}
+  defp parse_protocol("", _source), do: {:ok, :auto}
+
+  defp parse_protocol(value, source) do
+    name = value |> to_string() |> String.trim() |> String.downcase()
+
+    case Map.fetch(@protocol_names, name) do
+      {:ok, protocol} ->
+        {:ok, protocol}
+
+      :error ->
+        {:error,
+         "unknown image protocol #{inspect(name)} in #{source}; " <>
+           "use one of auto, kitty, iterm2, sixel, ascii"}
     end
   end
 
+  # Terminal markers, most specific first. Each entry is
+  # `{emulator, {kind, value}}`, where the kind says how to match:
+  #
+  #   * `:env`         — the variable is set and non-empty
+  #   * `:term_program`— TERM_PROGRAM equals the value, case-insensitively
+  #   * `:term`        — TERM equals the value, case-insensitively
+  #
+  # The old detection looked for `KITTY_PID` (which kitty only exports
+  # when remote control is enabled — normally it exports
+  # `KITTY_WINDOW_ID` and sets `TERM=xterm-kitty`) and had no entry at
+  # all for WaveTerm, so it fell through to `:ascii` and every
+  # `show_banner: true` build silently degraded to text mode.
+  @emulator_probes [
+    {:kitty, {:env, "KITTY_WINDOW_ID"}},
+    {:kitty, {:env, "KITTY_PID"}},
+    {:kitty, {:term, "xterm-kitty"}},
+    {:ghostty, {:env, "GHOSTTY_RESOURCES_DIR"}},
+    {:ghostty, {:term_program, "ghostty"}},
+    {:wezterm, {:env, "WEZTERM_EXECUTABLE"}},
+    {:wezterm, {:term_program, "wezterm"}},
+    {:iterm2, {:env, "ITERM_SESSION_ID"}},
+    {:iterm2, {:term_program, "iterm2"}},
+    {:waveterm, {:term_program, "waveterm"}},
+    {:alacritty, {:env, "ALACRITTY_LOG"}},
+    {:alacritty, {:term_program, "alacritty"}},
+    {:konsole, {:env, "KONSOLE_VERSION"}},
+    {:foot, {:term, "foot"}},
+    {:vscode, {:term_program, "vscode"}}
+  ]
+
+  @spec detect_emulator(map()) :: atom()
+  defp detect_emulator(env) do
+    case Enum.find(@emulator_probes, &marker_matches?(&1, env)) do
+      {emulator, _marker} -> emulator
+      nil -> :unknown
+    end
+  end
+
+  @spec marker_matches?({atom(), {atom(), String.t()}}, map()) :: boolean()
+  defp marker_matches?({_emulator, {kind, value}}, env) do
+    case kind do
+      :env -> present?(env[value])
+      :term_program -> downcase(env["TERM_PROGRAM"]) == value
+      :term -> downcase(env["TERM"]) == value
+    end
+  end
+
+  defp present?(nil), do: false
+  defp present?(""), do: false
+  defp present?(_), do: true
+
+  defp downcase(nil), do: ""
+  defp downcase(value), do: String.downcase(value)
+
+  # WaveTerminal speaks the kitty graphics protocol for inline images,
+  # which is also what ghostty, wezterm and konsole are mapped to above.
   defp emulator_to_protocol(:kitty), do: :kitty
   defp emulator_to_protocol(:ghostty), do: :kitty
   defp emulator_to_protocol(:wezterm), do: :kitty
+  defp emulator_to_protocol(:konsole), do: :kitty
+  defp emulator_to_protocol(:waveterm), do: :kitty
   defp emulator_to_protocol(:iterm2), do: :iterm2
   defp emulator_to_protocol(:alacritty), do: :sixel
-  defp emulator_to_protocol(:konsole), do: :kitty
   defp emulator_to_protocol(:foot), do: :sixel
   defp emulator_to_protocol(:vscode), do: :sixel
   defp emulator_to_protocol(_), do: :ascii
-
-  defp env_set?(v), do: System.get_env(v) not in [nil, ""]
-  defp env_match?(v, m), do: String.downcase(System.get_env(v) || "") == String.downcase(m)
 end

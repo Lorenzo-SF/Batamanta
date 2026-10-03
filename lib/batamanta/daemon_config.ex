@@ -14,8 +14,21 @@ defmodule Batamanta.DaemonConfig do
         var: String.t(),          # env var name the wrapper reads at runtime
         default_ms: non_neg_integer(),  # TTL if env var unset (0 = feature off)
         user_app: String.t(),     # OTP application name to load per request
-        request_timeout_ms: pos_integer()
+        request_timeout_ms: pos_integer(),
+        foreground: [String.t()]  # subcommands that must NOT use the daemon
       }
+
+  ## Commands that cannot use the daemon
+
+  A warm daemon buffers the command's output in an ETS table and hands it
+  back as a single blob at the end, and it has no stdin at all. Anything
+  that animates, prompts, paginates or reads keys therefore cannot work
+  through it: the frames all arrive at once, and a prompt waits forever
+  on a stdin that will never be read.
+
+  `foreground:` names those subcommands so the wrapper runs them the old
+  way. `--help`, `-h` and an empty argument list are always foreground
+  regardless, since the help is a pager/TUI by nature.
 
   ## Defaults
 
@@ -24,7 +37,8 @@ defmodule Batamanta.DaemonConfig do
         var: "BATAMANTA_BEAM_ALIVE",
         default_ms: 0,
         user_app: nil,                  # derived from Mix project at build time
-        request_timeout_ms: 60_000
+        request_timeout_ms: 60_000,
+        foreground: []
       }
 
   ## Backward compatibility
@@ -42,19 +56,28 @@ defmodule Batamanta.DaemonConfig do
   # 24h cap
   @max_default_ms 86_400_000
 
+  # No default subcommands: batamanta packages arbitrary projects and has
+  # no way to know which of their commands animate or prompt. An empty
+  # list means "everything goes through the daemon", which is correct for
+  # a project with no interactive commands and wrong for one that has
+  # them — so the consumer must say so via `daemon: [foreground: [...]]`.
+  @default_foreground []
+
   @type t :: %__MODULE__{
           enabled: boolean(),
           var: String.t(),
           default_ms: non_neg_integer(),
           user_app: String.t() | nil,
-          request_timeout_ms: pos_integer()
+          request_timeout_ms: pos_integer(),
+          foreground: [String.t()]
         }
 
   defstruct enabled: false,
             var: @default_var,
             default_ms: @default_default_ms,
             user_app: nil,
-            request_timeout_ms: @default_request_timeout_ms
+            request_timeout_ms: @default_request_timeout_ms,
+            foreground: @default_foreground
 
   @doc """
   Builds a struct from the `daemon:` block of the mix config.
@@ -77,9 +100,27 @@ defmodule Batamanta.DaemonConfig do
           atom when is_atom(atom) -> Atom.to_string(atom)
           bin when is_binary(bin) -> bin
         end,
-      request_timeout_ms: Keyword.get(opts, :request_timeout_ms, @default_request_timeout_ms)
+      request_timeout_ms: Keyword.get(opts, :request_timeout_ms, @default_request_timeout_ms),
+      foreground: normalize_foreground(Keyword.get(opts, :foreground, @default_foreground))
     }
     |> validate!()
+  end
+
+  # Accepts atoms or strings, and a single value instead of a list, so
+  # `foreground: :animate` reads as naturally as `foreground: [:animate]`.
+  defp normalize_foreground(value) when is_list(value) do
+    Enum.map(value, &to_foreground_entry/1)
+  end
+
+  defp normalize_foreground(nil), do: @default_foreground
+  defp normalize_foreground(value), do: [to_foreground_entry(value)]
+
+  defp to_foreground_entry(atom) when is_atom(atom), do: Atom.to_string(atom)
+  defp to_foreground_entry(bin) when is_binary(bin), do: bin
+
+  defp to_foreground_entry(other) do
+    raise ArgumentError,
+          "batamanta.daemon.foreground entries must be atoms or strings, got: #{inspect(other)}"
   end
 
   @doc """
@@ -142,11 +183,18 @@ defmodule Batamanta.DaemonConfig do
     ]
   end
 
-  # If the user didn't override `cli_module`, default to `<UserApp>.CLI`,
-  # mirroring the convention used by `Batamanta.RunScript`.
-  defp cli_module_default(%__MODULE__{user_app: nil}), do: ""
+  @doc """
+  The CLI module a daemon for this config will invoke, or `""` when
+  there is no user app to derive one from.
 
-  defp cli_module_default(%__MODULE__{user_app: app}) do
+  Public because `Batamanta.RustTemplate` needs it to build the daemon
+  identity: two binaries of the same app that would be asked to call
+  different CLI modules cannot share a warm BEAM.
+  """
+  @spec cli_module_default(t()) :: String.t()
+  def cli_module_default(%__MODULE__{user_app: nil}), do: ""
+
+  def cli_module_default(%__MODULE__{user_app: app}) do
     app |> Macro.camelize() |> Kernel.<>(".CLI")
   end
 

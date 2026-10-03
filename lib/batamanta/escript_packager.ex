@@ -48,7 +48,30 @@ defmodule Batamanta.EscriptPackager do
   """
   @spec package(Path.t(), Path.t(), Path.t(), integer()) ::
           {:ok, Path.t()} | {:error, String.t()}
-  def package(escript_path, erts_path, output_path, compression_level \\ 3, opts \\ [])
+  def package(escript_path, erts_path, output_path, compression_level \\ 3, opts \\ []) do
+    case package_with_meta(escript_path, erts_path, output_path, compression_level, opts) do
+      {:ok, path, _meta} -> {:ok, path}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Same as `package/5` but also returns `%{erts_version: ...}`.
+
+  The caller needs the ERTS version to derive the daemon identity, which
+  must keep two builds of the same app apart when they differ only in
+  the ERTS they bundle. `package/5` keeps its two-element return for the
+  callers and tests that do not care.
+  """
+  @spec package_with_meta(Path.t(), Path.t(), Path.t(), integer(), keyword()) ::
+          {:ok, Path.t(), map()} | {:error, String.t()}
+  def package_with_meta(
+        escript_path,
+        erts_path,
+        output_path,
+        compression_level \\ 3,
+        opts \\ []
+      )
       when is_integer(compression_level) and compression_level >= 1 and
              compression_level <= 19 do
     temp_dir = create_temp_directory()
@@ -93,6 +116,7 @@ defmodule Batamanta.EscriptPackager do
       tar_path = String.replace_trailing(output_path, ".tar.zst", ".tar")
       create_tarball(temp_dir, tar_path) |> tar_or_throw()
       compress_output(tar_path, output_path, compression_level)
+      {:ok, output_path, %{erts_version: erts_version}}
     after
       File.rm_rf(temp_dir)
     end

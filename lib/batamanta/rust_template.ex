@@ -40,13 +40,16 @@ defmodule Batamanta.RustTemplate do
     - `target_triple` - Rust target triple (e.g., "x86_64-unknown-linux-musl")
     - `config` - Mix project configuration
     - `format` - Output format (`:release` or `:escript`)
+    - `meta` - Build metadata from the packager; must carry
+      `:erts_version` so the daemon identity can tell two builds of the
+      same app apart when they differ only in ERTS. Defaults to `""`.
 
     - `:ok` - Success
     - `{:error, reason}` - Failure
   """
-  @spec build(Path.t(), String.t(), String.t(), keyword(), :release | :escript) ::
+  @spec build(Path.t(), String.t(), String.t(), keyword(), :release | :escript, map()) ::
           :ok | {:error, String.t()}
-  def build(payload_path, binary_name, target_triple, config, format \\ :release) do
+  def build(payload_path, binary_name, target_triple, config, format \\ :release, meta \\ %{}) do
     template_dir = Path.join(:code.priv_dir(:batamanta), "rust_template")
     build_dir = Path.join(System.tmp_dir!(), "bat_build_#{:os.system_time(:millisecond)}")
 
@@ -66,7 +69,8 @@ defmodule Batamanta.RustTemplate do
                target_triple,
                config,
                cargo_target_dir,
-               format
+               format,
+               meta
              ) do
         copy_binary(cargo_target_dir, binary_name, target_triple)
       end
@@ -82,7 +86,7 @@ defmodule Batamanta.RustTemplate do
     end
   end
 
-  defp compile_rust(build_dir, target_triple, config, cargo_target_dir, format) do
+  defp compile_rust(build_dir, target_triple, config, cargo_target_dir, format, meta) do
     cmd = resolve_compiler(target_triple)
 
     bata_config = Keyword.get(config, :batamanta, [])
@@ -102,15 +106,6 @@ defmodule Batamanta.RustTemplate do
 
     current_env = System.get_env() |> Enum.map(fn {k, v} -> {k, v} end)
 
-    base_env = [
-      {"BATAMANTA_EXEC_MODE", mode_str},
-      {"BATAMANTA_APP_NAME", app_name_str},
-      {"BATAMANTA_APP_VERSION", app_version_str},
-      {"BATAMANTA_TARGET", target_str},
-      {"BATAMANTA_FORMAT", format_str},
-      {"CARGO_TARGET_DIR", cargo_target_dir}
-    ]
-
     # Compute the build hash from the payload that's about to be embedded
     # in the binary. The wrapper will pass this hash to the daemon on
     # every request; if the daemon's baked hash differs (deploy happened),
@@ -118,11 +113,44 @@ defmodule Batamanta.RustTemplate do
     payload_dest = Path.join([build_dir, "src", "payload.tar.zst"])
     build_hash = Daemon.build_hash_for(payload_dest)
 
+    # Identity is the FULL compatibility tuple, not just the build hash.
+    # Two builds that differ only in ERTS, format, exec mode or CLI module
+    # must not share a daemon: the hash would catch the mismatch, but
+    # only after connecting, so they would evict each other on every
+    # alternate invocation and the feature would cost full price for no
+    # benefit. Distinct identities get distinct sockets and never meet.
+    cli_module = DaemonConfig.cli_module_default(daemon_config)
+
+    identity_attrs = %{
+      app: app_name_str,
+      version: app_version_str,
+      target: target_str,
+      format: format_str,
+      exec_mode: mode_str,
+      erts: Map.get(meta, :erts_version, ""),
+      cli_module: cli_module
+    }
+
+    base_env = [
+      {"BATAMANTA_EXEC_MODE", mode_str},
+      {"BATAMANTA_APP_NAME", app_name_str},
+      {"BATAMANTA_APP_VERSION", app_version_str},
+      {"BATAMANTA_TARGET", target_str},
+      {"BATAMANTA_FORMAT", format_str},
+      {"BATAMANTA_DAEMON_IDENTITY", Daemon.identity(identity_attrs)},
+      {"BATAMANTA_DAEMON_BASENAME", Daemon.runtime_basename(identity_attrs)},
+      {"CARGO_TARGET_DIR", cargo_target_dir}
+    ]
+
     daemon_env =
       if DaemonConfig.enabled?(daemon_config) do
         daemon_config
         |> DaemonConfig.to_env_vars()
-        |> Kernel.++([{"BATAMANTA_DAEMON_BUILD_HASH", build_hash}])
+        |> Kernel.++([
+          {"BATAMANTA_DAEMON_BUILD_HASH", build_hash},
+          {"BATAMANTA_DAEMON_CLI_MODULE", cli_module},
+          {"BATAMANTA_DAEMON_FOREGROUND", Enum.join(daemon_config.foreground, ",")}
+        ])
       else
         DaemonConfig.to_env_vars(daemon_config)
       end

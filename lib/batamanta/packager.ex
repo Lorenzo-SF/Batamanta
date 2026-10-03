@@ -27,6 +27,27 @@ defmodule Batamanta.Packager do
   @spec package(Path.t(), Path.t(), Path.t(), integer()) ::
           {:ok, Path.t()} | {:error, String.t()}
   def package(rel_path, erts_path, out_path, compression_level) do
+    case package_with_meta(rel_path, erts_path, out_path, compression_level) do
+      {:ok, path, _meta} -> {:ok, path}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Same as `package/4` but also returns build metadata.
+
+  The ERTS version is only knowable here — the Fetcher resolves it from
+  the release's `start_erl.data` / the cache dir name — and the caller
+  needs it downstream to derive the daemon identity, which must
+  distinguish two builds of the same app that differ only in their
+  bundled ERTS. `package/4` keeps its two-element return for the callers
+  and tests that do not care.
+
+  Returns `{:ok, path, meta}` where `meta` is a map with `:erts_version`.
+  """
+  @spec package_with_meta(Path.t(), Path.t(), Path.t(), integer()) ::
+          {:ok, Path.t(), map()} | {:error, String.t()}
+  def package_with_meta(rel_path, erts_path, out_path, compression_level) do
     temp = Path.join(System.tmp_dir!(), "bat_pkg_#{:erlang.unique_integer([:positive])}")
     config = Mix.Project.config()
     app_name = config[:app] |> to_string()
@@ -41,8 +62,9 @@ defmodule Batamanta.Packager do
     #
     # We still validate the daemon config here so callers see the same
     # error messages they used to get from Daemon.compile/4 inside the
-    # try/rescue boundary.
-    _daemon_config =
+    # try/rescue boundary, and so we know whether to stage the daemon
+    # into the release below.
+    daemon_config =
       bata_config
       |> Keyword.get(:daemon)
       |> DaemonConfig.from_config()
@@ -78,11 +100,13 @@ defmodule Batamanta.Packager do
       update_start_erl_data(rel_path, erts_work, erts_path)
 
       # The BEAM daemon (when enabled) is compiled BEFORE `mix release`
-      # at `_build/prod/lib/batamanta_daemon-0.1.0/` so that Mix
-      # recognises it as a regular OTP application. After release
-      # assembly, the daemon's .beam files are already inside
-      # `rel_path/lib/batamanta_daemon-0.1.0/ebin/` and we just need
-      # to include them in the payload tar. No re-compilation here.
+      # at `_build/prod/lib/batamanta_daemon-<vsn>/`. `mix release` does
+      # NOT pick it up on its own: it assembles the release from the
+      # project's declared application graph, and the daemon is not a
+      # declared dep of the consumer. So we copy it in here, after
+      # release assembly, and the payload tar below picks it up via
+      # rel_path/lib/**. No re-compilation.
+      stage_daemon_in_release(daemon_config, rel_path)
 
       # Generate <app>.run entry point script
       exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
@@ -98,7 +122,11 @@ defmodule Batamanta.Packager do
 
       case :erl_tar.create(String.to_charlist(tar_path), files) do
         :ok ->
-          Batamanta.Compression.compress(:zstd, tar_path, out_path, compression_level)
+          # `Compression.compress/4` answers {:ok, path}, not bare :ok.
+          case Batamanta.Compression.compress(:zstd, tar_path, out_path, compression_level) do
+            {:ok, _path} -> {:ok, out_path, %{erts_version: erts_version}}
+            {:error, reason} -> {:error, reason}
+          end
 
         {:error, reason} ->
           {:error, "Tar creation failed: #{inspect(reason)}"}
@@ -106,6 +134,61 @@ defmodule Batamanta.Packager do
     after
       File.rm_rf!(temp)
     end
+  end
+
+  # ============================================================================
+  # BEAM DAEMON STAGING
+  # ============================================================================
+
+  # Copies the pre-compiled `batamanta_daemon` OTP app from the build path
+  # into the assembled release so it lands on the release's code path.
+  #
+  # The `.run` script's `batamanta_daemon_bootstrap` branch evaluates
+  # `Application.ensure_all_started(batamanta_daemon)`. If the app is not
+  # under `rel_path/lib/`, that eval dies with
+  # `undefined variable "batamanta_daemon"` (a CompileError, because
+  # `bin/<app> eval` compiles the string), the socket is never bound, and
+  # every wrapper invocation sits out the full daemon bind timeout before
+  # falling back to a cold start.
+  #
+  # No-op when `daemon: [enabled: false]` or when the daemon was not
+  # compiled — the legacy path does not need it.
+  defp stage_daemon_in_release(%DaemonConfig{enabled: false}, _rel_path), do: :ok
+
+  defp stage_daemon_in_release(_daemon_config, rel_path) do
+    build_lib = Path.join([prod_build_path(), "lib"])
+    name = "batamanta_daemon-#{Batamanta.Daemon.version()}"
+
+    case Path.wildcard(Path.join([build_lib, "batamanta_daemon-*"])) do
+      [] ->
+        :ok
+
+      sources ->
+        # More than one version can linger in _build across upgrades; the
+        # one matching the compiled version wins.
+        preferred = Path.join([build_lib, name])
+
+        source =
+          if File.dir?(preferred) do
+            preferred
+          else
+            Enum.sort(sources) |> List.last()
+          end
+
+        dest = Path.join([rel_path, "lib", name])
+        File.rm_rf!(dest)
+        File.mkdir_p!(Path.dirname(dest))
+        File.cp_r!(source, dest)
+    end
+  end
+
+  # `_build/prod` derived from the project config rather than
+  # `Mix.Project.build_path/0`, so the daemon is found even when
+  # `mix batamanta` itself runs under a different MIX_ENV than the
+  # `mix release` it wraps.
+  defp prod_build_path do
+    build_root = Mix.Project.config()[:build_path] || "_build"
+    build_root |> Path.expand() |> Path.join("prod")
   end
 
   # ============================================================================

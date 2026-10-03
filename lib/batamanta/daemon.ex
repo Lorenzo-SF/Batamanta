@@ -22,6 +22,80 @@ defmodule Batamanta.Daemon do
   @daemon_vsn "0.1.0"
   @daemon_app :batamanta_daemon
 
+  # Fields that make two daemons mutually incompatible. Order is
+  # significant: it defines the canonical string, so appending is safe
+  # but reordering is a breaking change for the socket naming.
+  @identity_fields ~w(app version target format exec_mode erts cli_module)
+
+  @doc """
+  Canonical identity string for a packaged binary's daemon.
+
+  Two binaries may share a daemon **only** if every field below matches.
+  A daemon holds a live BEAM loaded from its own payload and dispatches
+  requests to a CLI module baked at ITS startup, so anything that changes
+  what that BEAM contains, or what module it will be asked to call, makes
+  the pair incompatible:
+
+    * `:app` / `:version` — which OTP app the payload carries.
+    * `:target` — rust target triple, i.e. OS + arch + libc. A
+      `linux-gnu` and a `linux-musl` build of the same app both run on
+      one machine and must not share.
+    * `:format` — `:release` vs `:escript` shape the payload differently.
+    * `:exec_mode` — `:cli` / `:tui` / `:daemon` are different entry
+      points; a `:tui` daemon must not serve a `:cli` request.
+    * `:erts` — the bundled ERTS version. This is the one that bit us:
+      two builds of the same app+version+target differing only in ERTS
+      shared a socket, every request hit `hash_mismatch`, the daemon
+      recycled, and the feature delivered zero benefit at full cost.
+    * `:cli_module` — the module the daemon actually invokes per
+      request. Read from the request (not the daemon's env) since a
+      warm BEAM keeps the environment it booted with.
+
+  The order is fixed by `@identity_fields`; unknown keys are ignored so
+  callers can pass a broader map.
+  """
+  @spec identity(map()) :: String.t()
+  def identity(attrs) when is_map(attrs) do
+    Enum.map_join(@identity_fields, "|", fn field ->
+      "#{field}=#{attrs |> Map.get(String.to_atom(field), "") |> to_string()}"
+    end)
+  end
+
+  @doc """
+  Short, stable digest of an identity string: 8 lowercase hex chars.
+
+  Used to keep the AF_UNIX socket path inside `sun_path`'s 108-byte
+  limit while still being unique per identity.
+  """
+  @spec identity_hash(String.t()) :: String.t()
+  def identity_hash(identity) when is_binary(identity) do
+    :sha256 |> :crypto.hash(identity) |> binary_part(0, 4) |> Base.encode16(case: :lower)
+  end
+
+  @doc """
+  Basename (no directory, no extension) for the daemon's runtime files.
+
+  Deliberately short, because an AF_UNIX socket path is capped at 108
+  bytes and `$XDG_RUNTIME_DIR` is not ours to control. The ERTS version
+  is kept readable because "which ERTS is this daemon?" is the question
+  that actually comes up when several builds coexist; everything else is
+  folded into the digest.
+
+      iex> Batamanta.Daemon.runtime_basename(%{app: "alaja", version: "3.1.2", erts: "16.4", ...})
+      "alaja-3.1.2-e16.4-1a2b3c4d"
+  """
+  @spec runtime_basename(map()) :: String.t()
+  def runtime_basename(attrs) when is_map(attrs) do
+    app = Map.get(attrs, :app, "app") |> to_string()
+    version = Map.get(attrs, :version, "0.0.0") |> to_string()
+    erts = Map.get(attrs, :erts, "") |> to_string()
+
+    base = "#{app}-#{version}"
+    base = if erts == "", do: base, else: "#{base}-e#{erts}"
+
+    base <> "-" <> identity_hash(identity(attrs))
+  end
+
   @doc """
   Compiles the daemon `.erl` sources into the given staging directory.
 
@@ -94,8 +168,54 @@ defmodule Batamanta.Daemon do
   @spec compile_to_build_path(Path.t(), Path.t(), DaemonConfig.t(), keyword()) ::
           :ok | {:error, String.t()}
   def compile_to_build_path(build_path, erts_path, daemon_config, opts \\ []) do
-    staging_dir = Path.join([build_path, "lib"])
-    compile(staging_dir, erts_path, daemon_config, opts)
+    # `build_path` is passed through verbatim: `compile/4`'s `staging_dir`
+    # IS the root that `ensure_daemon_app_dir/1` appends `lib/`, the app
+    # dir and `ebin/` to. Appending a second `lib` here landed the daemon
+    # at `_build/prod/lib/lib/batamanta_daemon-<vsn>/ebin`, which
+    # `mix release` does not scan — so the release shipped without the
+    # daemon app, the bootstrap eval died with `undefined variable
+    # "batamanta_daemon"`, and every invocation burned 30s waiting for a
+    # socket that could never be bound before falling back to a cold
+    # start.
+    compile(build_path, erts_path, daemon_config, opts)
+  end
+
+  @doc """
+  Contents of the generated `batamanta_daemon.app`.
+
+  Split out of the writer so the `.app` contract can be asserted without
+  an `erlc` and a full compile in the way.
+
+  The `{mod, ...}` entry is load-bearing. Without it the `.app` declares
+  an OTP application with no callback module, so
+  `Application.ensure_all_started(:batamanta_daemon)` answers
+  `{:ok, [:batamanta_daemon]}` while starting nothing at all: no
+  supervisor, no socket. The wrapper then sits out its full 30s bind
+  timeout on every invocation and falls back to a cold start — which is
+  exactly the symptom this whole bootstrap chain was being blamed on.
+
+  `modules` lists only real `.beam` files. It used to lead with the
+  application name as if it were a module (`batamanta_daemon`), which does
+  not exist; harmless to the VM, but it makes release tooling report a
+  phantom module and misleads anyone reading the `.app` to debug a boot
+  problem.
+  """
+  @spec app_file_content(DaemonConfig.t()) :: String.t()
+  def app_file_content(%DaemonConfig{} = cfg) do
+    """
+    {application, #{@daemon_app},
+     [{description, "Batamanta BEAM daemon — keeps a BEAM alive across wrapper invocations"},
+      {vsn, "#{@daemon_vsn}"},
+      {mod, {batamanta_daemon_app, []}},
+      {registered, [batamanta_daemon_sup, batamanta_daemon_server]},
+      {applications, [kernel, stdlib]},
+      {env,
+       [{user_app, #{inspect(cfg.user_app)}},
+        {request_timeout_ms, #{cfg.request_timeout_ms}},
+        {default_ttl_ms, #{cfg.default_ms}}]},
+      {modules, [batamanta_daemon_app, batamanta_daemon_sup, batamanta_daemon_server,
+                 batamanta_daemon_protocol, batamanta_daemon_app_controller]}]}.
+    """
   end
 
   @doc """
@@ -170,12 +290,50 @@ defmodule Batamanta.Daemon do
     else
       app_file = Path.join(ebin_dir, "#{@daemon_app}.app")
 
-      if File.exists?(app_file) do
-        # Already compiled — short-circuit so we don't pay erlc twice.
+      if File.exists?(app_file) and not sources_newer_than?(ebin_dir) do
+        # Already compiled AND the sources have not changed since — short
+        # -circuit so we don't pay erlc twice.
         :skip
       else
         :ok
       end
+    end
+  end
+
+  # True when any .erl or .hrl in the daemon tree is newer than the
+  # compiled .app.
+  #
+  # Keying the skip purely on "the .app exists" meant that editing a
+  # daemon source and re-running `mix batamanta` silently kept the OLD
+  # .beam files: the build reported success, the payload carried stale
+  # code, and the fix you just wrote appeared not to work. That is a very
+  # expensive trap when the thing being debugged is a packaging step, so
+  # freshness is part of the decision rather than a manual `rm -rf`.
+  @spec sources_newer_than?(Path.t()) :: boolean()
+  defp sources_newer_than?(ebin_dir) do
+    priv_dir = :code.priv_dir(:batamanta) |> to_string()
+    src_dir = Path.join([priv_dir, "daemon", "src"])
+
+    case File.ls(src_dir) do
+      {:ok, entries} ->
+        compiled_at = mtime(app_path_in(ebin_dir))
+
+        entries
+        |> Enum.filter(&(String.ends_with?(&1, ".erl") or String.ends_with?(&1, ".hrl")))
+        |> Enum.map(&mtime(Path.join(src_dir, &1)))
+        |> Enum.any?(&(is_integer(&1) and (not is_integer(compiled_at) or &1 > compiled_at)))
+
+      _ ->
+        false
+    end
+  end
+
+  defp app_path_in(ebin_dir), do: Path.join(ebin_dir, "#{@daemon_app}.app")
+
+  defp mtime(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime}} -> mtime
+      {:error, _} -> nil
     end
   end
 
@@ -217,21 +375,7 @@ defmodule Batamanta.Daemon do
   defp write_app_file(ebin_dir, %DaemonConfig{} = cfg) do
     app_path = Path.join(ebin_dir, "#{@daemon_app}.app")
 
-    content = """
-    {application, #{@daemon_app},
-     [{description, "Batamanta BEAM daemon — keeps a BEAM alive across wrapper invocations"},
-      {vsn, "#{@daemon_vsn}"},
-      {registered, [batamanta_daemon_sup, batamanta_daemon_server]},
-      {applications, [kernel, stdlib]},
-      {env,
-       [{user_app, #{inspect(cfg.user_app)}},
-        {request_timeout_ms, #{cfg.request_timeout_ms}},
-        {default_ttl_ms, #{cfg.default_ms}}]},
-      {modules, [#{@daemon_app}, batamanta_daemon_sup, batamanta_daemon_server,
-                 batamanta_daemon_protocol, batamanta_daemon_app_controller]}]}.
-    """
-
-    case File.write(app_path, content) do
+    case File.write(app_path, app_file_content(cfg)) do
       :ok -> :ok
       {:error, reason} -> {:error, "could not write #{app_path}: #{inspect(reason)}"}
     end
