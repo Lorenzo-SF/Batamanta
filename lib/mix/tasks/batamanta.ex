@@ -146,9 +146,18 @@ defmodule Mix.Tasks.Batamanta do
     {otp_version, version_mode} = resolve_otp_version(opts, bata_config)
 
     show_banner = Keyword.get(bata_config, :show_banner, true)
+    image_protocol = Keyword.get(bata_config, :image_protocol, :auto)
 
     banner_ctx =
-      build_banner(otp_version, target_info, resolved_target, show_banner, version_mode, format)
+      build_banner(
+        otp_version,
+        target_info,
+        resolved_target,
+        show_banner,
+        version_mode,
+        format,
+        image_protocol
+      )
 
     execution_mode = Keyword.get(bata_config, :execution_mode, :cli)
     Validator.validate!(os: target_info.os, arch: target_info.arch, mode: execution_mode)
@@ -187,6 +196,7 @@ defmodule Mix.Tasks.Batamanta do
 
   defp run_umbrella_with_apps(apps, opts, config, bata_config) do
     show_banner = Keyword.get(bata_config, :show_banner, true)
+    image_protocol = Keyword.get(bata_config, :image_protocol, :auto)
 
     erts_target = resolve_erts_target(opts, bata_config)
     override_config = build_override_config(opts, bata_config)
@@ -202,7 +212,8 @@ defmodule Mix.Tasks.Batamanta do
         resolved_target,
         show_banner,
         version_mode,
-        apps
+        apps,
+        image_protocol
       )
 
     compression = opts[:compression] || bata_config[:compression] || 3
@@ -296,7 +307,8 @@ defmodule Mix.Tasks.Batamanta do
         _resolved_target,
         show_banner,
         version_mode,
-        apps
+        apps,
+        image_protocol \\ :auto
       ) do
     mode_str = if version_mode == :explicit, do: " (user-specified)", else: " (auto-detected)"
     app_names = Enum.map_join(apps, ", ", fn {name, _path} -> Atom.to_string(name) end)
@@ -311,6 +323,7 @@ defmodule Mix.Tasks.Batamanta do
 
     Banner.show_with_context(messages,
       show_banner: show_banner,
+      image_protocol: image_protocol,
       on_success_image: "batamantaman_happy.png",
       on_error_image: "batamantaman_sad.png"
     )
@@ -375,8 +388,13 @@ defmodule Mix.Tasks.Batamanta do
             ">> 📦 Packaging Payload for #{app_name} (Zstd level #{app_compression})..."
           )
 
-          case Packager.package(release_path, erts_path, payload_path, app_compression) do
-            {:ok, _} ->
+          case Packager.package_with_meta(
+                 release_path,
+                 erts_path,
+                 payload_path,
+                 app_compression
+               ) do
+            {:ok, _path, meta} ->
               compile_wrapper(
                 :release,
                 app_config,
@@ -384,7 +402,8 @@ defmodule Mix.Tasks.Batamanta do
                 resolved_target,
                 target_info,
                 app_binary_name,
-                banner_ctx
+                banner_ctx,
+                meta
               )
 
               File.rm(payload_path)
@@ -702,8 +721,8 @@ defmodule Mix.Tasks.Batamanta do
 
     Logger.info(banner_ctx, ">> 📦 Packaging Payload (Zstd level #{compression})...")
 
-    case Packager.package(release_path, erts_path, payload_path, compression) do
-      {:ok, _} ->
+    case Packager.package_with_meta(release_path, erts_path, payload_path, compression) do
+      {:ok, _path, meta} ->
         compile_wrapper(
           :release,
           config,
@@ -711,7 +730,8 @@ defmodule Mix.Tasks.Batamanta do
           erts_target,
           target_info,
           binary_name,
-          banner_ctx
+          banner_ctx,
+          meta
         )
 
         File.rm(payload_path)
@@ -762,11 +782,11 @@ defmodule Mix.Tasks.Batamanta do
       |> Batamanta.DaemonConfig.from_config()
       |> Batamanta.DaemonConfig.with_resolved_user_app()
 
-    case EscriptPackager.package(escript_path, erts_path, payload_path, compression,
+    case EscriptPackager.package_with_meta(escript_path, erts_path, payload_path, compression,
            execution_mode: exec_mode,
            daemon_config: daemon_config
          ) do
-      {:ok, _} ->
+      {:ok, _path, meta} ->
         compile_wrapper(
           :escript,
           config,
@@ -774,7 +794,8 @@ defmodule Mix.Tasks.Batamanta do
           erts_target,
           target_info,
           binary_name,
-          banner_ctx
+          banner_ctx,
+          meta
         )
 
         File.rm(payload_path)
@@ -865,7 +886,8 @@ defmodule Mix.Tasks.Batamanta do
          erts_target,
          target_info,
          binary_name,
-         banner_ctx
+         banner_ctx,
+         meta \\ %{}
        ) do
     rust_target = target_info.rust_target
     binary_suffix = Target.erts_target_to_binary_suffix(erts_target)
@@ -882,7 +904,7 @@ defmodule Mix.Tasks.Batamanta do
       ">> 🔨 Compiling Rust Wrapper for #{target_info.os} #{target_info.arch} (#{target_info.libc || "N/A"})..."
     )
 
-    case RustTemplate.build(payload_path, final_name, rust_target, config, format) do
+    case RustTemplate.build(payload_path, final_name, rust_target, config, format, meta) do
       :ok ->
         apply_minify(final_name, banner_ctx)
         cleanup_temporaries(banner_ctx)
@@ -913,7 +935,15 @@ defmodule Mix.Tasks.Batamanta do
     :ok
   end
 
-  defp build_banner(otp_version, target_info, _resolved_target, show_banner, version_mode, format) do
+  defp build_banner(
+         otp_version,
+         target_info,
+         _resolved_target,
+         show_banner,
+         version_mode,
+         format,
+         image_protocol
+       ) do
     mode_str = if version_mode == :explicit, do: " (user-specified)", else: " (auto-detected)"
     format_str = if format == :escript, do: " [escript]", else: ""
 
@@ -926,6 +956,7 @@ defmodule Mix.Tasks.Batamanta do
 
     Banner.show_with_context(messages,
       show_banner: show_banner,
+      image_protocol: image_protocol,
       on_success_image: "batamantaman_happy.png",
       on_error_image: "batamantaman_sad.png"
     )

@@ -35,7 +35,14 @@ read_config() ->
     UserApp   = os:getenv(?USER_APP_ENV, ""),
     Timeout   = os:getenv(?TIMEOUT_ENV, "60000"),
     TTL       = os:getenv(?TTL_ENV, "0"),
-    BuildHash = os:getenv(?BUILD_HASH_ENV, ""),
+    %% os:getenv/1,2 returns a CHARLIST. These two are compared against
+    %% values decoded from JSON, which are BINARIES, so keeping them as
+    %% lists made `is_binary/1` guards in the server fail and killed it
+    %% on the very first request:
+    %%   ** (FunctionClauseError) no function clause matching in
+    %%      :batamanta_daemon_server.identity_matches/2
+    BuildHash = to_binary(os:getenv(?BUILD_HASH_ENV, "")),
+    Identity  = to_binary(os:getenv(?IDENTITY_ENV, "")),
 
     case SockPath of
         false -> {error, {missing_env, ?SOCK_PATH_ENV}};
@@ -56,10 +63,15 @@ read_config() ->
                         user_app => UserAppAtom,
                         request_timeout_ms => parse_pos_int(Timeout, ?TIMEOUT_ENV, 60000),
                         default_ttl_ms => parse_non_neg_int(TTL, ?TTL_ENV, 0),
-                        build_hash => BuildHash
+                        build_hash => BuildHash,
+                        identity => Identity
                     }}
             end
     end.
+
+to_binary(V) when is_binary(V) -> V;
+to_binary(V) when is_list(V)  -> list_to_binary(V);
+to_binary(_)                  -> <<>>.
 
 parse_pos_int(S, _Var, Default) ->
     try list_to_integer(S) of

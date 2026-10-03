@@ -42,12 +42,16 @@ defmodule Batamanta.RunScript do
     cli_module = Keyword.get(opts, :cli_module, derive_cli_module(app_name))
     exec_mode_str = Atom.to_string(exec_mode)
     format_str = Atom.to_string(format)
+    # The daemon ebin is located by the shell, not globbed inside the
+    # `eval` (see the long comment in the bootstrap branch).
+    daemon_vsn = Keyword.get(opts, :daemon_version, Batamanta.Daemon.version())
 
     fragments = %{
       erts_dir: "erts-#{erts_version}",
       cli_module: cli_module,
       exec_mode: exec_mode_str,
       format: format_str,
+      daemon_vsn: daemon_vsn,
       app_name: app_name
     }
 
@@ -157,11 +161,51 @@ defmodule Batamanta.RunScript do
       #    application:". Qualifying with `Application.` sidesteps that
       #    ambiguity entirely.
       #
+      # 5. `batamanta_daemon` MUST carry its colon. A bare lowercase word
+      #    in argument position is a VARIABLE, not an atom, and `eval`
+      #    compiles the string — so the whole bootstrap died instantly with
+      #      error: undefined variable "batamanta_daemon"
+      #    and the socket was never bound. The wrapper then sat in its
+      #    30s bind timeout on EVERY invocation before falling back to a
+      #    cold start. `:batamanta_daemon` is the atom.
+      #
+      # 6. The daemon app is NOT on the release code path. `mix release`
+      #    only bundles applications reachable from the consumer's
+      #    declared application graph, and the daemon is compiled by
+      #    batamanta itself, so even a correct `ensure_all_started/1`
+      #    answers:
+      #      {:error, {:batamanta_daemon, "no such file or directory"}}
+      #    We therefore point the code path at the staged ebin ourselves,
+      #    globbing the version so a daemon app bump needs no edit here.
+      #
       # The daemon's own server process (batamanta_daemon_sup) binds the
       # listening socket during application start, so ensure_all_started
-      # is enough to make the daemon reachable — the receive just keeps
-      # the VM from shutting down after the caller returns.
-      exec "$RELEASE_ROOT/bin/__APP_NAME__" eval 'spawn(fn -> Application.ensure_all_started(batamanta_daemon); receive do _ -> :ok end end)' "$@"
+      # is enough to make the daemon reachable.
+      #
+      # 7. The ebin path is handed in from the shell rather than globbed
+      #    inside the eval. `bin/<app> eval` ends up in `erl_eval` with a
+      #    pre-seeded binding (the `--` separator leaves it a trailing
+      #    empty argument), and in that mode erl_eval treats top-level
+      #    assignments and case/fn patterns as MATCHES against the
+      #    existing binding, so they raise:
+      #      ** (MatchError) no match of right hand side value: "..."
+      #      ** (CaseClauseError) no case clause matching: [...]
+      #      ** (FunctionClauseError) ...:"-inside-an-interpreted-fun-"
+      #    Plain function calls and `;`-separated statements are fine, so
+      #    the eval stays a single line of calls and the shell — which
+      #    already knows $RELEASE_ROOT and the daemon version at
+      #    generation time — computes the directory.
+      #
+      # 8. `Process.sleep(:infinity)` parks THIS process; do NOT spawn.
+      #    `bin/<app> eval` passes `--eval`, and the emulator halts as
+      #    soon as the expression returns, taking any spawned process with
+      #    it. The socket was created and then unlinked during shutdown,
+      #    and the wrapper polling for exactly that file never saw it.
+      #    This was the last reason every daemon-enabled invocation
+      #    burned its full 30s bind timeout.
+      BATAMANTA_DAEMON_EBIN="$RELEASE_ROOT/lib/batamanta_daemon-__DAEMON_VSN__/ebin"
+      export BATAMANTA_DAEMON_EBIN
+      exec "$RELEASE_ROOT/bin/__APP_NAME__" eval 'System.get_env("BATAMANTA_DAEMON_EBIN") |> String.to_charlist() |> :code.add_pathz(); Application.ensure_all_started(:batamanta_daemon); Process.sleep(:infinity)' "$@"
     fi
 
     # ─── exec ──────────────────────────────────────────────────────────────────
@@ -192,6 +236,7 @@ defmodule Batamanta.RunScript do
     |> String.replace("__CLI_MODULE__", fragments.cli_module)
     |> String.replace("__MODE__", fragments.exec_mode)
     |> String.replace("__FORMAT__", fragments.format)
+    |> String.replace("__DAEMON_VSN__", fragments.daemon_vsn)
     |> String.replace("__APP_NAME__", fragments.app_name)
     # Normalize to LF. The source file may contain CRLF (e.g. after a
     # Windows checkout), and heredoc sigils keep the \r. A CRLF shebang

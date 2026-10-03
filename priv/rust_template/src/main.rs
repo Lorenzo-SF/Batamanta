@@ -11,6 +11,7 @@ use serde_json::json;
 use std::{
     env,
     fs,
+    io::IsTerminal,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -64,19 +65,40 @@ fn runtime_dir() -> PathBuf {
 /// Path of the AF_UNIX socket the daemon listens on.
 #[cfg(unix)]
 fn daemon_sock_path() -> PathBuf {
-    runtime_dir().join(format!(
-        "{}-{}-{}.sock",
-        GENERATED_APP_NAME, GENERATED_APP_VERSION, GENERATED_TARGET
-    ))
+    runtime_dir().join(format!("{}.sock", daemon_basename()))
 }
 
 /// Path of the daemon's PID file.
 #[cfg(unix)]
 fn daemon_pid_path() -> PathBuf {
-    runtime_dir().join(format!(
-        "{}-{}-{}.pid",
-        GENERATED_APP_NAME, GENERATED_APP_VERSION, GENERATED_TARGET
-    ))
+    runtime_dir().join(format!("{}.pid", daemon_basename()))
+}
+
+/// Filename stem shared by the socket, the PID file and the payload
+/// extraction directory.
+///
+/// Derived from the full daemon identity (app, version, target, format,
+/// exec mode, ERTS, CLI module) rather than just app+version+target.
+/// The old key could not tell two builds of the same app apart when they
+/// differed in ERTS, format or execution mode: they shared one socket,
+/// every request came back `hash_mismatch`, the daemon recycled, and
+/// the feature delivered zero benefit at full cost. The stem is kept
+/// short because an AF_UNIX path is capped at 108 bytes.
+///
+/// Not `cfg(unix)`: the extraction directory is used on every platform,
+/// Windows included, and the same identity discipline applies to it.
+fn daemon_basename() -> String {
+    if GENERATED_DAEMON_BASENAME.is_empty() {
+        // Defensive fallback for a wrapper built without the env var
+        // (e.g. a template compiled by hand). Reproduces the old key
+        // rather than producing an empty filename.
+        format!(
+            "{}-{}-{}",
+            GENERATED_APP_NAME, GENERATED_APP_VERSION, GENERATED_TARGET
+        )
+    } else {
+        GENERATED_DAEMON_BASENAME.to_string()
+    }
 }
 
 /// Path of the embedded `<app>.run` script (same per-binary extraction dir
@@ -103,6 +125,49 @@ enum NoDaemonReason {
     TtlOutOfRange(u64),
     /// Daemon mode needs AF_UNIX sockets + fork/exec: Unix-only.
     UnsupportedOs,
+    /// The command animates, prompts, paginates or reads keys, so it must
+    /// own the terminal. See `foreground` in the daemon config.
+    InteractiveCommand(String),
+}
+
+/// True when this invocation must run in the foreground.
+///
+/// A warm daemon captures the command's output into an ETS table and
+/// returns it as one blob, and it never reads stdin. That breaks, without
+/// any way to recover inside the daemon:
+///
+///   * animations (`animate`, `pulsar`, `animated-bar`) — every frame
+///     arrives at once at the end instead of over time,
+///   * prompts (`ask`, `menu`, `yesno`) — they block on a stdin nobody
+///     ever reads, so the terminal hangs,
+///   * pagers and key-driven TUIs (`--help` tab navigation) — same
+///     reason, plus the redraw escapes arrive in the wrong order.
+///
+/// Help and an empty argument list are always foreground: both are
+/// interactive by nature, whatever the project declares.
+///
+/// For a declared subcommand the check scans **every** argument rather
+/// than just the first non-flag one. Batamanta does not know which flags
+/// take a value, so in `--table-align left table` the first non-flag
+/// argument is `left`, a value, not the subcommand. Guessing there would
+/// risk sending an interactive command to the daemon — which hangs the
+/// terminal. Scanning all args errs the other way: the worst case is that
+/// `alaja message --text "menu"` runs in the foreground, which is merely
+/// slower, not broken.
+#[cfg(unix)]
+fn requires_foreground(args: &[String]) -> Option<String> {
+    if args.is_empty() {
+        return Some("<no subcommand>".to_string());
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        return Some(args.join(" "));
+    }
+    GENERATED_DAEMON_FOREGROUND
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .find(|declared| args.iter().any(|a| a == declared))
+        .map(|s| s.to_string())
 }
 
 /// Outcome of `resolve_dispatch`: either take the daemon path or fall back
@@ -152,7 +217,13 @@ fn resolve_dispatch() -> DispatchDecision {
 // ============================================================================
 
 fn extract_dir_from_payload() -> PathBuf {
-    env::temp_dir().join(format!("batamanta-{}-{}-{}", GENERATED_APP_NAME, GENERATED_APP_VERSION, GENERATED_TARGET))
+    // Same identity as the socket: two binaries that would not share a
+    // daemon must not share an extraction directory either. The old
+    // `{app}-{version}-{target}` key meant a rebuild that changed the
+    // payload (a new ERTS, say) still found the previous extraction
+    // already on disk and short-circuited `extract_payload_if_needed`,
+    // silently running the OLD payload's BEAM.
+    env::temp_dir().join(format!("batamanta-{}", daemon_basename()))
 }
 
 fn extract_payload_if_needed(extract_dir: &Path, bytes: &[u8]) -> Result<()> {
@@ -226,6 +297,19 @@ fn dispatch_over_socket(mut sock: UnixStream, args: &[String]) -> Result<Dispatc
         "cwd": cwd,
         "stdin_b64": "",
         "build_hash": GENERATED_DAEMON_BUILD_HASH,
+        // Compatibility tuple, checked by the daemon before it runs
+        // anything. Belt-and-braces on top of the socket naming: even
+        // if two builds somehow landed on one socket, the daemon refuses
+        // a request from a client it was not built for instead of
+        // running the wrong CLI module against the wrong payload.
+        "identity": GENERATED_DAEMON_IDENTITY,
+        "user_app": GENERATED_DAEMON_USER_APP,
+        "cli_module": GENERATED_DAEMON_CLI_MODULE,
+        // Whether the CALLER's stdout is a terminal. The daemon captures
+        // output through its own io_server, so `IO.ANSI.enabled?/0` inside
+        // it is always false and every command came out colourless. The
+        // user app needs to be told what the real device looks like.
+        "tty": std::io::stdout().is_terminal(),
     })
     .to_string();
 
@@ -687,6 +771,23 @@ fn exec_legacy(run_script: &Path, args: &[String]) -> Result<()> {
 fn main() -> Result<ExitCode> {
     let args: Vec<String> = env::args().skip(1).collect();
 
+    // Checked before the daemon decision, and independently of it: a
+    // command that needs the terminal must run in the foreground even
+    // when the env var says daemon mode is on.
+    #[cfg(unix)]
+    if let DispatchDecision::Daemon = resolve_dispatch() {
+        if let Some(what) = requires_foreground(&args) {
+            let extract_dir = extract_dir_from_payload();
+            let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/payload.tar.zst"));
+            extract_payload_if_needed(&extract_dir, bytes)?;
+            let run_script = legacy_run_script_path(&extract_dir);
+            exec_legacy(&run_script, &args)?;
+            // Unreachable in practice: exec_legacy execs, so this only
+            // covers a wrapper that returned instead of exec'ing.
+            return Ok(ExitCode::from(1));
+        }
+    }
+
     match resolve_dispatch() {
         // Daemon mode needs AF_UNIX sockets + fork/exec: Unix-only. On
         // Windows resolve_dispatch never yields Daemon (UnsupportedOs).
@@ -776,15 +877,132 @@ fn main() -> Result<ExitCode> {
 mod tests {
     use super::*;
 
+    // ---- foreground (interactive command) routing ----
+    //
+    // A warm daemon buffers output and has no stdin, so animated
+    // spinners, prompts and key-driven TUIs cannot work through it. Each
+    // of these produced either "all the frames at once" or a hung
+    // terminal before the check existed.
+
+    #[cfg(unix)]
+    fn fg(args: &[&str]) -> bool {
+        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        requires_foreground(&owned).is_some()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn no_args_is_foreground() {
+        assert!(fg(&[]), "a bare invocation may render a landing screen or ask");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn help_is_always_foreground() {
+        assert!(fg(&["--help"]));
+        assert!(fg(&["-h"]));
+        assert!(fg(&["table", "--help"]), "per-command help is a TUI");
+        assert!(fg(&["--help", "table"]));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_flag_value_is_not_mistaken_for_the_subcommand() {
+        // "--table-align left table": `left` is the flag's value, not the
+        // subcommand. Since we cannot know flag arities, the check scans
+        // every argument, so `table` is found wherever it sits.
+        let owned: Vec<String> = ["--table-align", "left", "table"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        if GENERATED_DAEMON_FOREGROUND.contains("table") {
+            assert!(requires_foreground(&owned).is_some());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_declared_name_anywhere_in_the_args_holds_it_back() {
+        // Erring toward foreground: a value that happens to equal a
+        // declared command costs speed, never a hung terminal.
+        if GENERATED_DAEMON_FOREGROUND.contains("menu") {
+            assert!(
+                fg(&["message", "--text", "menu"]),
+                "a declared name used as a value must still hold the invocation back"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn declared_commands_are_foreground() {
+        // Whatever this build declared, if present, must be foreground.
+        for declared in GENERATED_DAEMON_FOREGROUND
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let args = vec![declared.to_string(), "x".to_string()];
+            assert!(
+                requires_foreground(&args).is_some(),
+                "{} is declared foreground but was routed to the daemon",
+                declared
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn undeclared_commands_may_use_the_daemon() {
+        // A command nobody declared is allowed through; the daemon is the
+        // fast path and only the declared ones are held back.
+        let declared: Vec<&str> = GENERATED_DAEMON_FOREGROUND
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if let Some(candidate) = ["table", "json", "header", "success"]
+            .into_iter()
+            .find(|c| !declared.contains(c))
+        {
+            let args = vec![candidate.to_string()];
+            assert!(
+                requires_foreground(&args).is_none(),
+                "{} should be able to use the daemon",
+                candidate
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_flag_only_invocation_is_not_held_back() {
+        // No subcommand, but also no help: nothing declared it, so let it
+        // through rather than silently penalising every global-flag call.
+        assert!(!fg(&["--version"]));
+    }
+
     #[test]
     #[cfg(unix)]
     fn daemon_sock_path_is_namespaced() {
         let path = daemon_sock_path();
         let path_str = path.to_string_lossy();
-        assert!(path_str.contains(GENERATED_APP_NAME));
-        assert!(path_str.contains(GENERATED_APP_VERSION));
-        assert!(path_str.contains(GENERATED_TARGET));
-        assert!(path_str.ends_with(".sock"));
+        // The stem is the identity digest, so it must be the basename we
+        // baked — and must NOT collapse to the old app+version+target key,
+        // which could not tell two ERTS builds of one app apart.
+        let stem = daemon_basename();
+        assert!(path_str.ends_with(&format!("{}.sock", stem)));
+        assert!(path_str.contains(&stem));
+        if !GENERATED_DAEMON_BASENAME.is_empty() {
+            assert_ne!(
+                stem,
+                format!(
+                    "{}-{}-{}",
+                    GENERATED_APP_NAME, GENERATED_APP_VERSION, GENERATED_TARGET
+                ),
+                "socket stem fell back to the pre-identity key"
+            );
+        }
     }
 
     #[test]
@@ -820,8 +1038,7 @@ mod tests {
 
     #[test]
     fn resolve_dispatch_legacy_when_disabled() {
-        // We can't toggle GENERATED_DAEMON_ENABLED at runtime — it's a
-        // compile-time constant — but we can verify the function returns
+        // We can't toggle GENERATED_DAEMON_ENABLED at runtime — it's a        // compile-time constant — but we can verify the function returns
         // Daemon when the constant is true (which the smoke test build
         // does) and Legacy otherwise.
         if GENERATED_DAEMON_ENABLED {
