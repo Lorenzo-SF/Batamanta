@@ -391,10 +391,11 @@ defmodule Batamanta.ERTS.Fetcher do
     # We shell out to `curl` for the same reason `download_file/2` does
     # below: the in-VM `:httpc` + `:ssl` + `:public_key` stack is brittle
     # when invoked from a `Mix.Task` because not every Erlang app's ebin
-    # ends up on the BEAM's code path. We hit `cacerts_get/0` on OTP 28
-    # + alaja/zaguan (`:public_key` not on path), and `:http_util.timestamp/0`
-    # after that fix (`:inets` not on path). `curl` ships everywhere we
-    # care about (Git for Windows on Windows, system curl on macOS/Linux)
+    # ends up on the BEAM's code path. We hit `:public_key.cacerts_get/0`
+    # on OTP 28 + alaja/zaguan (`:public_key` not on path), and
+    # `:http_util.timestamp/0` after that fix (`:inets` not on path).
+    # `curl` ships everywhere we care about (Git for Windows on Windows,
+    # system curl on macOS/Linux)
     # and brings its own certificate store, retry logic, and well-known
     # failure modes. The URLs are pinned to our own GitHub release
     # mirror, so MITM risk is negligible — and the SHA check at

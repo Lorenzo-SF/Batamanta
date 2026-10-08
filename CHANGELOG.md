@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.1.0] - 2026-10-04
 
 ### Added
 
@@ -29,6 +29,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     100ms timeout → either dispatch over the existing socket, fork a
     bootstrap child that runs `<app>.run batamanta_daemon_bootstrap`
     and binds the socket, or fall back to legacy single-shot.
+  - **Test coverage for the daemon path**: new
+    `test/batamanta/daemon_identity_test.exs`,
+    `test/batamanta/daemon_source_contract_test.exs` and
+    `test/batamanta/run_script_bootstrap_test.exs` lock down the
+    socket name, build-hash, bootstrap args and request/response
+    protocol so the daemon mode can't drift silently.
+
+### Fixed
+
+- **Daemon-mode performance regressions on high-traffic packaged apps**:
+  the persistent BEAM now handles successive invocations end-to-end
+  (connect → dispatch → respond → drain) without falling back to
+  legacy single-shot, and the per-request FIFO + inactivity TTL keep
+  memory bounded under sustained load. Warm-path latency stays
+  under the 100ms-per-call smoke budget.
+- **`Batamanta.Banner` image protocol detection** correctly distinguishes
+  iTerm, Kitty, Konsole, Foot, Terminology, WezTerm and generic sixel
+  for both image and inline-pixel modes, so the banner renders
+  consistently in every modern terminal emulator (was matching only
+  a subset, falling back to ASCII in the others).
+- **`EscriptPackager` payload layout** for daemon-mode escripts:
+  the bundled ERTS no longer leaks the daemon protocol files when the
+  consumer isn't using daemon mode, and the `.run` script exports
+  `BATAMANTA_DAEMON_SOCK_DIR` and `BATAMANTA_DAEMON_ENABLED` only when
+  the daemon block is configured.
 
 ### Design notes
 
@@ -300,8 +325,8 @@ Erlang consulted).
   in `RELEASE_SYS_CONFIG`, matching the standard Mix release
   `bin/app` script.
 - **OTP 28+ inets lazy loading crash**: On a fresh session (no cached
-  ERTS, no warm shell), `:httpc.handle_request/9` threw
-  `UndefinedFunctionError` for `:http_util.timestamp/0` because
+  ERTS, no warm shell), `httpc.handle_request/9` threw
+  `UndefinedFunctionError` for `http_util.timestamp/0` because
   OTP 28+ loads inets modules lazily and `:http_util` had not been
   touched yet. `ensure_started/1` now `code:ensure_loaded`s the key
   modules (`http_util`, `http_chunk`, `http_request`,
@@ -402,7 +427,7 @@ Erlang consulted).
 
 ### Fixed
 - **Version Manager Interference**: Fixed a critical bug where `asdf` shims in the `PATH` would cause `mix` to use a different ERTS version than the one intended for packaging.
-- **Legacy Elixir Compatibility**: Replaced `File.executable?/1` (introduced in Elixir 1.16) with `File.regular?/1` to maintain compatibility with Elixir 1.15.x.
+- **Legacy Elixir Compatibility**: Replaced `File.executable?` (introduced in Elixir 1.16) with `File.regular?` to maintain compatibility with Elixir 1.15.x.
 - **Typo cleanup**: Corrected multiple instances of `BatmanManta` namespace typos to `Batamanta`.
 - **Credo & Code Quality**: Refactored `system_paths/0` in `EnvCleaner` to reduce cyclomatic complexity and flattened nested logic in `clean_mix_build_artifacts`.
 
@@ -507,7 +532,8 @@ Erlang consulted).
 - **Unit Testing**: Full test suite covering target resolution, packaging logic, and cache management.
 - **CI/CD Integration**: Pre-configured GitHub Actions to validate compatibility across multiple Elixir and OTP versions.
 
-[Unreleased]: https://github.com/Lorenzo-SF/Batamanta/compare/3.0.1...HEAD
+[Unreleased]: https://github.com/Lorenzo-SF/Batamanta/compare/3.1.0...HEAD
+[3.1.0]: https://github.com/Lorenzo-SF/Batamanta/compare/3.0.1...3.1.0
 [3.0.1]: https://hex.pm/packages/batamanta/3.0.1
 [3.0.0]: https://hex.pm/packages/batamanta/3.0.0
 [2.0.0]: https://hex.pm/packages/batamanta/2.0.0

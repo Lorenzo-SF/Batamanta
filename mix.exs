@@ -44,7 +44,7 @@ defmodule Batamanta.MixProject do
       logo: "assets/batamantaman.png",
       extras: ["README.md", "README_ES.md", "CHANGELOG.md"],
       source_url: @source_url,
-      source_ref: "v#{@version}",
+      source_ref: @version,
       groups_for_modules: [
         Core: [Batamanta, Batamanta.Application, Batamanta.Runner, Batamanta.Runner.Native],
         Packaging: [
