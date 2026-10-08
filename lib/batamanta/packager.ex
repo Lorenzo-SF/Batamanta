@@ -673,8 +673,8 @@ defmodule Batamanta.Packager do
 
   ## Layouts supported
 
-  The Fetcher handles three upstream tarball/zip layouts (see
-  `Batamanta.ERTS.Fetcher.erts_valid?/2` for the validator):
+  The Fetcher handles three upstream tarball/zip layouts (see the
+  `Batamanta.ERTS.Fetcher` module for the validator function):
 
     1. **Linux/Mac release-style**: `<root>/erts-<vsn>/bin/erlexec` exists.
     2. **Windows release-style**: `<root>/bin/erl.exe` + `<root>/releases/<vsn>/`.

@@ -151,7 +151,7 @@ defmodule Batamanta.Daemon do
   file is part of the release's lib/ tree and gets listed in
   `releases/<vsn>/start_erl.data`'s application list automatically.
 
-  `build_path` typically resolves to `Mix.Project.build_path()/2` for
+  `build_path` typically resolves to `Mix.Project.build_path/0` for
   `MIX_ENV=prod`, i.e. `_build/prod/`.
 
   ## Parameters
