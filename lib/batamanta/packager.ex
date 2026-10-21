@@ -110,7 +110,10 @@ defmodule Batamanta.Packager do
 
       # Generate <app>.run entry point script
       exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
-      run_script = Batamanta.RunScript.generate(app_name, exec_mode, :release, erts_version)
+      cli_module = Keyword.get(bata_config, :cli_module)
+
+      run_script =
+        Batamanta.RunScript.generate(app_name, exec_mode, :release, erts_version, cli_module: cli_module)
       run_script_path = Path.join([rel_path, "bin", "#{app_name}.run"])
       File.write!(run_script_path, run_script)
       File.chmod!(run_script_path, 0o755)
