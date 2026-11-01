@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-11-01
+
+### Fixed
+
+- Propagate `cli_module` through `RunScript.generate/...` so generated
+  `.run` scripts use the correct CLI module instead of a default.
+
+### Added
+
+- Fallback `derive_cli_module` to derive the CLI module when it is not
+  explicitly provided.
+
 ## [3.1.0] - 2026-10-04
 
 ### Added
@@ -532,7 +544,8 @@ Erlang consulted).
 - **Unit Testing**: Full test suite covering target resolution, packaging logic, and cache management.
 - **CI/CD Integration**: Pre-configured GitHub Actions to validate compatibility across multiple Elixir and OTP versions.
 
-[Unreleased]: https://github.com/Lorenzo-SF/Batamanta/compare/3.1.0...HEAD
+[Unreleased]: https://github.com/Lorenzo-SF/Batamanta/compare/3.1.1...HEAD
+[3.1.1]: https://github.com/Lorenzo-SF/Batamanta/compare/3.1.0...3.1.1
 [3.1.0]: https://github.com/Lorenzo-SF/Batamanta/compare/3.0.1...3.1.0
 [3.0.1]: https://hex.pm/packages/batamanta/3.0.1
 [3.0.0]: https://hex.pm/packages/batamanta/3.0.0

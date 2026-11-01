@@ -39,7 +39,7 @@ defmodule Batamanta.RunScript do
   """
   @spec generate(String.t(), atom(), atom(), String.t(), keyword()) :: String.t()
   def generate(app_name, exec_mode, format, erts_version, opts \\ []) do
-    cli_module = Keyword.get(opts, :cli_module, derive_cli_module(app_name))
+    cli_module = Keyword.get(opts, :cli_module, derive_cli_module(app_name)) |> to_string()
     exec_mode_str = Atom.to_string(exec_mode)
     format_str = Atom.to_string(format)
     # The daemon ebin is located by the shell, not globbed inside the
