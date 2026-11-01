@@ -110,7 +110,9 @@ defmodule Batamanta.Packager do
 
       # Generate <app>.run entry point script
       exec_mode = Keyword.get(bata_config, :execution_mode, :cli)
-      cli_module = Keyword.get(bata_config, :cli_module)
+      cli_module =
+        Keyword.get(bata_config, :cli_module) ||
+          Batamanta.RunScript.derive_cli_module(app_name)
 
       run_script =
         Batamanta.RunScript.generate(app_name, exec_mode, :release, erts_version, cli_module: cli_module)
